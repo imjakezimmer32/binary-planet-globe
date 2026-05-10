@@ -2032,7 +2032,11 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const WATER_DEEP = [0.06, 0.46, 0.56];
   const WATER_AQUA = [0.20, 0.78, 0.76];
   const WATER_SAND = [0.84, 0.75, 0.50];
+  const LAVA_BLACK = [0.08, 0.08, 0.09];
+  const LAVA_RED = [0.82, 0.10, 0.04];
+  const LAVA_YELLOW = [1.00, 0.88, 0.18];
   const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
+  const lavaBand = shoreBand * 1.08;
 
   function mix3(a, b, t) {
     const k = Math.max(0, Math.min(1, t));
@@ -2086,7 +2090,6 @@ function colorizeGlobe(geo, baseR, ps, wl) {
       if (rr <= liquidR + liquidEps) liquidVerts++;
     }
     const isLiquidFace = liquidVerts > 0;
-    const isShoreFace = isLiquidFace && liquidVerts < 3;
     const ne     = (sumE / 3 / baseR - 1) / ps;
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
     let r, g, b;
@@ -2105,18 +2108,23 @@ function colorizeGlobe(geo, baseR, ps, wl) {
       }
       continue;
     } else if (isLiquidFace && hasLava) {
-      // Shore = bright yellow lava, interior = deep red lava.
-      if (isShoreFace) {
-        r = 1.00; g = 0.86; b = 0.12;
-      } else {
-        r = 0.62; g = 0.05; b = 0.02;
-      }
-      const glow = isShoreFace ? [0.62, 0.54, 0.12] : [0.56, 0.12, 0.05];
+      // Lava gradient: yellow core -> red ring -> dark shoreline crust.
       for (let v = 0; v < 3; v++) {
-        const i = f * 3 + v;
+        const i = faceIdx[v];
+        const rr = faceR[v];
+        const shoreT = Math.max(0, Math.min(1, (rr - liquidR) / lavaBand));
+        const c = shoreT < 0.52
+          ? mix3(LAVA_YELLOW, LAVA_RED, shoreT / 0.52)
+          : mix3(LAVA_RED, LAVA_BLACK, (shoreT - 0.52) / 0.48);
+        col[i*3] = c[0];
+        col[i*3+1] = c[1];
+        col[i*3+2] = c[2];
+
+        const glow = mix3([0.44, 0.08, 0.04], [0.92, 0.74, 0.22], Math.pow(1 - shoreT, 0.72));
         lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
         lavaGlowCol.push(glow[0], glow[1], glow[2]);
       }
+      continue;
     } else {
       [r,g,b] = elevColor(mapped, pal);
     }
