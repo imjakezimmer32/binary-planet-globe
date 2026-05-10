@@ -800,6 +800,27 @@ input[type=range]::-moz-range-thumb {
 
 }
 
+#walk-controls {
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 112px);
+  z-index: 85;
+  display: none;
+  grid-template-columns: repeat(2, 52px);
+  gap: 6px;
+}
+#walk-controls button {
+  width: 52px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(0,0,0,0.55);
+  color: rgba(255,255,255,0.88);
+  font-family: monospace;
+  font-size: 16px;
+  cursor: pointer;
+}
+
 </style>
 </head>
 <body>
@@ -849,6 +870,7 @@ input[type=range]::-moz-range-thumb {
 <div id="cam-buttons">
   <button class="cam-btn active" id="btn-sun">Solar View</button>
   <button class="cam-btn" id="btn-planet">Planet View</button>
+  <button class="cam-btn" id="btn-walk">Walk</button>
   <button class="cam-btn active" id="btn-grid">Grid</button>
   <button class="cam-btn" id="btn-cam-settings">Cam Settings</button>
 </div>
@@ -880,6 +902,12 @@ input[type=range]::-moz-range-thumb {
   <div class="gap"></div>
   <div class="row-label" id="lbl-warp">TIME WARP &nbsp;1.00×</div>
   <input type="range" id="dial-warp" min="0" max="4" step="0.05" value="1">
+</div>
+<div id="walk-controls">
+  <button type="button" data-walk="left">◀</button>
+  <button type="button" data-walk="forward">▲</button>
+  <button type="button" data-walk="back">▼</button>
+  <button type="button" data-walk="right">▶</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -977,6 +1005,33 @@ const panOffset = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _up    = new THREE.Vector3();
 
+// ── Walk mode (sausage avatar on planet surface) ───────────────────
+const walkMode = { active: false, planetIdx: null };
+const walkInput = { left: false, right: false, fwd: false, back: false };
+let walkPrevMs = performance.now();
+const walkState = {
+  normal: new THREE.Vector3(0, 1, 0),
+  forward: new THREE.Vector3(1, 0, 0),
+};
+const _walkCenter = new THREE.Vector3();
+const _walkPos = new THREE.Vector3();
+const _walkRight = new THREE.Vector3();
+const _walkQ = new THREE.Quaternion();
+const _walkTmp = new THREE.Vector3();
+const _walkX = new THREE.Vector3(1, 0, 0);
+
+const sausage = new THREE.Group();
+const sausageMat = new THREE.MeshLambertMaterial({ color: 0xf1a76a });
+const sausageBody = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.38, 14), sausageMat);
+sausageBody.rotation.z = Math.PI * 0.5;
+const sausageEndA = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), sausageMat);
+const sausageEndB = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), sausageMat);
+sausageEndA.position.x = 0.19;
+sausageEndB.position.x = -0.19;
+sausage.add(sausageBody, sausageEndA, sausageEndB);
+sausage.visible = false;
+scene.add(sausage);
+
 // ── Camera input: separate paths (do not mix) ─────────────────────
 // Desktop: mouse / pen — left = orbit, right = pan on plane, wheel = zoom.
 // Touch: 1 finger = orbit; 2 fingers pinch (spacing change) = zoom;
@@ -989,6 +1044,7 @@ function isTouchPointer(e) {
 
 // ----- Desktop (mouse / pen) -----
 function desktopPointerDown(e) {
+  if (walkMode.active) return;
   dragging = true;
   dragButton = e.button;
   lastPX = e.clientX;
@@ -1000,6 +1056,7 @@ function desktopPointerUp(e) {
   try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
 }
 function desktopPointerMove(e) {
+  if (walkMode.active) return;
   if (!dragging) return;
   const rawDX = e.clientX - lastPX;
   const rawDY = e.clientY - lastPY;
@@ -1037,6 +1094,7 @@ function mobPinchPair() {
 }
 
 function onMobilePointerDown(e) {
+  if (walkMode.active) return;
   try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (mobPointers.size === 1) {
@@ -1055,6 +1113,7 @@ function onMobilePointerDown(e) {
 }
 
 function onMobilePointerMove(e) {
+  if (walkMode.active) return;
   if (!mobPointers.has(e.pointerId)) return;
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -1157,13 +1216,104 @@ window.addEventListener('pointermove', e => {
 
 _canvas.addEventListener('wheel', e => {
   if (isTouchPointer(e)) return;
+  if (walkMode.active) return;
   e.preventDefault();
   zoomTarget = null;
   const step = 1 + 0.08 * zoomSpeedMul;
   orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * (e.deltaY > 0 ? step : 1 / step)));
 }, { passive: false });
 
+const _walkCamTarget = new THREE.Vector3();
+const _walkCamPos = new THREE.Vector3();
+const _walkBasisZ = new THREE.Vector3();
+const _walkBasisMat = new THREE.Matrix4();
+
+function getWalkPlanet() {
+  if (!walkMode.active || walkMode.planetIdx === null) return null;
+  return managedPlanets[walkMode.planetIdx] || null;
+}
+
+function getPlanetCenterRadius(mp, centerOut) {
+  mp.obj.pivot.getWorldPosition(centerOut);
+  return Math.max(0.25, (mp.obj.baseRadius || 0.8) * mp.obj.state.size * 1.05);
+}
+
+function refreshWalkUi() {
+  const btn = document.getElementById('btn-walk');
+  const controls = document.getElementById('walk-controls');
+  if (btn) {
+    btn.classList.toggle('active', walkMode.active);
+  }
+  if (controls) {
+    controls.style.display = walkMode.active ? 'grid' : 'none';
+  }
+}
+
+function stopWalkMode() {
+  if (!walkMode.active) return;
+  walkMode.active = false;
+  walkMode.planetIdx = null;
+  sausage.visible = false;
+  walkInput.left = walkInput.right = walkInput.fwd = walkInput.back = false;
+  refreshWalkUi();
+}
+
+function startWalkMode(idx) {
+  if (idx === null || idx === undefined) return;
+  const mp = managedPlanets[idx];
+  if (!mp) return;
+  walkMode.active = true;
+  walkMode.planetIdx = idx;
+  walkPrevMs = performance.now();
+  const radius = getPlanetCenterRadius(mp, _walkCenter);
+  walkState.normal.copy(camera.position).sub(_walkCenter);
+  if (walkState.normal.lengthSq() < 1e-6) walkState.normal.set(0, 1, 0);
+  walkState.normal.normalize();
+  camera.getWorldDirection(_walkTmp);
+  _walkTmp.projectOnPlane(walkState.normal);
+  if (_walkTmp.lengthSq() < 1e-6) _walkTmp.crossVectors(_walkX, walkState.normal).normalize();
+  walkState.forward.copy(_walkTmp).normalize();
+  _walkPos.copy(_walkCenter).addScaledVector(walkState.normal, radius + 0.14);
+  sausage.position.copy(_walkPos);
+  sausage.visible = true;
+  refreshWalkUi();
+}
+
+function updateWalkMode(dt) {
+  const mp = getWalkPlanet();
+  if (!mp) { stopWalkMode(); return; }
+  const radius = getPlanetCenterRadius(mp, _walkCenter);
+  const move = (walkInput.fwd ? 1 : 0) + (walkInput.back ? -1 : 0);
+  const turn = (walkInput.right ? 1 : 0) + (walkInput.left ? -1 : 0);
+  if (turn !== 0) {
+    _walkQ.setFromAxisAngle(walkState.normal, turn * 2.5 * dt);
+    walkState.forward.applyQuaternion(_walkQ).projectOnPlane(walkState.normal).normalize();
+  }
+  if (move !== 0) {
+    _walkRight.crossVectors(walkState.normal, walkState.forward).normalize();
+    _walkQ.setFromAxisAngle(_walkRight, (move * 1.7 * dt) / radius);
+    walkState.normal.applyQuaternion(_walkQ).normalize();
+    walkState.forward.applyQuaternion(_walkQ).projectOnPlane(walkState.normal).normalize();
+  }
+  _walkPos.copy(_walkCenter).addScaledVector(walkState.normal, radius + 0.14);
+  sausage.position.copy(_walkPos);
+  _walkBasisZ.crossVectors(walkState.forward, walkState.normal).normalize();
+  _walkBasisMat.makeBasis(walkState.forward, walkState.normal, _walkBasisZ);
+  sausage.quaternion.setFromRotationMatrix(_walkBasisMat);
+  _walkCamTarget.copy(_walkPos).addScaledVector(walkState.normal, 0.06);
+  _walkCamPos.copy(_walkPos).addScaledVector(walkState.normal, 0.60).addScaledVector(walkState.forward, -1.35);
+  camera.position.lerp(_walkCamPos, 0.24);
+  camera.lookAt(_walkCamTarget);
+}
+
 function updateCamera(curScale) {
+  if (walkMode.active) {
+    const now = performance.now();
+    const dt = Math.min(0.05, Math.max(0.001, (now - walkPrevMs) / 1000));
+    walkPrevMs = now;
+    updateWalkMode(dt);
+    return;
+  }
   if (cameraMode === 'sun') {
     orbitTheta += dTheta; dTheta *= 0.88;
     orbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, orbitPhi + dPhi));
@@ -1402,6 +1552,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   build(detailInit);
   return {
     pivot, spin, state,
+    baseRadius: baseR,
     rebuild:  build,
     setWater: (s, wl) => { if (waterRef) { waterRef.scale.setScalar(s); waterRef.visible = (wl === undefined ? s > 0.84 : wl >= 0.05); } },
     setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
@@ -1634,6 +1785,8 @@ const planetPanelHeader = $('planet-panel-header');
 const planetCountEl = $('planet-count');
 const addPlanetBtn = $('add-planet-btn');
 const addTwinBtn = $('add-twin-btn');
+const btnWalk = $('btn-walk');
+const walkControlsEl = $('walk-controls');
 
 function syncPlanetCount() {
   if (planetCountEl) planetCountEl.textContent = String(managedPlanets.length);
@@ -1651,6 +1804,19 @@ function updateTwinButtonVisibility() {
   addTwinBtn.style.display = inPlanetView ? '' : 'none';
   const canTwin = inPlanetView && canCreateTwinFromSelection();
   addTwinBtn.disabled = !canTwin;
+}
+
+function canWalkFromSelection() {
+  return selectedPlanetIdx !== null && !!managedPlanets[selectedPlanetIdx];
+}
+
+function updateWalkButtonVisibility() {
+  if (!btnWalk) return;
+  const inPlanetView = cameraMode === 'planet';
+  btnWalk.style.display = inPlanetView ? '' : 'none';
+  btnWalk.disabled = !inPlanetView || !canWalkFromSelection();
+  if (walkControlsEl) walkControlsEl.style.display = walkMode.active ? 'grid' : 'none';
+  refreshWalkUi();
 }
 
 function isNarrowPlanetUI() {
@@ -1693,6 +1859,7 @@ function selectPlanet(idx) {
   lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
   setPlanetPanelOpen(true);
   updateTwinButtonVisibility();
+  updateWalkButtonVisibility();
 }
 
 dialSizeE.addEventListener('input', () => {
@@ -1757,17 +1924,70 @@ addTwinBtn.addEventListener('click', e => {
   selectPlanet(newIdx);
 });
 
+btnWalk.addEventListener('click', e => {
+  e.stopPropagation();
+  if (walkMode.active) {
+    stopWalkMode();
+    updateWalkButtonVisibility();
+    return;
+  }
+  if (cameraMode !== 'planet' || !canWalkFromSelection()) return;
+  startWalkMode(selectedPlanetIdx);
+  updateWalkButtonVisibility();
+});
+
+function setWalkInputFlag(key, down) {
+  if (key === 'left') walkInput.left = down;
+  if (key === 'right') walkInput.right = down;
+  if (key === 'forward') walkInput.fwd = down;
+  if (key === 'back') walkInput.back = down;
+}
+
+if (walkControlsEl) {
+  walkControlsEl.querySelectorAll('button[data-walk]').forEach(btn => {
+    const key = btn.getAttribute('data-walk');
+    const down = e => { e.preventDefault(); setWalkInputFlag(key, true); };
+    const up = e => { e.preventDefault(); setWalkInputFlag(key, false); };
+    btn.addEventListener('pointerdown', down);
+    btn.addEventListener('pointerup', up);
+    btn.addEventListener('pointercancel', up);
+    btn.addEventListener('pointerleave', up);
+  });
+}
+
+window.addEventListener('keydown', e => {
+  if (!walkMode.active) return;
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') walkInput.fwd = true;
+  if (k === 's' || k === 'arrowdown') walkInput.back = true;
+  if (k === 'a' || k === 'arrowleft') walkInput.left = true;
+  if (k === 'd' || k === 'arrowright') walkInput.right = true;
+  if (k === 'escape') stopWalkMode();
+  if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
+});
+
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') walkInput.fwd = false;
+  if (k === 's' || k === 'arrowdown') walkInput.back = false;
+  if (k === 'a' || k === 'arrowleft') walkInput.left = false;
+  if (k === 'd' || k === 'arrowright') walkInput.right = false;
+});
+
 rebuildPlanetList();
 updateTwinButtonVisibility();
+updateWalkButtonVisibility();
 
 // ── Camera view buttons ───────────────────────────────────────────
 const btnSun    = document.getElementById('btn-sun');
 const btnPlanet = document.getElementById('btn-planet');
 function setCamMode(mode) {
+  if (mode !== 'planet' && walkMode.active) stopWalkMode();
   cameraMode = mode;
   btnSun.classList.toggle('active', mode === 'sun');
   btnPlanet.classList.toggle('active', mode === 'planet');
   updateTwinButtonVisibility();
+  updateWalkButtonVisibility();
 }
 btnSun.addEventListener('click',    () => setCamMode('sun'));
 btnPlanet.addEventListener('click', () => setCamMode('planet'));
@@ -1994,6 +2214,7 @@ syncTrailVisibility();
 // ── Galaxy navigation ─────────────────────────────────────────────
 function navigateTo(idx) {
   if (isNavigating || idx === currentDestIndex) return;
+  if (walkMode.active) stopWalkMode();
   isNavigating = true;
   syncTrailVisibility();
   zoomTarget = null; // cancel any splash zoom in progress
