@@ -935,8 +935,8 @@ sunGroup.add(new THREE.Mesh(
 );
 
 // ── Camera — orbits the sun (world origin) ────────────────────────
-// Distance = ORBIT_BASE * curScale * userZoom (pull back as system spreads).
-// Planet mesh scale is compensated so body radii stay fixed vs the sun.
+// Distance = ORBIT_BASE * userZoom.
+// Planet + sun scaling is handled in animate via curScale so proportions stay consistent.
 const ORBIT_BASE = 30;
 const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 
@@ -1158,7 +1158,7 @@ function updateCamera(curScale) {
     dPhi *= 0.88;
     if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) orbitTheta += 0.0007; // gentle idle drift
 
-    const r = ORBIT_BASE * curScale * orbitZoom;
+    const r = ORBIT_BASE * orbitZoom;
     const sp = Math.sin(orbitPhi), cp = Math.cos(orbitPhi);
     const lookAt = cameraTarget.clone().add(panOffset);
     camera.position.set(
@@ -1175,7 +1175,7 @@ function updateCamera(curScale) {
     if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
 
     const base = sysGroup.position.clone().add(panOffset);
-    const r = PLANET_ORBIT_BASE * orbitZoom; // planet sizes don't scale with universe
+    const r = PLANET_ORBIT_BASE * orbitZoom * curScale;
     const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
     camera.position.set(
       base.x + r * sp * Math.sin(pOrbitTheta),
@@ -1772,11 +1772,9 @@ function animate() {
   p1.spin.rotation.y = spin1;
   p2.spin.rotation.y = spin2;
 
-  // Universe scale multiplies sysGroup (orbits / spacing). Counter-scale pivots
-  // so world radius stays baseR × state.size — constant relative to the sun.
-  const scaleSafe = Math.max(curScale, 1e-5);
+  // Scale planets with the system so distances and planet radii remain proportional.
   managedPlanets.forEach(mp => {
-    mp.obj.pivot.scale.setScalar(mp.obj.state.size / scaleSafe);
+    mp.obj.pivot.scale.setScalar(mp.obj.state.size);
   });
 
   // Trails — world-space positions so the heliocentric orbit is captured correctly
@@ -1795,8 +1793,8 @@ function animate() {
   linkPos[3]=cx+body[1].pos.x*curScale; linkPos[4]=cy+body[1].pos.y*curScale; linkPos[5]=cz+body[1].pos.z*curScale;
   linkGeo.attributes.position.needsUpdate = true;
 
-  // Sun visual: scale with curScale, rotate slowly
-  sunGroup.scale.setScalar(SUN_R); // sun is a fixed world size; scale slider only moves orbits
+  // Keep the sun scaled with the system so all bodies stay proportionate.
+  sunGroup.scale.setScalar(SUN_R * curScale);
   sunGroup.rotation.y = sunSpin;
 
   renderer.render(scene, camera);
