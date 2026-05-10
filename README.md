@@ -9,6 +9,8 @@ Single-page Three.js scene: binary planets, galaxy jumps, Cloudflare Pages.
 
 This repo is configured to auto-deploy to Cloudflare Pages project
 `binary-planet-globe` whenever code is pushed to the `main` branch.
+Deployments are published to the `master` branch URL:
+`https://master.binary-planet-globe.pages.dev/`.
 
 One-time setup in GitHub (Settings → Secrets and variables → Actions):
 
