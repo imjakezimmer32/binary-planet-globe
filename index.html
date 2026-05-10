@@ -870,7 +870,7 @@ input[type=range]::-moz-range-thumb {
       </div>
       <div class="pe-row">
         <span class="pe-lbl" id="lbl-water-edit">Water 48%</span>
-        <input type="range" id="dial-water-edit" min="0" max="1" step="0.005" value="0.48">
+        <input type="range" id="dial-water-edit" min="-1" max="1" step="0.005" value="0.48">
       </div>
     </div>
   </div>
@@ -1447,21 +1447,41 @@ function noise3(x, y, z) {
 }
 
 // ── Globe geometry ────────────────────────────────────────────────
+function getLiquidState(wl, baseR) {
+  const signedLevel = Math.max(-1, Math.min(1, wl));
+  // Shared slider spectrum: + side is water, - side is lava.
+  const hasWater = signedLevel > 0.0001;
+  const hasLava = signedLevel < -0.0001;
+  const strength = Math.abs(signedLevel);
+  const hasLiquid = strength > 0.0001;
+  const liquidScale = 0.80 + strength * 0.42;
+  return {
+    signedLevel,
+    hasWater,
+    hasLava,
+    hasLiquid,
+    strength,
+    liquidScale,
+    liquidR: baseR * liquidScale,
+  };
+}
+
 function buildGlobe(radius, detail, seed, ps, wl) {
   // ps = peakScale, wl = waterLevel (explicit per-planet)
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
-  const liquidScale = 0.80 + wl * 0.42;
-  const liquidR = radius * liquidScale;
+  const liquid = getLiquidState(wl, radius);
+  const hasLiquid = liquid.hasLiquid;
+  const liquidR = liquid.liquidR;
   for (let i = 0; i < geo.attributes.position.count; i++) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
     const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
              + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
-    // Clamp low terrain to liquid level so liquid directly matches terrain polygons.
+    // Clamp low terrain only when a liquid exists so 0 stays dry.
     const rawR = radius * (1 + d);
-    const r = Math.max(rawR, liquidR);
+    const r = hasLiquid ? Math.max(rawR, liquidR) : rawR;
     arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
   }
   geo.attributes.position.needsUpdate = true;
@@ -1470,13 +1490,13 @@ function buildGlobe(radius, detail, seed, ps, wl) {
 }
 
 // ── Elevation colour ramps ─────────────────────────────────────────
-// WET palette: planet has water → vegetation is possible → greens appear
+// WET palette: vegetation appears, with no lava colors while water exists.
 const PALETTE_WET = [
-  [-0.200, [0.920, 0.820, 0.050]],  // yellow lava  (hidden by water when wet)
-  [-0.180, [0.680, 0.050, 0.018]],  // deep red lava
-  [-0.130, [0.048, 0.042, 0.042]],  // near black
-  [-0.100, [0.175, 0.175, 0.180]],  // dark grey
-  [-0.030, [0.310, 0.195, 0.105]],  // brown sub-floor
+  [-0.200, [0.070, 0.065, 0.070]],  // deep basalt
+  [-0.180, [0.090, 0.085, 0.090]],  // dark basalt
+  [-0.130, [0.120, 0.110, 0.105]],  // rocky lowland
+  [-0.100, [0.180, 0.175, 0.170]],  // dark grey
+  [-0.030, [0.300, 0.205, 0.120]],  // brown sub-floor
   [ 0.000, [0.290, 0.175, 0.090]],  // shore brown
   [ 0.040, [0.105, 0.320, 0.062]],  // lowland green
   [ 0.140, [0.080, 0.220, 0.040]],  // highland green
@@ -1484,12 +1504,12 @@ const PALETTE_WET = [
   [ 0.182, [0.370, 0.365, 0.355]],  // rock grey
   [ 0.200, [0.940, 0.940, 0.930]],  // peak white
 ];
-// DRY palette: no water → no green, lava exposed in deep basins
+// DRY palette: no water → no green, still no baked-in lava tones.
 const PALETTE_DRY = [
-  [-0.200, [0.920, 0.820, 0.050]],  // yellow lava
-  [-0.180, [0.680, 0.050, 0.018]],  // deep red lava
-  [-0.130, [0.048, 0.042, 0.042]],  // near black
-  [-0.100, [0.175, 0.175, 0.180]],  // dark grey
+  [-0.200, [0.120, 0.100, 0.080]],  // deep dry basin
+  [-0.180, [0.150, 0.120, 0.095]],  // dark rust-brown
+  [-0.130, [0.190, 0.150, 0.110]],  // lowland earth
+  [-0.100, [0.230, 0.175, 0.120]],  // dark tan
   [-0.030, [0.310, 0.195, 0.105]],  // brown
   [ 0.000, [0.310, 0.195, 0.105]],  // dusty brown (same — no shore distinction)
   [ 0.040, [0.462, 0.312, 0.155]],  // sandy tan   (was green)
@@ -1510,7 +1530,7 @@ function elevColor(ne, pal) {
   return pal[pal.length-1][1];
 }
 function blendPalette(wet) {
-  // wet: 0=fully dry, 1=fully wet.  Returns blended palette array.
+  // wet: 0=fully dry, 1=fully wet. Returns blended terrain palette.
   if (wet >= 1) return PALETTE_WET;
   if (wet <= 0) return PALETTE_DRY;
   return PALETTE_WET.map((e, i) => [
@@ -1519,20 +1539,24 @@ function blendPalette(wet) {
   ]);
 }
 
-function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
+function colorizeGlobe(geo, baseR, ps, wl) {
   // ps = peakScale, wl = waterLevel — explicit per-planet, not global
   ps = Math.max(ps, 0.001);
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const faceCount = pos.count / 3;
-  const waterMode = wl >= 0.05;
-  const liquidR = baseR * seaScale;
-  const liquidEps = liquidR * 0.0018;
+  const liquid = getLiquidState(wl, baseR);
+  const hasWater = liquid.hasWater;
+  const hasLava = liquid.hasLava;
+  const hasLiquid = liquid.hasLiquid;
+  const liquidStrength = liquid.strength;
+  const liquidR = liquid.liquidR;
+  const liquidEps = hasLiquid ? liquidR * 0.0018 : 0;
   const lavaGlowPos = [];
   const lavaGlowCol = [];
 
-  // Blend palette: green fades in when wl > 0.05, fully green at 0.20
-  const wet = Math.min(Math.max((wl - 0.05) / 0.15, 0), 1);
+  // Blend palette: green fades in as water amount rises on the + side.
+  const wet = hasWater ? Math.min(Math.max(liquidStrength / 0.20, 0), 1) : 0;
   const pal = blendPalette(wet);
 
   // Pass 1: find terrain (non-liquid) elevation range for palette stretching
@@ -1574,27 +1598,25 @@ function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
     const ne     = (sumE / 3 / baseR - 1) / ps;
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
     let r, g, b;
-    if (isLiquidFace) {
-      if (waterMode) {
-        // Water body rule: only liquid touching land is shore; interior is solid.
-        if (isShoreFace) {
-          r = 0.28; g = 0.34; b = 0.20;
-        } else {
-          r = 0.12; g = 0.35; b = 0.72;
-        }
+    if (isLiquidFace && hasWater) {
+      // Shore = only liquid polygons touching land; interior water is solid.
+      if (isShoreFace) {
+        r = 0.28; g = 0.34; b = 0.20;
       } else {
-        // Lava body rule: red core, yellow shore.
-        if (isShoreFace) {
-          r = 0.99; g = 0.78; b = 0.16;
-        } else {
-          r = 0.76; g = 0.12; b = 0.05;
-        }
-        const glow = isShoreFace ? [1.00, 0.90, 0.28] : [1.00, 0.26, 0.10];
-        for (let v = 0; v < 3; v++) {
-          const i = f * 3 + v;
-          lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-          lavaGlowCol.push(glow[0], glow[1], glow[2]);
-        }
+        r = 0.12; g = 0.35; b = 0.72;
+      }
+    } else if (isLiquidFace && hasLava) {
+      // Shore = yellow lava, interior = red lava.
+      if (isShoreFace) {
+        r = 0.99; g = 0.78; b = 0.16;
+      } else {
+        r = 0.76; g = 0.12; b = 0.05;
+      }
+      const glow = isShoreFace ? [1.00, 0.90, 0.28] : [1.00, 0.26, 0.10];
+      for (let v = 0; v < 3; v++) {
+        const i = f * 3 + v;
+        lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+        lavaGlowCol.push(glow[0], glow[1], glow[2]);
       }
     } else {
       [r,g,b] = elevColor(mapped, pal);
@@ -1629,11 +1651,11 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built = [];
 
     const ps = state.peakScale, wl = state.waterLevel;
-    const ws = 0.80 + wl * 0.42;
+    const liquidState = getLiquidState(wl, baseR);
 
     const idxGeo  = buildGlobe(baseR, d, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
-    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, ws);
+    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
@@ -1674,7 +1696,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     const atmo = new THREE.Mesh(
       new THREE.SphereGeometry(baseR * 1.10, 24, 24),
       new THREE.MeshBasicMaterial({
-        color: 0x4499ff, transparent: true, opacity: 0.06,
+        color: liquidState.hasLava ? 0xff6a22 : 0x44aaff,
+        transparent: true,
+        opacity: liquidState.hasLava ? (0.02 + liquidState.strength * 0.05) : 0.06,
         side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
       })
     );
@@ -2056,6 +2080,14 @@ function setPlanetPanelOpen(open) {
   if (planetPanelToggle) planetPanelToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
+function waterLabelText(wl) {
+  const level = Math.max(-1, Math.min(1, wl));
+  const pct = Math.round(Math.abs(level) * 100);
+  if (level > 0.0001) return `Water ${pct}%`;
+  if (level < -0.0001) return `Lava ${pct}%`;
+  return 'Water/Lava 0%';
+}
+
 if (planetPanelToggle) {
   planetPanelToggle.addEventListener('click', e => {
     e.stopPropagation();
@@ -2085,7 +2117,7 @@ function selectPlanet(idx) {
   dialWaterE.value = mp.obj.state.waterLevel;
   lblSizeE.textContent  = `Size ${mp.obj.state.size.toFixed(2)}×`;
   lblPeakE.textContent  = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
-  lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
+  lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
   setPlanetPanelOpen(true);
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
@@ -2110,7 +2142,7 @@ dialWaterE.addEventListener('input', () => {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   mp.obj.state.waterLevel = parseFloat(dialWaterE.value);
-  lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
+  lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
   mp.obj.rebuild(curDetail); mp.obj.syncGrid();
 });
 
