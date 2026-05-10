@@ -1447,21 +1447,37 @@ function noise3(x, y, z) {
 }
 
 // ── Globe geometry ────────────────────────────────────────────────
+function getLiquidState(wl, baseR) {
+  const waterLevel = Math.min(1, Math.max(0, wl));
+  const hasWater = waterLevel > 0;
+  const hasLava = !hasWater;
+  // Shared slider spectrum: >0 is water, exactly 0 flips to lava.
+  const spectrumLevel = hasWater ? waterLevel : (1 - waterLevel);
+  const liquidScale = 0.80 + spectrumLevel * 0.42;
+  return {
+    hasWater,
+    hasLava,
+    waterLevel,
+    liquidScale,
+    liquidR: baseR * liquidScale,
+  };
+}
+
 function buildGlobe(radius, detail, seed, ps, wl) {
   // ps = peakScale, wl = waterLevel (explicit per-planet)
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
-  const seaScale = 0.80 + wl * 0.42;
-  const seaR = wl >= 0.05 ? radius * seaScale : -Infinity;
+  const liquid = getLiquidState(wl, radius);
+  const liquidR = liquid.liquidR;
   for (let i = 0; i < geo.attributes.position.count; i++) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
     const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
              + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
-    // Clamp low terrain to sea level so water directly matches terrain polygons.
+    // Clamp low terrain to liquid level so water/lava polygons match the terrain mesh.
     const rawR = radius * (1 + d);
-    const r = Math.max(rawR, seaR);
+    const r = Math.max(rawR, liquidR);
     arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
   }
   geo.attributes.position.needsUpdate = true;
@@ -1470,13 +1486,13 @@ function buildGlobe(radius, detail, seed, ps, wl) {
 }
 
 // ── Elevation colour ramps ─────────────────────────────────────────
-// WET palette: planet has water → vegetation is possible → greens appear
+// WET palette: vegetation appears, with no lava colors while water exists.
 const PALETTE_WET = [
-  [-0.200, [0.920, 0.820, 0.050]],  // yellow lava  (hidden by water when wet)
-  [-0.180, [0.680, 0.050, 0.018]],  // deep red lava
-  [-0.130, [0.048, 0.042, 0.042]],  // near black
-  [-0.100, [0.175, 0.175, 0.180]],  // dark grey
-  [-0.030, [0.310, 0.195, 0.105]],  // brown sub-floor
+  [-0.200, [0.070, 0.065, 0.070]],  // deep basalt
+  [-0.180, [0.090, 0.085, 0.090]],  // dark basalt
+  [-0.130, [0.120, 0.110, 0.105]],  // rocky lowland
+  [-0.100, [0.180, 0.175, 0.170]],  // dark grey
+  [-0.030, [0.300, 0.205, 0.120]],  // brown sub-floor
   [ 0.000, [0.290, 0.175, 0.090]],  // shore brown
   [ 0.040, [0.105, 0.320, 0.062]],  // lowland green
   [ 0.140, [0.080, 0.220, 0.040]],  // highland green
@@ -1484,12 +1500,12 @@ const PALETTE_WET = [
   [ 0.182, [0.370, 0.365, 0.355]],  // rock grey
   [ 0.200, [0.940, 0.940, 0.930]],  // peak white
 ];
-// DRY palette: no water → no green, lava exposed in deep basins
+// DRY palette: no water → no green, still no baked-in lava tones.
 const PALETTE_DRY = [
-  [-0.200, [0.920, 0.820, 0.050]],  // yellow lava
-  [-0.180, [0.680, 0.050, 0.018]],  // deep red lava
-  [-0.130, [0.048, 0.042, 0.042]],  // near black
-  [-0.100, [0.175, 0.175, 0.180]],  // dark grey
+  [-0.200, [0.120, 0.100, 0.080]],  // deep dry basin
+  [-0.180, [0.150, 0.120, 0.095]],  // dark rust-brown
+  [-0.130, [0.190, 0.150, 0.110]],  // lowland earth
+  [-0.100, [0.230, 0.175, 0.120]],  // dark tan
   [-0.030, [0.310, 0.195, 0.105]],  // brown
   [ 0.000, [0.310, 0.195, 0.105]],  // dusty brown (same — no shore distinction)
   [ 0.040, [0.462, 0.312, 0.155]],  // sandy tan   (was green)
@@ -1510,7 +1526,7 @@ function elevColor(ne, pal) {
   return pal[pal.length-1][1];
 }
 function blendPalette(wet) {
-  // wet: 0=fully dry, 1=fully wet.  Returns blended palette array.
+  // wet: 0=fully dry, 1=fully wet. Returns blended terrain palette.
   if (wet >= 1) return PALETTE_WET;
   if (wet <= 0) return PALETTE_DRY;
   return PALETTE_WET.map((e, i) => [
@@ -1519,17 +1535,19 @@ function blendPalette(wet) {
   ]);
 }
 
-function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
+function colorizeGlobe(geo, baseR, ps, wl) {
   // ps = peakScale, wl = waterLevel — explicit per-planet, not global
   ps = Math.max(ps, 0.001);
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const faceCount = pos.count / 3;
-  const hasWater = wl >= 0.05;
-  const seaR = baseR * seaScale;
+  const liquid = getLiquidState(wl, baseR);
+  const hasWater = liquid.hasWater;
+  const hasLava = liquid.hasLava;
+  const liquidR = liquid.liquidR;
 
-  // Blend palette: green fades in when wl > 0.05, fully green at 0.20
-  const wet = Math.min(Math.max((wl - 0.05) / 0.15, 0), 1);
+  // Blend palette: green fades in as soon as water appears.
+  const wet = hasWater ? Math.min(Math.max(wl / 0.20, 0), 1) : 0;
   const pal = blendPalette(wet);
 
   // Pass 1: find actual elevation min/max for palette stretching
@@ -1559,12 +1577,29 @@ function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
     const ne     = (sumE / 3 / baseR - 1) / ps;
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
     let r, g, b;
-    if (hasWater && faceR <= seaR * 1.002) {
-      // Slight tint variation keeps oceans faceted without a separate sphere shell.
-      const tint = (f % 11) / 11;
-      r = 0.10 + tint * 0.02;
-      g = 0.32 + tint * 0.04;
-      b = 0.66 + tint * 0.06;
+    if (faceR <= liquidR * 1.002) {
+      if (hasWater) {
+        // Slight tint variation keeps oceans faceted without a separate sphere shell.
+        const tint = (f % 11) / 11;
+        r = 0.10 + tint * 0.02;
+        g = 0.32 + tint * 0.04;
+        b = 0.66 + tint * 0.06;
+      } else if (hasLava) {
+        // Lava uses the same polygon fill approach: yellow core with red shoreline.
+        const lavaBandStart = liquidR * 0.985;
+        const lavaBandSize = Math.max(liquidR * 0.017, 0.0001);
+        const shoreBlend = Math.min(Math.max((faceR - lavaBandStart) / lavaBandSize, 0), 1);
+        const facet = (f % 9) / 9;
+        const coreR = 0.93 - facet * 0.03;
+        const coreG = 0.82 - facet * 0.04;
+        const coreB = 0.05;
+        const shoreR = 0.68;
+        const shoreG = 0.05;
+        const shoreB = 0.02;
+        r = coreR + (shoreR - coreR) * shoreBlend;
+        g = coreG + (shoreG - coreG) * shoreBlend;
+        b = coreB + (shoreB - coreB) * shoreBlend;
+      }
     } else {
       [r,g,b] = elevColor(mapped, pal);
     }
@@ -1595,11 +1630,10 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built = [];
 
     const ps = state.peakScale, wl = state.waterLevel;
-    const ws = 0.80 + wl * 0.42;
 
     const idxGeo  = buildGlobe(baseR, d, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
-    colorizeGlobe(flatGeo, baseR, ps, wl, ws);
+    colorizeGlobe(flatGeo, baseR, ps, wl);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
@@ -2002,6 +2036,11 @@ function setPlanetPanelOpen(open) {
   if (planetPanelToggle) planetPanelToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
+function waterLabelText(wl) {
+  const waterPct = Math.round(Math.min(1, Math.max(0, wl)) * 100);
+  return waterPct === 0 ? 'Water 0% · Lava 100%' : `Water ${waterPct}%`;
+}
+
 if (planetPanelToggle) {
   planetPanelToggle.addEventListener('click', e => {
     e.stopPropagation();
@@ -2031,7 +2070,7 @@ function selectPlanet(idx) {
   dialWaterE.value = mp.obj.state.waterLevel;
   lblSizeE.textContent  = `Size ${mp.obj.state.size.toFixed(2)}×`;
   lblPeakE.textContent  = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
-  lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
+  lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
   setPlanetPanelOpen(true);
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
@@ -2056,7 +2095,7 @@ dialWaterE.addEventListener('input', () => {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   mp.obj.state.waterLevel = parseFloat(dialWaterE.value);
-  lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
+  lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
   mp.obj.rebuild(curDetail); mp.obj.syncGrid();
 });
 
