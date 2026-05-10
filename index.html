@@ -2029,6 +2029,19 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const liquidEps = hasLiquid ? liquidR * 0.0018 : 0;
   const lavaGlowPos = [];
   const lavaGlowCol = [];
+  const WATER_DEEP = [0.06, 0.46, 0.56];
+  const WATER_AQUA = [0.20, 0.78, 0.76];
+  const WATER_SAND = [0.84, 0.75, 0.50];
+  const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
+
+  function mix3(a, b, t) {
+    const k = Math.max(0, Math.min(1, t));
+    return [
+      a[0] + (b[0] - a[0]) * k,
+      a[1] + (b[1] - a[1]) * k,
+      a[2] + (b[2] - a[2]) * k
+    ];
+  }
 
   // Blend palette: green fades in as water amount rises on the + side.
   const wet = hasWater ? Math.min(Math.max(liquidStrength / 0.20, 0), 1) : 0;
@@ -2062,10 +2075,14 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   for (let f = 0; f < faceCount; f++) {
     let sumE = 0;
     let liquidVerts = 0;
+    const faceR = [0, 0, 0];
+    const faceIdx = [0, 0, 0];
     for (let v = 0; v < 3; v++) {
       const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
       const rr = Math.sqrt(x*x + y*y + z*z);
       sumE += rr;
+      faceR[v] = rr;
+      faceIdx[v] = i;
       if (rr <= liquidR + liquidEps) liquidVerts++;
     }
     const isLiquidFace = liquidVerts > 0;
@@ -2074,12 +2091,19 @@ function colorizeGlobe(geo, baseR, ps, wl) {
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
     let r, g, b;
     if (isLiquidFace && hasWater) {
-      // Shore = only liquid polygons touching land; interior water is solid.
-      if (isShoreFace) {
-        r = 0.04; g = 0.64; b = 0.67;
-      } else {
-        r = 0.06; g = 0.26; b = 0.62;
+      // Ocean-side teal, mid-shore aqua, and land-edge sand gradient.
+      for (let v = 0; v < 3; v++) {
+        const i = faceIdx[v];
+        const rr = faceR[v];
+        const shoreT = Math.max(0, Math.min(1, (rr - liquidR) / shoreBand));
+        const c = shoreT < 0.58
+          ? mix3(WATER_DEEP, WATER_AQUA, shoreT / 0.58)
+          : mix3(WATER_AQUA, WATER_SAND, (shoreT - 0.58) / 0.42);
+        col[i*3] = c[0];
+        col[i*3+1] = c[1];
+        col[i*3+2] = c[2];
       }
+      continue;
     } else if (isLiquidFace && hasLava) {
       // Shore = bright yellow lava, interior = deep red lava.
       if (isShoreFace) {
