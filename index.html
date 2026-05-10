@@ -14,7 +14,7 @@ body {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
-canvas { display: block; }
+canvas { display: block; touch-action: none; }
 
 /* Splash: same structure on all viewports; font sizes tuned per breakpoint */
 #splash {
@@ -59,6 +59,7 @@ canvas { display: block; }
   color: rgba(255,255,255,0.14); font-size: 10px;
   letter-spacing: 2px; text-transform: uppercase; pointer-events: none;
 }
+.hint-touch { display: none; }
 #ui {
   position: fixed; bottom: 30px; left: 50%;
   transform: translateX(-50%);
@@ -347,6 +348,8 @@ input[type=range]::-webkit-slider-thumb {
   line-height: 1.35;
   pointer-events: none;
 }
+.hint-desktop { display: none; }
+.hint-touch { display: inline; }
 
 #galaxy-menu {
   position: fixed;
@@ -827,7 +830,10 @@ input[type=range]::-moz-range-thumb {
   <div id="s-hello">Hello Universe</div>
   <div id="s-face"></div>
 </div>
-<div id="hint">drag to orbit &nbsp;·&nbsp; scroll to zoom</div>
+<div id="hint">
+  <span class="hint-desktop">drag to orbit &nbsp;·&nbsp; scroll to zoom &nbsp;·&nbsp; right-drag to pan</span>
+  <span class="hint-touch">one finger: orbit &nbsp;·&nbsp; pinch: zoom &nbsp;·&nbsp; two fingers drag: pan</span>
+</div>
 <div id="cam-buttons">
   <button class="cam-btn active" id="btn-sun">Solar View</button>
   <button class="cam-btn" id="btn-planet">Planet View</button>
@@ -959,36 +965,168 @@ const panOffset = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _up    = new THREE.Vector3();
 
-renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
-renderer.domElement.addEventListener('pointerdown', e => {
-  dragging = true; dragButton = e.button;
-  lastPX = e.clientX; lastPY = e.clientY;
-  renderer.domElement.setPointerCapture(e.pointerId);
-});
-window.addEventListener('pointerup', () => dragging = false);
-window.addEventListener('pointermove', e => {
+// ── Camera input: separate paths (do not mix) ─────────────────────
+// Desktop: mouse / pen — left = orbit, right = pan, wheel = zoom (unchanged).
+// Touch: pointerType "touch" only — 1 finger = orbit, 2 = pinch zoom + pan.
+const _canvas = renderer.domElement;
+
+function isTouchPointer(e) {
+  return e.pointerType === 'touch';
+}
+
+// ----- Desktop (mouse / pen) -----
+function desktopPointerDown(e) {
+  dragging = true;
+  dragButton = e.button;
+  lastPX = e.clientX;
+  lastPY = e.clientY;
+  try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
+}
+function desktopPointerUp(e) {
+  dragging = false;
+  try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+}
+function desktopPointerMove(e) {
   if (!dragging) return;
   const rawDX = e.clientX - lastPX;
   const rawDY = e.clientY - lastPY;
-  lastPX = e.clientX; lastPY = e.clientY;
-
+  lastPX = e.clientX;
+  lastPY = e.clientY;
   if (dragButton === 2) {
-    // Right-drag: pan — slide look-at target in camera's local right/up plane
     camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
     const panSpeed = 0.012 * orbitZoom;
     panOffset.addScaledVector(_right, -rawDX * panSpeed);
     panOffset.addScaledVector(_up,     rawDY * panSpeed);
   } else {
-    // Left-drag: orbit
     const dx = -rawDX * 0.006 * orbitSpeedMul;
     const dy = -rawDY * 0.006 * orbitSpeedMul;
     if (cameraMode === 'sun') { dTheta += dx; dPhi += dy; }
     else                      { pDTheta += dx; pDPhi += dy; }
   }
+}
+
+// ----- Touch (phones / tablets) -----
+const mobPointers = new Map();
+let mobPinchDist = 0;
+let mobMidX = 0, mobMidY = 0;
+let mobSingleLX = 0, mobSingleLY = 0;
+let mobSingleReady = false;
+
+function mobPinchPair() {
+  const pts = Array.from(mobPointers.values());
+  if (pts.length < 2) return null;
+  return { a: pts[0], b: pts[1] };
+}
+
+function onMobilePointerDown(e) {
+  try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (mobPointers.size === 1) {
+    mobSingleLX = e.clientX;
+    mobSingleLY = e.clientY;
+    mobSingleReady = true;
+  }
+  if (mobPointers.size === 2) {
+    const pair = mobPinchPair();
+    if (pair) {
+      mobPinchDist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+      mobMidX = (pair.a.x + pair.b.x) * 0.5;
+      mobMidY = (pair.a.y + pair.b.y) * 0.5;
+    }
+  }
+}
+
+function onMobilePointerMove(e) {
+  if (!mobPointers.has(e.pointerId)) return;
+  mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (mobPointers.size === 1 && mobSingleReady) {
+    const rawDX = e.clientX - mobSingleLX;
+    const rawDY = e.clientY - mobSingleLY;
+    mobSingleLX = e.clientX;
+    mobSingleLY = e.clientY;
+    const sens = 0.005 * orbitSpeedMul;
+    const dx = -rawDX * sens;
+    const dy = -rawDY * sens;
+    if (cameraMode === 'sun') { dTheta += dx; dPhi += dy; }
+    else                      { pDTheta += dx; pDPhi += dy; }
+    return;
+  }
+
+  if (mobPointers.size === 2) {
+    const pair = mobPinchPair();
+    if (!pair) return;
+    const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+    const midX = (pair.a.x + pair.b.x) * 0.5;
+    const midY = (pair.a.y + pair.b.y) * 0.5;
+
+    if (mobPinchDist > 12 && dist > 12) {
+      zoomTarget = null;
+      const ratio = dist / mobPinchDist;
+      const zf = Math.pow(ratio, 1.12);
+      orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * zf));
+    }
+    mobPinchDist = dist;
+
+    if (mobMidX !== 0 || mobMidY !== 0) {
+      const mdx = midX - mobMidX;
+      const mdy = midY - mobMidY;
+      camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
+      const panSpeed = 0.014 * orbitZoom;
+      panOffset.addScaledVector(_right, -mdx * panSpeed);
+      panOffset.addScaledVector(_up,     mdy * panSpeed);
+    }
+    mobMidX = midX;
+    mobMidY = midY;
+  }
+}
+
+function onMobilePointerUp(e) {
+  mobPointers.delete(e.pointerId);
+  try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+  if (mobPointers.size < 2) {
+    mobPinchDist = 0;
+    mobMidX = 0;
+    mobMidY = 0;
+  }
+  if (mobPointers.size === 1) {
+    const p = mobPointers.values().next().value;
+    mobSingleLX = p.x;
+    mobSingleLY = p.y;
+    mobSingleReady = true;
+  }
+  if (mobPointers.size === 0) mobSingleReady = false;
+}
+
+_canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+_canvas.addEventListener('pointerdown', e => {
+  if (isTouchPointer(e)) onMobilePointerDown(e);
+  else desktopPointerDown(e);
 });
-renderer.domElement.addEventListener('wheel', e => {
+
+window.addEventListener('pointerup', e => {
+  if (isTouchPointer(e)) onMobilePointerUp(e);
+  else desktopPointerUp(e);
+});
+
+window.addEventListener('pointercancel', e => {
+  if (isTouchPointer(e)) onMobilePointerUp(e);
+  else desktopPointerUp(e);
+});
+
+window.addEventListener('pointermove', e => {
+  if (isTouchPointer(e)) {
+    if (mobPointers.has(e.pointerId)) onMobilePointerMove(e);
+  } else {
+    desktopPointerMove(e);
+  }
+});
+
+_canvas.addEventListener('wheel', e => {
+  if (isTouchPointer(e)) return;
   e.preventDefault();
-  zoomTarget = null; // user takes over — cancel any animated zoom
+  zoomTarget = null;
   const step = 1 + 0.08 * zoomSpeedMul;
   orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * (e.deltaY > 0 ? step : 1 / step)));
 }, { passive: false });
@@ -998,7 +1136,7 @@ function updateCamera(curScale) {
     orbitTheta += dTheta; dTheta *= 0.88;
     orbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, orbitPhi + dPhi));
     dPhi *= 0.88;
-    if (autoRotate && (!dragging || dragButton !== 0)) orbitTheta += 0.0007; // gentle idle drift
+    if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) orbitTheta += 0.0007; // gentle idle drift
 
     const r = ORBIT_BASE * curScale * orbitZoom;
     const sp = Math.sin(orbitPhi), cp = Math.cos(orbitPhi);
@@ -1014,7 +1152,7 @@ function updateCamera(curScale) {
     pOrbitTheta += pDTheta; pDTheta *= 0.88;
     pOrbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, pOrbitPhi + pDPhi));
     pDPhi *= 0.88;
-    if (autoRotate && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
+    if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
 
     const base = sysGroup.position.clone().add(panOffset);
     const r = PLANET_ORBIT_BASE * orbitZoom; // planet sizes don't scale with universe
