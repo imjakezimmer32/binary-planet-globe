@@ -2323,23 +2323,38 @@ const SUN_ORBIT_MIN_R = 4.2;
 const SUN_ORBIT_MAX_R = 48.0;
 const ORBIT_SOFTENING = 0.06;
 const MAX_BOUND_SPEED_FACTOR = 0.95;
-const ω0 = Math.sqrt(G * BASE_MT / (SEP ** 3));
 const body = [
-  { pos: new THREE.Vector3(-(BASE_M2/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0,  ω0*(BASE_M2/BASE_MT)*SEP) },
-  { pos: new THREE.Vector3( (BASE_M1/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0, -ω0*(BASE_M1/BASE_MT)*SEP) },
+  { pos: new THREE.Vector3(-(BASE_M2/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3() },
+  { pos: new THREE.Vector3( (BASE_M1/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3() },
 ];
-function stepGravity(dt, m1, m2) {
-  const dx = body[1].pos.x - body[0].pos.x;
-  const dy = body[1].pos.y - body[0].pos.y;
-  const dz = body[1].pos.z - body[0].pos.z;
-  const d2e = dx*dx + dy*dy + dz*dz + 0.0625;   // Plummer softening ε=0.25
-  const inv = G * m1 * m2 / (d2e * Math.sqrt(d2e));
-  const fx = inv*dx, fy = inv*dy, fz = inv*dz;
-  body[0].vel.x += fx/m1*dt; body[0].vel.y += fy/m1*dt; body[0].vel.z += fz/m1*dt;
-  body[1].vel.x -= fx/m2*dt; body[1].vel.y -= fy/m2*dt; body[1].vel.z -= fz/m2*dt;
-  body[0].pos.addScaledVector(body[0].vel, dt);
-  body[1].pos.addScaledVector(body[1].vel, dt);
+let binaryPhase = 0;
+let binaryPrevMass1 = BASE_M1;
+let binaryPrevMass2 = BASE_M2;
+
+function applyBinaryPairState(m1, m2, phaseAdvance = 0) {
+  const mt = Math.max(m1 + m2, 1e-6);
+  const omega = Math.sqrt(G * mt / Math.pow(SEP, 3));
+  binaryPhase += phaseAdvance * omega;
+  const c = Math.cos(binaryPhase);
+  const s = Math.sin(binaryPhase);
+  const tx = -s;
+  const tz = c;
+  const r1 = (m2 / mt) * SEP;
+  const r2 = (m1 / mt) * SEP;
+  body[0].pos.set(-c * r1, 0, -s * r1);
+  body[1].pos.set( c * r2, 0,  s * r2);
+  body[0].vel.set(tx * -r1 * omega, 0, tz * -r1 * omega);
+  body[1].vel.set(tx *  r2 * omega, 0, tz *  r2 * omega);
 }
+
+function refreshBinaryPairForMassChange(m1, m2) {
+  const dx = body[1].pos.x - body[0].pos.x;
+  const dz = body[1].pos.z - body[0].pos.z;
+  if (dx*dx + dz*dz > 1e-10) binaryPhase = Math.atan2(dz, dx);
+  applyBinaryPairState(m1, m2, 0);
+}
+
+applyBinaryPairState(BASE_M1, BASE_M2, 0);
 
 // ── Binary COM orbit around sun ───────────────────────────────────
 // The binary system as a whole orbits the sun (at origin).
@@ -2905,6 +2920,13 @@ dialSizeE.addEventListener('input', () => {
   const mp = managedPlanets[selectedPlanetIdx];
   mp.obj.state.size = parseFloat(dialSizeE.value);
   lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
+  if (mp.isBinary) {
+    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    refreshBinaryPairForMassChange(mass1Now, mass2Now);
+    binaryPrevMass1 = mass1Now;
+    binaryPrevMass2 = mass2Now;
+  }
 });
 
 dialPeakE.addEventListener('input', () => {
@@ -3131,9 +3153,17 @@ function animate() {
     const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(timeWarp) * 6)));
     const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
     const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const massesChanged =
+      Math.abs(mass1 - binaryPrevMass1) > 1e-8 ||
+      Math.abs(mass2 - binaryPrevMass2) > 1e-8;
+    if (massesChanged) {
+      refreshBinaryPairForMassChange(mass1, mass2);
+      binaryPrevMass1 = mass1;
+      binaryPrevMass2 = mass2;
+    }
 
-    // Step binary gravity (sub-stepped for stability). Bigger planets pull harder.
-    for (let i = 0; i < steps; i++) stepGravity(dt / steps, mass1, mass2);
+    // Binary pair orbits around its COM with mass-driven mutual pattern.
+    for (let i = 0; i < steps; i++) applyBinaryPairState(mass1, mass2, dt / steps);
 
     // Binary heliocentric orbit remains fixed regardless of size edits.
     comAngle += COM_OMEGA * dt;
