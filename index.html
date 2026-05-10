@@ -1800,7 +1800,7 @@ scene.add(linkLine);
 const G=1, BASE_M1=3, BASE_M2=1.5, SEP=3.5, BASE_MT=BASE_M1+BASE_M2;
 const SOLAR_MU = 4.6;
 const SUN_ORBIT_MIN_R = 4.2;
-const SUN_ORBIT_MAX_R = 30.0;
+const SUN_ORBIT_MAX_R = 48.0;
 const ORBIT_SOFTENING = 0.06;
 const MAX_BOUND_SPEED_FACTOR = 0.95;
 const ω0 = Math.sqrt(G * BASE_MT / (SEP ** 3));
@@ -1871,11 +1871,11 @@ dialWarp.addEventListener('input', () => {
 
 // ── Planet management ─────────────────────────────────────────────
 // managedPlanets mirrors the actual planet objects + metadata.
-// Extra added planets use sun-centered orbit slots (a simple placement grid).
+// Extra added planets use sun-centered orbit slots with orbital-clearance checks.
 const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
-const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
+const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30, 34, 38, 42, 46];
 const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
-let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitPos, orbitVel, orbitParentId }
+let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitPos, orbitVel, orbitParentId, trail }
 let selectedPlanetIdx = null;
 
 function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle, orbitParentId) {
@@ -1906,6 +1906,20 @@ function getPlanetMass(mp) {
   return density * baseVolume * Math.pow(size, 3);
 }
 
+function getSunOrbitRadius(mp) {
+  if (!mp) return 0;
+  if (mp.orbitR > 0) return mp.orbitR;
+  if (mp.orbitBaseR > 0) return mp.orbitBaseR;
+  if (mp.orbitPos) return Math.hypot(mp.orbitPos.x, mp.orbitPos.z);
+  return 0;
+}
+
+function getOrbitalClearance(mp) {
+  const mass = Math.max(getPlanetMass(mp), 0.2);
+  const size = Math.max((mp.obj.baseRadius || 0.8) * Math.max(mp.obj.state.size, 0.2), 0.2);
+  return Math.max(1.6, size * 2.8, Math.cbrt(mass) * 1.35);
+}
+
 function initializeSunOrbiterState(mp) {
   if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
   if (!mp.orbitPos) {
@@ -1924,25 +1938,82 @@ function initializeSunOrbiterState(mp) {
   }
 }
 
-function reserveSolarOrbitSlot() {
-  const used = new Set(
-    managedPlanets
-      .filter(mp => !mp.isBinary && mp.orbitCenter === 'sun' && mp.orbitSlotKey)
-      .map(mp => mp.orbitSlotKey)
-  );
+function ensureSunTrail(mp) {
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun' || mp.trail) return;
+  const color = typeof mp.color === 'string' && mp.color.startsWith('#')
+    ? parseInt(mp.color.slice(1), 16)
+    : 0xffffff;
+  mp.trail = makeTrail({ len: 280, color, opacity: 0.42 });
+}
+
+function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
+  const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
+  const newMass = 1.6 * Math.pow(Math.max(newBaseRadius, 0.2), 3) * Math.pow(Math.max(newSize, 0.2), 3);
+  const newClearance = Math.max(1.8, newBaseRadius * Math.max(newSize, 0.2) * 3.0, Math.cbrt(newMass) * 1.45);
+  const twoPi = Math.PI * 2;
+
+  function normalizeAngle(a) {
+    return ((a % twoPi) + twoPi) % twoPi;
+  }
+
+  function chooseLargestGapMidpoint(angles) {
+    if (!angles.length) return Math.random() * twoPi;
+    const sorted = angles.map(normalizeAngle).sort((a, b) => a - b);
+    let bestGap = -1;
+    let bestStart = sorted[0];
+    for (let i = 0; i < sorted.length; i++) {
+      const a = sorted[i];
+      const b = i === sorted.length - 1 ? sorted[0] + twoPi : sorted[i + 1];
+      const gap = b - a;
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestStart = a;
+      }
+    }
+    return normalizeAngle(bestStart + bestGap * 0.5);
+  }
+
+  let chosenRadius = null;
+  let fallbackRadius = SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1];
+  let fallbackScore = -Infinity;
   for (const r of SOLAR_ORBIT_GRID_RADII) {
-    for (let i = 0; i < SOLAR_ORBIT_GRID_PHASE_COUNT; i++) {
-      const key = `${r}:${i}`;
-      if (used.has(key)) continue;
-      return {
-        key,
-        radius: r,
-        angle: (i / SOLAR_ORBIT_GRID_PHASE_COUNT) * Math.PI * 2,
-      };
+    let safe = true;
+    let minSlack = Infinity;
+    for (const mp of sunOrbiters) {
+      const requiredGap = newClearance + getOrbitalClearance(mp);
+      const gap = Math.abs(r - getSunOrbitRadius(mp));
+      const slack = gap - requiredGap;
+      minSlack = Math.min(minSlack, slack);
+      if (slack < 0) safe = false;
+    }
+    if (safe) {
+      chosenRadius = r;
+      break;
+    }
+    if (minSlack > fallbackScore) {
+      fallbackScore = minSlack;
+      fallbackRadius = r;
     }
   }
-  const fallbackR = SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1];
-  return { key: null, radius: fallbackR, angle: Math.random() * Math.PI * 2 };
+
+  if (chosenRadius === null) {
+    const cap = SUN_ORBIT_MAX_R - 0.8;
+    const farthest = sunOrbiters.reduce((acc, mp) => Math.max(acc, getSunOrbitRadius(mp)), SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1]);
+    const proposed = Math.max(fallbackRadius, farthest + newClearance * 1.15);
+    if (proposed > cap) return null; // no safe orbit space currently available
+    chosenRadius = proposed;
+  }
+
+  const nearbyAngles = sunOrbiters
+    .filter(mp => Math.abs(getSunOrbitRadius(mp) - chosenRadius) < (newClearance + getOrbitalClearance(mp)))
+    .map(mp => mp.angle);
+  const chosenAngle = chooseLargestGapMidpoint(nearbyAngles);
+  const phaseIdx = Math.round((normalizeAngle(chosenAngle) / twoPi) * (SOLAR_ORBIT_GRID_PHASE_COUNT - 1));
+  return {
+    key: `${chosenRadius.toFixed(2)}:${phaseIdx}`,
+    radius: chosenRadius,
+    angle: chosenAngle,
+  };
 }
 
 function createSunOrbitPlanet({
@@ -1980,6 +2051,8 @@ function createSunOrbitPlanet({
   const newIdx = managedPlanets.length - 1;
   const mp = managedPlanets[newIdx];
   initializeSunOrbiterState(mp);
+  ensureSunTrail(mp);
+  syncTrailVisibility();
   return newIdx;
 }
 
@@ -2166,9 +2239,12 @@ dialWaterE.addEventListener('input', () => {
 // Add planet button (next free sun-orbit slot)
 addPlanetBtn.addEventListener('click', e => {
   e.stopPropagation();
-  const slot = reserveSolarOrbitSlot();
+  const baseRadius = 0.5 + Math.random() * 0.6;
+  const slot = reserveSolarOrbitSlot(baseRadius, 1.0);
+  if (!slot) return;
   const orbitSpeed = (Math.random()<0.5 ? -1 : 1) * Math.sqrt(SOLAR_MU / Math.pow(slot.radius, 3));
   const newIdx = createSunOrbitPlanet({
+    baseRadius,
     orbitR: slot.radius,
     orbitSpeed,
     orbitAngle: slot.angle,
@@ -2499,6 +2575,13 @@ function animate() {
       cx + body[1].pos.x,
       cy + body[1].pos.y,
       cz + body[1].pos.z);
+    managedPlanets.forEach(mp => {
+      if (mp.isBinary || mp.orbitCenter !== 'sun') return;
+      if (!mp.trail) ensureSunTrail(mp);
+      if (!mp.trail) return;
+      const p = mp.obj.pivot.position;
+      pushTrail(mp.trail, p.x, p.y, p.z);
+    });
   }
 
   // Gravity link line — world space
@@ -2532,6 +2615,10 @@ function syncTrailVisibility() {
   trail1.line.visible = showSolTrails;
   trail2.line.visible = showSolTrails;
   linkLine.visible = showSolTrails;
+  managedPlanets.forEach(mp => {
+    if (!mp.trail) return;
+    mp.trail.line.visible = showSolTrails && !mp.isBinary && mp.orbitCenter === 'sun';
+  });
   GALAXY_DESTINATIONS.forEach((dest, i) => {
     if (!dest._trail) return;
     dest._trail.line.visible = i === activeDest && i !== 0;
