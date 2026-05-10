@@ -2420,9 +2420,17 @@ function ensureSunTrail(mp) {
 
 function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
   const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
+  const binaryBodies = managedPlanets.filter(mp => mp.isBinary);
   const newMass = 1.6 * Math.pow(Math.max(newBaseRadius, 0.2), 3) * Math.pow(Math.max(newSize, 0.2), 3);
   const newClearance = Math.max(1.8, newBaseRadius * Math.max(newSize, 0.2) * 3.0, Math.cbrt(newMass) * 1.45);
   const twoPi = Math.PI * 2;
+  const binaryComR = Math.max(Math.hypot(sysGroup.position.x, sysGroup.position.z), SUN_ORBIT_MIN_R);
+  const binaryLocalMax = binaryBodies.reduce((acc, mp) => {
+    const local = mp?.obj?.pivot?.position ? mp.obj.pivot.position.length() : 0;
+    return Math.max(acc, local);
+  }, 0);
+  // Keep new planets outside the dynamic binary annulus + safety margin.
+  const binaryAvoidRadius = binaryComR + binaryLocalMax + newClearance + 3.6;
 
   function normalizeAngle(a) {
     return ((a % twoPi) + twoPi) % twoPi;
@@ -2449,6 +2457,7 @@ function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
   let fallbackRadius = SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1];
   let fallbackScore = -Infinity;
   for (const r of SOLAR_ORBIT_GRID_RADII) {
+    if (r < binaryAvoidRadius) continue;
     let safe = true;
     let minSlack = Infinity;
     for (const mp of sunOrbiters) {
@@ -2471,7 +2480,7 @@ function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
   if (chosenRadius === null) {
     const cap = SUN_ORBIT_MAX_R - 0.8;
     const farthest = sunOrbiters.reduce((acc, mp) => Math.max(acc, getSunOrbitRadius(mp)), SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1]);
-    const proposed = Math.max(fallbackRadius, farthest + newClearance * 1.15);
+    const proposed = Math.max(fallbackRadius, binaryAvoidRadius, farthest + newClearance * 1.6);
     if (proposed > cap) return null; // no safe orbit space currently available
     chosenRadius = proposed;
   }
@@ -2479,6 +2488,15 @@ function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
   const nearbyAngles = sunOrbiters
     .filter(mp => Math.abs(getSunOrbitRadius(mp) - chosenRadius) < (newClearance + getOrbitalClearance(mp)))
     .map(mp => mp.angle);
+  const worldSample = new THREE.Vector3();
+  managedPlanets.forEach(mp => {
+    if (!mp?.obj?.pivot) return;
+    mp.obj.pivot.getWorldPosition(worldSample);
+    const worldR = Math.hypot(worldSample.x, worldSample.z);
+    const requiredGap = newClearance + getOrbitalClearance(mp);
+    if (Math.abs(worldR - chosenRadius) > requiredGap) return;
+    nearbyAngles.push(Math.atan2(worldSample.z, worldSample.x));
+  });
   const chosenAngle = chooseLargestGapMidpoint(nearbyAngles);
   const phaseIdx = Math.round((normalizeAngle(chosenAngle) / twoPi) * (SOLAR_ORBIT_GRID_PHASE_COUNT - 1));
   return {
