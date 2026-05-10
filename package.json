@@ -1,0 +1,13 @@
+{
+  "name": "binary-planet-globe",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Binary Planet System — static Three.js globe (Cloudflare Pages)",
+  "scripts": {
+    "dev": "npx serve -l 5500 .",
+    "deploy": "wrangler pages deploy . --project-name binary-planet-globe"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

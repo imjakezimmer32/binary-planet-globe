@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Binary Planet System</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; font-family: monospace; }
+canvas { display: block; }
+
+#hint {
+  position: fixed; top: 24px; left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.14); font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase; pointer-events: none;
+}
+#ui {
+  position: fixed; bottom: 30px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  pointer-events: none;
+}
+.row-label {
+  color: rgba(255,255,255,0.38);
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+}
+.gap { height: 4px; }
+input[type=range] {
+  pointer-events: all; -webkit-appearance: none;
+  width: 240px; height: 1px; background: rgba(255,255,255,0.20);
+  outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; cursor: pointer;
+  box-shadow: 0 0 8px rgba(255,255,255,.9), 0 0 18px rgba(255,255,255,.3);
+}
+#cam-buttons {
+  position: fixed; top: 24px; right: 24px;
+  display: flex; gap: 8px;
+}
+.cam-btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.45);
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase;
+  padding: 7px 14px; cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.cam-btn:hover { background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.75); }
+.cam-btn.active {
+  background: rgba(255,255,255,0.14);
+  color: #fff;
+  border-color: rgba(255,255,255,0.55);
+}
+
+/* ── Planet panel ────────────────────────────────────────────────── */
+#planet-panel {
+  position: fixed; bottom: 30px; right: 24px;
+  background: rgba(0,0,0,0.82);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 0; min-width: 230px;
+  display: flex; flex-direction: column;
+  backdrop-filter: blur(8px);
+  max-height: 80vh; overflow-y: auto;
+}
+#planet-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+#planet-panel-title {
+  color: rgba(255,255,255,0.4);
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+}
+#add-planet-btn {
+  background: none; border: 1px solid rgba(255,255,255,0.22);
+  color: rgba(255,255,255,0.5); font-family: monospace;
+  font-size: 10px; letter-spacing: 1px; padding: 3px 8px; cursor: pointer;
+}
+#add-planet-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.planet-item {
+  padding: 8px 14px;
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; border-left: 2px solid transparent;
+  transition: background 0.1s;
+}
+.planet-item:hover { background: rgba(255,255,255,0.06); }
+.planet-item.selected { border-left-color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.05); }
+.planet-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.planet-name {
+  color: rgba(255,255,255,0.55); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; flex: 1;
+}
+.planet-item.selected .planet-name { color: #fff; }
+#planet-edit-panel {
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  display: flex; flex-direction: column; gap: 8px;
+}
+#planet-edit-panel .row-label { pointer-events: none; }
+#planet-edit-panel input[type=range] { width: 100%; }
+
+/* ── Galaxy navigation menu ─────────────────────────────────────── */
+#galaxy-menu {
+  position: fixed; top: 24px; left: 24px;
+  z-index: 50;
+}
+#galaxy-btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.55);
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase;
+  padding: 7px 14px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+#galaxy-btn:hover, #galaxy-btn.open {
+  background: rgba(255,255,255,0.12); color: #fff;
+  border-color: rgba(255,255,255,0.45);
+}
+#galaxy-list {
+  position: absolute; top: calc(100% + 6px); left: 0;
+  background: rgba(0,0,0,0.88);
+  border: 1px solid rgba(255,255,255,0.12);
+  min-width: 210px;
+  display: none; flex-direction: column;
+  backdrop-filter: blur(8px);
+}
+#galaxy-list.open { display: flex; }
+.gx-item {
+  padding: 9px 16px;
+  color: rgba(255,255,255,0.45);
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase;
+  cursor: pointer; display: flex; justify-content: space-between; gap: 12px;
+  transition: background 0.1s, color 0.1s;
+  border-left: 2px solid transparent;
+}
+.gx-item:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.8); }
+.gx-item.current {
+  color: #fff; border-left-color: rgba(255,255,255,0.5);
+  background: rgba(255,255,255,0.05);
+}
+.gx-item.navigating { opacity: 0.4; pointer-events: none; }
+.gx-dist { color: rgba(255,255,255,0.25); font-size: 9px; align-self: center; }
+
+/* ── Splash screen ───────────────────────────────────────────────── */
+#splash {
+  position: fixed; inset: 0; z-index: 999;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  transition: opacity 1s ease;
+}
+#s-hello {
+  position: absolute;
+  font-family: monospace;
+  font-size: clamp(32px, 9vw, 130px);
+  color: #fff;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.7s ease;
+  white-space: nowrap;
+  text-shadow: 0 0 60px rgba(255,255,255,0.4);
+}
+#s-face {
+  position: absolute;
+  font-family: monospace;
+  font-size: clamp(72px, 18vw, 220px);
+  color: #fff;
+  letter-spacing: -0.05em;
+  opacity: 1;
+  transform-origin: 50% 42%;
+  will-change: transform, filter;
+  text-shadow: 0 0 40px rgba(255,255,255,0.5);
+}
+
+#cam-settings {
+  position: fixed; top: 60px; right: 24px;
+  background: rgba(0,0,0,0.72);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 16px 20px;
+  display: none; flex-direction: column; gap: 10px;
+  min-width: 220px;
+  backdrop-filter: blur(6px);
+}
+#cam-settings.open { display: flex; }
+.cs-row {
+  display: flex; flex-direction: column; gap: 5px;
+}
+.cs-label {
+  color: rgba(255,255,255,0.38);
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+}
+.cs-toggle {
+  display: flex; gap: 0;
+}
+.cs-toggle button {
+  flex: 1;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.40);
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase;
+  padding: 5px 0; cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.cs-toggle button:first-child { border-right: none; }
+.cs-toggle button.on {
+  background: rgba(255,255,255,0.14);
+  color: #fff; border-color: rgba(255,255,255,0.45);
+}
+.cs-toggle button:hover { background: rgba(255,255,255,0.09); }
+#cam-settings input[type=range] {
+  width: 100%; pointer-events: all;
+}
+</style>
+</head>
+<body>
+
+<div id="planet-panel">
+  <div id="planet-panel-header">
+    <span id="planet-panel-title">Planets</span>
+    <button id="add-planet-btn">+ Add</button>
+  </div>
+  <div id="planet-list"></div>
+  <div id="planet-edit-panel" style="display:none">
+    <div class="row-label" id="lbl-size-edit">SIZE  1.00×</div>
+    <input type="range" id="dial-size-edit" min="0.1" max="5" step="0.05" value="1">
+    <div class="gap"></div>
+    <div class="row-label" id="lbl-peak-edit">PEAKS  1.00×</div>
+    <input type="range" id="dial-peak-edit" min="0" max="3" step="0.01" value="1">
+    <div class="gap"></div>
+    <div class="row-label" id="lbl-water-edit">WATER  48%</div>
+    <input type="range" id="dial-water-edit" min="0" max="1" step="0.005" value="0.48">
+  </div>
+</div>
+
+<div id="galaxy-menu">
+  <button id="galaxy-btn">⬡ Sol System</button>
+  <div id="galaxy-list"></div>
+</div>
+
+<div id="splash">
+  <div id="s-hello">Hello Universe</div>
+  <div id="s-face"></div>
+</div>
+<div id="hint">drag to orbit &nbsp;·&nbsp; scroll to zoom</div>
+<div id="cam-buttons">
+  <button class="cam-btn active" id="btn-sun">Solar View</button>
+  <button class="cam-btn" id="btn-planet">Planet View</button>
+  <button class="cam-btn active" id="btn-grid">Grid</button>
+  <button class="cam-btn" id="btn-cam-settings">Cam Settings</button>
+</div>
+
+<div id="cam-settings">
+  <div class="cs-row">
+    <span class="cs-label" id="cs-lbl-fov">FOV &nbsp;65°</span>
+    <input type="range" id="cs-fov" min="20" max="110" step="1" value="65">
+  </div>
+  <div class="cs-row">
+    <span class="cs-label" id="cs-lbl-speed">Orbit Speed &nbsp;1.0×</span>
+    <input type="range" id="cs-speed" min="0.1" max="4" step="0.05" value="1">
+  </div>
+  <div class="cs-row">
+    <span class="cs-label" id="cs-lbl-zoom">Zoom Speed &nbsp;1.0×</span>
+    <input type="range" id="cs-zoom" min="0.1" max="4" step="0.05" value="1">
+  </div>
+  <div class="cs-row">
+    <span class="cs-label">Auto Rotate</span>
+    <div class="cs-toggle">
+      <button id="cs-rot-on" class="on">On</button>
+      <button id="cs-rot-off">Off</button>
+    </div>
+  </div>
+</div>
+<div id="ui">
+  <div class="row-label" id="lbl-scale">SCALE &nbsp;1.00 &nbsp;·&nbsp; DETAIL &nbsp;3</div>
+  <input type="range" id="dial-scale" min="0" max="1" step="0.001" value="0.483">
+  <div class="gap"></div>
+  <div class="row-label" id="lbl-warp">TIME WARP &nbsp;1.00×</div>
+  <input type="range" id="dial-warp" min="0" max="4" step="0.05" value="1">
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+// ── Renderer ──────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.001, 2000000);
+
+// ── Lighting: sun is the only real source ─────────────────────────
+// Very dim ambient keeps the night-sides from going pure black
+scene.add(new THREE.AmbientLight(0xffffff, 0.10));
+// PointLight at origin (the sun). decay=0 → no distance falloff,
+// so both planets get equal light intensity regardless of position.
+const sunLight = new THREE.PointLight(0xfff5cc, 1.6, 0, 0);
+scene.add(sunLight);   // stays at origin; position never needs updating
+
+// ── Starfield — volumetric, many depth layers, no visible edge ────
+(function() {
+  const N = 40000, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random(), v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi   = Math.acos(2 * v - 1);
+    // Strong bias toward mid-range so the zoom flies through dense star lanes
+    const r = 50 + Math.pow(Math.random(), 0.45) * 59950; // 50 → 60000
+    pos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+    pos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+    pos[i*3+2] = r * Math.cos(phi);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo,
+    new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, sizeAttenuation: false })
+  ));
+})();
+
+// ── Sun visual (at world origin, scales with planet scale) ────────
+// Core + nested corona layers using additive blending
+const SUN_R = 2.5;    // sun radius in physics units
+const sunGroup = new THREE.Group();
+scene.add(sunGroup);
+
+sunGroup.add(new THREE.Mesh(
+  new THREE.SphereGeometry(1, 40, 40),
+  new THREE.MeshBasicMaterial({ color: 0xffeedd })
+));
+[
+  [1.30, 0xffcc44, 0.20],
+  [2.00, 0xff9900, 0.09],
+  [3.20, 0xff5500, 0.04],
+  [5.50, 0xff2200, 0.02],
+].forEach(([s, c, o]) =>
+  sunGroup.add(new THREE.Mesh(
+    new THREE.SphereGeometry(s, 24, 24),
+    new THREE.MeshBasicMaterial({
+      color: c, transparent: true, opacity: o,
+      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+    })
+  ))
+);
+
+// ── Camera — orbits the sun (world origin) ────────────────────────
+// Distance = ORBIT_BASE * curScale * userZoom.  Planet scale grows
+// → camera pulls back → system always fills the same FOV.
+const ORBIT_BASE = 30;
+const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
+
+// Sun-view orbit state
+let orbitTheta = -0.3, orbitPhi = 0.92, orbitZoom = 3.0;
+let zoomTarget = null; // when set, animate loop log-lerps orbitZoom toward it
+let dTheta = 0, dPhi = 0;
+
+// Planet-view orbit state (separate angles so each view remembers its position)
+let pOrbitTheta = -0.3, pOrbitPhi = 1.1;
+let pDTheta = 0, pDPhi = 0;
+
+let cameraMode    = 'sun'; // 'sun' | 'planet'
+let autoRotate    = true;
+let orbitSpeedMul = 1.0;
+let zoomSpeedMul  = 1.0;
+let dragButton = 0;
+let dragging = false, lastPX = 0, lastPY = 0;
+
+// cameraTarget — the world point the camera orbits.  Normally the sun (origin)
+// but animates smoothly when navigating to another star system.
+const cameraTarget = new THREE.Vector3(0, 0, 0);
+
+// Pan offset — shifts the look-at target in camera's local right/up plane
+const panOffset = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up    = new THREE.Vector3();
+
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+renderer.domElement.addEventListener('pointerdown', e => {
+  dragging = true; dragButton = e.button;
+  lastPX = e.clientX; lastPY = e.clientY;
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+window.addEventListener('pointerup', () => dragging = false);
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const rawDX = e.clientX - lastPX;
+  const rawDY = e.clientY - lastPY;
+  lastPX = e.clientX; lastPY = e.clientY;
+
+  if (dragButton === 2) {
+    // Right-drag: pan — slide look-at target in camera's local right/up plane
+    camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
+    const panSpeed = 0.012 * orbitZoom;
+    panOffset.addScaledVector(_right, -rawDX * panSpeed);
+    panOffset.addScaledVector(_up,     rawDY * panSpeed);
+  } else {
+    // Left-drag: orbit
+    const dx = -rawDX * 0.006 * orbitSpeedMul;
+    const dy = -rawDY * 0.006 * orbitSpeedMul;
+    if (cameraMode === 'sun') { dTheta += dx; dPhi += dy; }
+    else                      { pDTheta += dx; pDPhi += dy; }
+  }
+});
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  zoomTarget = null; // user takes over — cancel any animated zoom
+  const step = 1 + 0.08 * zoomSpeedMul;
+  orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * (e.deltaY > 0 ? step : 1 / step)));
+}, { passive: false });
+
+function updateCamera(curScale) {
+  if (cameraMode === 'sun') {
+    orbitTheta += dTheta; dTheta *= 0.88;
+    orbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, orbitPhi + dPhi));
+    dPhi *= 0.88;
+    if (autoRotate && (!dragging || dragButton !== 0)) orbitTheta += 0.0007; // gentle idle drift
+
+    const r = ORBIT_BASE * curScale * orbitZoom;
+    const sp = Math.sin(orbitPhi), cp = Math.cos(orbitPhi);
+    const lookAt = cameraTarget.clone().add(panOffset);
+    camera.position.set(
+      lookAt.x + r * sp * Math.sin(orbitTheta),
+      lookAt.y + r * cp,
+      lookAt.z + r * sp * Math.cos(orbitTheta)
+    );
+    camera.lookAt(lookAt);
+  } else {
+    // Planet view: orbit around the binary system's COM in world space
+    pOrbitTheta += pDTheta; pDTheta *= 0.88;
+    pOrbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, pOrbitPhi + pDPhi));
+    pDPhi *= 0.88;
+    if (autoRotate && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
+
+    const base = sysGroup.position.clone().add(panOffset);
+    const r = PLANET_ORBIT_BASE * orbitZoom; // planet sizes don't scale with universe
+    const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
+    camera.position.set(
+      base.x + r * sp * Math.sin(pOrbitTheta),
+      base.y + r * cp,
+      base.z + r * sp * Math.cos(pOrbitTheta)
+    );
+    camera.lookAt(base);
+  }
+}
+
+// ── Noise ─────────────────────────────────────────────────────────
+function noise3(x, y, z) {
+  return (
+    Math.sin(x * 1.731 + y * 2.571 + z * 0.913) * 0.500 +
+    Math.sin(x * 3.127 + z * 1.234 + y * 0.456) * 0.250 +
+    Math.sin(y * 4.321 + z * 2.876 + x * 1.111) * 0.125 +
+    Math.sin(x * 7.654 + y * 5.432 + z * 3.210) * 0.063 +
+    Math.sin(x * 13.10 + z * 11.30 + y * 9.170) * 0.031
+  );
+}
+
+// ── Terrain / water globals ───────────────────────────────────────
+let peakScale  = 1.0;
+let waterLevel = 0.48;
+function waterScale() { return 0.80 + waterLevel * 0.42; }
+//  waterLevel 0   → 0.80 × baseR  (dry, water below terrain)
+//  waterLevel 0.48 → ~1.00 × baseR  (sea level)
+//  waterLevel 1   → 1.22 × baseR  (full ocean)
+
+// ── Globe geometry ────────────────────────────────────────────────
+function buildGlobe(radius, detail, seed, ps) {
+  // ps = peakScale for this planet (explicit, not global)
+  const geo = new THREE.IcosahedronGeometry(radius, detail);
+  const arr = geo.attributes.position.array;
+  for (let i = 0; i < geo.attributes.position.count; i++) {
+    const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
+    const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
+    const nx = ox/len, ny = oy/len, nz = oz/len;
+    const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
+             + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
+    const r = radius * (1 + d);
+    arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
+  }
+  geo.attributes.position.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// ── Elevation colour ramps ─────────────────────────────────────────
+// WET palette: planet has water → vegetation is possible → greens appear
+const PALETTE_WET = [
+  [-0.200, [0.920, 0.820, 0.050]],  // yellow lava  (hidden by water when wet)
+  [-0.180, [0.680, 0.050, 0.018]],  // deep red lava
+  [-0.130, [0.048, 0.042, 0.042]],  // near black
+  [-0.100, [0.175, 0.175, 0.180]],  // dark grey
+  [-0.030, [0.310, 0.195, 0.105]],  // brown sub-floor
+  [ 0.000, [0.290, 0.175, 0.090]],  // shore brown
+  [ 0.040, [0.105, 0.320, 0.062]],  // lowland green
+  [ 0.140, [0.080, 0.220, 0.040]],  // highland green
+  [ 0.165, [0.330, 0.190, 0.090]],  // treeline brown
+  [ 0.182, [0.370, 0.365, 0.355]],  // rock grey
+  [ 0.200, [0.940, 0.940, 0.930]],  // peak white
+];
+// DRY palette: no water → no green, lava exposed in deep basins
+const PALETTE_DRY = [
+  [-0.200, [0.920, 0.820, 0.050]],  // yellow lava
+  [-0.180, [0.680, 0.050, 0.018]],  // deep red lava
+  [-0.130, [0.048, 0.042, 0.042]],  // near black
+  [-0.100, [0.175, 0.175, 0.180]],  // dark grey
+  [-0.030, [0.310, 0.195, 0.105]],  // brown
+  [ 0.000, [0.310, 0.195, 0.105]],  // dusty brown (same — no shore distinction)
+  [ 0.040, [0.462, 0.312, 0.155]],  // sandy tan   (was green)
+  [ 0.140, [0.382, 0.240, 0.110]],  // dusty brown (was highland green)
+  [ 0.165, [0.330, 0.190, 0.090]],  // brown
+  [ 0.182, [0.370, 0.365, 0.355]],  // rock grey
+  [ 0.200, [0.940, 0.940, 0.930]],  // peak white
+];
+function elevColor(ne, pal) {
+  if (ne <= pal[0][0]) return pal[0][1];
+  for (let i = 1; i < pal.length; i++) {
+    if (ne <= pal[i][0]) {
+      const t = (ne - pal[i-1][0]) / (pal[i][0] - pal[i-1][0]);
+      const a = pal[i-1][1], b = pal[i][1];
+      return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+    }
+  }
+  return pal[pal.length-1][1];
+}
+function blendPalette(wet) {
+  // wet: 0=fully dry, 1=fully wet.  Returns blended palette array.
+  if (wet >= 1) return PALETTE_WET;
+  if (wet <= 0) return PALETTE_DRY;
+  return PALETTE_WET.map((e, i) => [
+    e[0],
+    e[1].map((c, j) => c * wet + PALETTE_DRY[i][1][j] * (1 - wet))
+  ]);
+}
+
+function colorizeGlobe(geo, baseR, ps, wl) {
+  // ps = peakScale, wl = waterLevel — explicit per-planet, not global
+  ps = Math.max(ps, 0.001);
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const faceCount = pos.count / 3;
+
+  // Blend palette: green fades in when wl > 0.05, fully green at 0.20
+  const wet = Math.min(Math.max((wl - 0.05) / 0.15, 0), 1);
+  const pal = blendPalette(wet);
+
+  // Pass 1: find actual elevation min/max for palette stretching
+  let minNe = Infinity, maxNe = -Infinity;
+  for (let f = 0; f < faceCount; f++) {
+    let sumE = 0;
+    for (let v = 0; v < 3; v++) {
+      const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      sumE += Math.sqrt(x*x + y*y + z*z);
+    }
+    const ne = (sumE / 3 / baseR - 1) / ps;
+    if (ne < minNe) minNe = ne;
+    if (ne > maxNe) maxNe = ne;
+  }
+  const pMin = pal[0][0], pMax = pal[pal.length-1][0];
+  const negScale = minNe < 0 ? pMin / minNe : 1;
+  const posScale = maxNe > 0 ? pMax / maxNe : 1;
+
+  // Pass 2: colorize using elevation only — water sphere covers underwater faces
+  for (let f = 0; f < faceCount; f++) {
+    let sumE = 0;
+    for (let v = 0; v < 3; v++) {
+      const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      sumE += Math.sqrt(x*x + y*y + z*z);
+    }
+    const ne     = (sumE / 3 / baseR - 1) / ps;
+    const mapped = ne < 0 ? ne * negScale : ne * posScale;
+    const [r,g,b] = elevColor(mapped, pal);
+    for (let v = 0; v < 3; v++) {
+      col[(f*3+v)*3]=r; col[(f*3+v)*3+1]=g; col[(f*3+v)*3+2]=b;
+    }
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+}
+
+// ── Planet factory ────────────────────────────────────────────────
+function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
+  const pivot = new THREE.Group();
+  const spin  = new THREE.Group();
+  spin.rotation.z = axisTilt;
+  pivot.add(spin);
+  let built = [], waterRef = null;
+
+  // Per-planet state — independent of any global
+  const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
+
+  function build(d) {
+    built.forEach(c => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => m.dispose());
+      spin.remove(c);
+    });
+    built = [];
+
+    const ps = state.peakScale, wl = state.waterLevel;
+    const ws = 0.80 + wl * 0.42;          // water sphere scale factor
+
+    const idxGeo  = buildGlobe(baseR, d, seed, ps);
+    const flatGeo = idxGeo.toNonIndexed();
+    colorizeGlobe(flatGeo, baseR, ps, wl);
+
+    // Depth pre-pass: back-faces seal the silhouette so water can't bleed through
+    const depthBack = new THREE.Mesh(flatGeo,
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: THREE.BackSide })
+    );
+    depthBack.renderOrder = 0;
+
+    const terrain = new THREE.Mesh(flatGeo, new THREE.MeshLambertMaterial({
+      vertexColors: true, flatShading: true,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    }));
+    terrain.renderOrder = 0;
+
+    const water = new THREE.Mesh(
+      new THREE.SphereGeometry(baseR, 72, 36),
+      new THREE.MeshPhongMaterial({ color: 0x003a8c, specular: 0x2266dd, shininess: 120 })
+    );
+    water.scale.setScalar(ws);
+    water.visible = wl >= 0.05;   // hide completely when dry — no shrunk bubble
+    water.renderOrder = 1;
+    waterRef = water;
+
+    const wire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(idxGeo),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
+    );
+    wire.renderOrder = 2;
+
+    const atmo = new THREE.Mesh(
+      new THREE.SphereGeometry(baseR * 1.10, 24, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x4499ff, transparent: true, opacity: 0.06,
+        side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    atmo.renderOrder = 3;
+
+    built = [depthBack, terrain, water, wire, atmo];
+    spin.add(...built);
+  }
+
+  build(detailInit);
+  return {
+    pivot, spin, state,
+    rebuild:  build,
+    setWater: (s, wl) => { if (waterRef) { waterRef.scale.setScalar(s); waterRef.visible = (wl === undefined ? s > 0.84 : wl >= 0.05); } },
+    setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
+    syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
+  };
+}
+
+// ── System group: binary COM sits here, planets are children ──────
+const sysGroup = new THREE.Group();
+scene.add(sysGroup);
+
+const p1 = createPlanet(1.00, 3, 0.00,  0.22);
+const p2 = createPlanet(0.67, 2, 5.37, -0.38);
+sysGroup.add(p1.pivot, p2.pivot);
+
+// ── Orbit trails (in sysGroup local space = binary-relative) ──────
+const TRAIL_LEN = 520;
+function makeTrail() {
+  const positions = new Float32Array(TRAIL_LEN * 3);
+  const colors    = new Float32Array(TRAIL_LEN * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
+  geo.setDrawRange(0, 0);
+  const line = new THREE.Line(geo,
+    new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.60 })
+  );
+  line.renderOrder = 0;
+  scene.add(line);
+  return { positions, colors, line, count: 0 };
+}
+function pushTrail(t, x, y, z) {
+  const { positions: p, colors: c } = t;
+  const N = TRAIL_LEN;
+  if (t.count < N) { p[t.count*3]=x; p[t.count*3+1]=y; p[t.count*3+2]=z; t.count++; }
+  else { p.copyWithin(0, 3); p[(N-1)*3]=x; p[(N-1)*3+1]=y; p[(N-1)*3+2]=z; }
+  const n = t.count;
+  for (let i = 0; i < n; i++) {
+    const v = n < 2 ? 1 : i / (n-1);
+    c[i*3]=v; c[i*3+1]=v; c[i*3+2]=v;
+  }
+  t.line.geometry.setDrawRange(0, n);
+  t.line.geometry.attributes.position.needsUpdate = true;
+  t.line.geometry.attributes.color.needsUpdate    = true;
+}
+const trail1 = makeTrail(), trail2 = makeTrail();
+
+// Gravity link thread between the two planets
+const linkPos = new Float32Array(6);
+const linkGeo = new THREE.BufferGeometry();
+linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
+scene.add(new THREE.Line(linkGeo,
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07, depthTest: false })
+));
+
+// ── Binary planet physics (positions relative to binary COM) ──────
+// G=1, M1=3, M2=1.5, sep=3.5, T_binary ≈ 19 sim-s at 1× warp
+const G=1, M1=3, M2=1.5, SEP=3.5, MT=M1+M2;
+const ω0 = Math.sqrt(G * MT / (SEP ** 3));
+const body = [
+  { pos: new THREE.Vector3(-(M2/MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0,  ω0*(M2/MT)*SEP), mass: M1 },
+  { pos: new THREE.Vector3( (M1/MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0, -ω0*(M1/MT)*SEP), mass: M2 },
+];
+function stepGravity(dt) {
+  const dx = body[1].pos.x - body[0].pos.x;
+  const dy = body[1].pos.y - body[0].pos.y;
+  const dz = body[1].pos.z - body[0].pos.z;
+  const d2e = dx*dx + dy*dy + dz*dz + 0.0625;   // Plummer softening ε=0.25
+  const inv = G * M1 * M2 / (d2e * Math.sqrt(d2e));
+  const fx = inv*dx, fy = inv*dy, fz = inv*dz;
+  body[0].vel.x += fx/M1*dt; body[0].vel.y += fy/M1*dt; body[0].vel.z += fz/M1*dt;
+  body[1].vel.x -= fx/M2*dt; body[1].vel.y -= fy/M2*dt; body[1].vel.z -= fz/M2*dt;
+  body[0].pos.addScaledVector(body[0].vel, dt);
+  body[1].pos.addScaledVector(body[1].vel, dt);
+}
+
+// ── Binary COM orbit around sun ───────────────────────────────────
+// The binary system as a whole orbits the sun (at origin).
+// SUN_ORBIT: orbit radius in physics units.
+// COM_OMEGA: angular velocity, rad/sim-s → period ≈ 126 sim-s (≈6.5× binary period).
+const SUN_ORBIT = 40;
+const COM_OMEGA = 0.012;
+let comAngle = 0;
+
+// ── Dial wiring ───────────────────────────────────────────────────
+const SCALE_MIN = 0.08, SCALE_MAX = 150;
+const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
+function sliderToScale(v) { return SCALE_MIN * Math.exp(SCALE_LOG * v); }
+function scaleToDetail(s) {
+  // Scale up = universe spreads out, planets appear smaller → less detail needed.
+  // Scale down = camera closer relative to planet size → more detail needed.
+  if (s >= 50.00) return 1;
+  if (s >= 15.00) return 2;
+  if (s >=  4.50) return 3;
+  if (s >=  1.60) return 4;
+  if (s >=  0.55) return 5;
+  if (s >=  0.20) return 6;
+  return 7;
+}
+
+let targetScale = 1.0, timeWarp = 1.0, curDetail = 3;
+let spin1 = 0, spin2 = 0, sunSpin = 0;
+
+const $ = id => document.getElementById(id);
+const dialScale = $('dial-scale'), lblScale = $('lbl-scale');
+const dialWarp  = $('dial-warp'),  lblWarp  = $('lbl-warp');
+
+dialScale.addEventListener('input', () => {
+  targetScale = sliderToScale(parseFloat(dialScale.value));
+  const d = scaleToDetail(targetScale);
+  lblScale.textContent = `SCALE  ${targetScale.toFixed(2)}  ·  DETAIL  ${d}`;
+  if (d !== curDetail) {
+    curDetail = d;
+    managedPlanets.forEach(mp => { mp.obj.rebuild(d); mp.obj.syncGrid(); });
+  }
+});
+dialWarp.addEventListener('input', () => {
+  timeWarp = parseFloat(dialWarp.value);
+  lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+});
+
+// ── Planet management ─────────────────────────────────────────────
+// managedPlanets mirrors the actual planet objects + metadata.
+// Extra added planets use simple circular orbits around the solar COM.
+const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
+let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary }
+let selectedPlanetIdx = null;
+
+function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed) {
+  managedPlanets.push({ id: managedPlanets.length, name, obj, color, isBinary,
+                         orbitR: orbitR||0, orbitSpeed: orbitSpeed||0, angle: Math.random()*Math.PI*2 });
+}
+
+// Register original binary planets
+registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true);
+registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true);
+
+function rebuildPlanetList() {
+  const list = $('planet-list');
+  list.innerHTML = '';
+  managedPlanets.forEach((mp, i) => {
+    const el = document.createElement('div');
+    el.className = 'planet-item' + (i === selectedPlanetIdx ? ' selected' : '');
+    el.innerHTML = `<span class="planet-dot" style="background:${mp.color}"></span>
+                    <span class="planet-name">${mp.name}</span>`;
+    el.addEventListener('click', () => selectPlanet(i));
+    list.appendChild(el);
+  });
+}
+
+const editPanel   = $('planet-edit-panel');
+const dialSizeE   = $('dial-size-edit'),  lblSizeE  = $('lbl-size-edit');
+const dialPeakE   = $('dial-peak-edit'),  lblPeakE  = $('lbl-peak-edit');
+const dialWaterE  = $('dial-water-edit'), lblWaterE = $('lbl-water-edit');
+
+function selectPlanet(idx) {
+  selectedPlanetIdx = idx;
+  rebuildPlanetList();
+  const mp = managedPlanets[idx];
+  editPanel.style.display = 'flex';
+  dialSizeE.value  = mp.obj.state.size;
+  dialPeakE.value  = mp.obj.state.peakScale;
+  dialWaterE.value = mp.obj.state.waterLevel;
+  lblSizeE.textContent  = `SIZE  ${mp.obj.state.size.toFixed(2)}×`;
+  lblPeakE.textContent  = `PEAKS  ${mp.obj.state.peakScale.toFixed(2)}×`;
+  lblWaterE.textContent = `WATER  ${Math.round(mp.obj.state.waterLevel*100)}%`;
+}
+
+dialSizeE.addEventListener('input', () => {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  mp.obj.state.size = parseFloat(dialSizeE.value);
+  lblSizeE.textContent = `SIZE  ${mp.obj.state.size.toFixed(2)}×`;
+  // pivot.scale is updated every frame in the animate loop — no rebuild needed
+});
+
+dialPeakE.addEventListener('input', () => {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  mp.obj.state.peakScale = parseFloat(dialPeakE.value);
+  lblPeakE.textContent = `PEAKS  ${mp.obj.state.peakScale.toFixed(2)}×`;
+  mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+});
+
+dialWaterE.addEventListener('input', () => {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  mp.obj.state.waterLevel = parseFloat(dialWaterE.value);
+  lblWaterE.textContent = `WATER  ${Math.round(mp.obj.state.waterLevel*100)}%`;
+  mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+});
+
+// Add planet button
+$('add-planet-btn').addEventListener('click', () => {
+  const idx   = managedPlanets.length;
+  const seed  = Math.random() * 99;
+  const color = PLANET_COLORS[idx % PLANET_COLORS.length];
+  const orbitR     = 5 + Math.random() * 8;
+  const orbitSpeed = (0.03 + Math.random() * 0.04) * (Math.random()<0.5?1:-1);
+  const tilt  = (Math.random() - 0.5) * 0.6;
+  const newP  = createPlanet(0.5 + Math.random() * 0.6, Math.max(1, curDetail-1), seed, tilt);
+  sysGroup.add(newP.pivot);
+  newP.pivot.position.set(orbitR, 0, 0);
+  newP.setGrid(gridOn);   // match current grid toggle state
+  registerPlanet(newP, `Planet ${idx+1}`, color, false, orbitR, orbitSpeed);
+  rebuildPlanetList();
+  selectPlanet(managedPlanets.length - 1);
+});
+
+rebuildPlanetList();
+
+// ── Camera view buttons ───────────────────────────────────────────
+const btnSun    = document.getElementById('btn-sun');
+const btnPlanet = document.getElementById('btn-planet');
+function setCamMode(mode) {
+  cameraMode = mode;
+  btnSun.classList.toggle('active', mode === 'sun');
+  btnPlanet.classList.toggle('active', mode === 'planet');
+}
+btnSun.addEventListener('click',    () => setCamMode('sun'));
+btnPlanet.addEventListener('click', () => setCamMode('planet'));
+
+const btnGrid = document.getElementById('btn-grid');
+let gridOn = true;
+btnGrid.addEventListener('click', () => {
+  gridOn = !gridOn;
+  btnGrid.classList.toggle('active', gridOn);
+  managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
+});
+
+// ── Camera settings panel ─────────────────────────────────────────
+const btnCamSettings = document.getElementById('btn-cam-settings');
+const camSettingsEl  = document.getElementById('cam-settings');
+btnCamSettings.addEventListener('click', () => {
+  const open = camSettingsEl.classList.toggle('open');
+  btnCamSettings.classList.toggle('active', open);
+});
+
+// FOV
+const csFov = document.getElementById('cs-fov');
+const csLblFov = document.getElementById('cs-lbl-fov');
+csFov.addEventListener('input', () => {
+  const v = parseFloat(csFov.value);
+  camera.fov = v;
+  camera.updateProjectionMatrix();
+  csLblFov.textContent = `FOV  ${v}°`;
+});
+
+// Orbit speed
+const csSpeed = document.getElementById('cs-speed');
+const csLblSpeed = document.getElementById('cs-lbl-speed');
+csSpeed.addEventListener('input', () => {
+  orbitSpeedMul = parseFloat(csSpeed.value);
+  csLblSpeed.textContent = `Orbit Speed  ${orbitSpeedMul.toFixed(1)}×`;
+});
+
+// Zoom speed
+const csZoom = document.getElementById('cs-zoom');
+const csLblZoom = document.getElementById('cs-lbl-zoom');
+csZoom.addEventListener('input', () => {
+  zoomSpeedMul = parseFloat(csZoom.value);
+  csLblZoom.textContent = `Zoom Speed  ${zoomSpeedMul.toFixed(1)}×`;
+});
+
+// Auto-rotate toggle
+const csRotOn  = document.getElementById('cs-rot-on');
+const csRotOff = document.getElementById('cs-rot-off');
+function setAutoRotate(v) {
+  autoRotate = v;
+  csRotOn.classList.toggle('on', v);
+  csRotOff.classList.toggle('on', !v);
+}
+csRotOn.addEventListener('click',  () => setAutoRotate(true));
+csRotOff.addEventListener('click', () => setAutoRotate(false));
+
+// ── Animate ───────────────────────────────────────────────────────
+const BASE_DT = 1 / 60;
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Smooth zoom toward target in log-space (perceptually uniform speed)
+  if (zoomTarget !== null) {
+    const logCur = Math.log(orbitZoom);
+    const logTgt = Math.log(zoomTarget);
+    if (Math.abs(logCur - logTgt) < 0.005) {
+      orbitZoom = zoomTarget;
+      zoomTarget = null;
+    } else {
+      orbitZoom = Math.exp(logCur + (logTgt - logCur) * 0.008);
+    }
+  }
+
+  // Smooth scale lerp
+  const s = sysGroup.scale.x;
+  const curScale = s + (targetScale - s) * 0.08;
+  sysGroup.scale.setScalar(curScale);
+
+  // Camera orbits the sun (world origin), pulls back as curScale grows
+  updateCamera(curScale);
+
+  if (timeWarp > 0) {
+    const dt    = BASE_DT * timeWarp;
+    const steps = Math.max(1, Math.ceil(timeWarp * 2));
+
+    // Step binary gravity (sub-stepped for stability)
+    for (let i = 0; i < steps; i++) stepGravity(dt / steps);
+
+    // Advance binary COM's heliocentric orbit
+    comAngle += COM_OMEGA * dt;
+
+    spin1   += 0.006  * timeWarp;
+    spin2   += 0.009  * timeWarp;
+    sunSpin += 0.0004 * timeWarp;
+
+    // Animate extra (non-binary) added planets in simple circular orbits
+    managedPlanets.forEach(mp => {
+      if (mp.isBinary) return;
+      mp.angle += mp.orbitSpeed * timeWarp;
+      mp.obj.pivot.position.set(
+        Math.cos(mp.angle) * mp.orbitR,
+        0,
+        Math.sin(mp.angle) * mp.orbitR
+      );
+      mp.obj.spin.rotation.y += 0.008 * timeWarp;
+    });
+  }
+
+  // Place the binary system's COM around the sun.
+  // sysGroup.position is in scene units; physics orbit radius scales with curScale.
+  const comR = SUN_ORBIT * curScale;
+  sysGroup.position.set(comR * Math.cos(comAngle), 0, comR * Math.sin(comAngle));
+
+  // Planet positions are relative to binary COM (physics units → scaled by sysGroup)
+  p1.pivot.position.copy(body[0].pos);
+  p2.pivot.position.copy(body[1].pos);
+  p1.spin.rotation.y = spin1;
+  p2.spin.rotation.y = spin2;
+
+  // Size dial is a multiplier on top of the universe scale — planet world-size
+  // = baseR × state.size × curScale, so it stays proportional to its orbit.
+  managedPlanets.forEach(mp => {
+    mp.obj.pivot.scale.setScalar(mp.obj.state.size);
+  });
+
+  // Trails — world-space positions so the heliocentric orbit is captured correctly
+  const cx = sysGroup.position.x, cy = sysGroup.position.y, cz = sysGroup.position.z;
+  pushTrail(trail1,
+    cx + body[0].pos.x * curScale,
+    cy + body[0].pos.y * curScale,
+    cz + body[0].pos.z * curScale);
+  pushTrail(trail2,
+    cx + body[1].pos.x * curScale,
+    cy + body[1].pos.y * curScale,
+    cz + body[1].pos.z * curScale);
+
+  // Gravity link line — world space
+  linkPos[0]=cx+body[0].pos.x*curScale; linkPos[1]=cy+body[0].pos.y*curScale; linkPos[2]=cz+body[0].pos.z*curScale;
+  linkPos[3]=cx+body[1].pos.x*curScale; linkPos[4]=cy+body[1].pos.y*curScale; linkPos[5]=cz+body[1].pos.z*curScale;
+  linkGeo.attributes.position.needsUpdate = true;
+
+  // Sun visual: scale with curScale, rotate slowly
+  sunGroup.scale.setScalar(SUN_R); // sun is a fixed world size; scale slider only moves orbits
+  sunGroup.rotation.y = sunSpin;
+
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Galaxy destinations ───────────────────────────────────────────
+const GALAXY_DESTINATIONS = [
+  { name: 'Sol System',      dist: 'Home',      color: 0xffffd0, pos: new THREE.Vector3(0,    0,    0)    },
+  { name: 'Alpha Centauri',  dist: '4.37 ly',   color: 0xffcc88, pos: new THREE.Vector3( 1800, 220, -1300) },
+  { name: 'Sirius',          dist: '8.6 ly',    color: 0xaaddff, pos: new THREE.Vector3(-2100,-180,  900)  },
+  { name: 'Tau Ceti',        dist: '11.9 ly',   color: 0xffee99, pos: new THREE.Vector3(-700,  450, 2600)  },
+  { name: 'Kepler-442',      dist: '1,206 ly',  color: 0xff9966, pos: new THREE.Vector3( 3100,-700, 1500)  },
+  { name: "Gliese 667C",     dist: '23.6 ly',   color: 0xff6644, pos: new THREE.Vector3(-1500, 600,-2300)  },
+];
+let currentDestIndex = 0;
+let isNavigating     = false;
+
+// Beacon sun visual at each non-home destination
+GALAXY_DESTINATIONS.forEach((dest, i) => {
+  if (i === 0) return;
+  const grp  = new THREE.Group();
+  grp.position.copy(dest.pos);
+  // Core
+  grp.add(new THREE.Mesh(
+    new THREE.SphereGeometry(5, 16, 16),
+    new THREE.MeshBasicMaterial({ color: dest.color })
+  ));
+  // Corona glow layers
+  [10, 16, 24].forEach((r, li) => {
+    grp.add(new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 12),
+      new THREE.MeshBasicMaterial({
+        color: dest.color, side: THREE.BackSide,
+        transparent: true, opacity: 0.18 - li * 0.05,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    ));
+  });
+  // Simple orbiting planet
+  const orb = new THREE.Group();
+  const pMesh = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1.8, 2),
+    new THREE.MeshLambertMaterial({ color: 0x448844 })
+  );
+  pMesh.position.set(28, 0, 0);
+  orb.add(pMesh);
+  grp.add(orb);
+  dest._orb  = orb;
+  dest._grp  = grp;
+  scene.add(grp);
+});
+
+// ── Galaxy navigation ─────────────────────────────────────────────
+function navigateTo(idx) {
+  if (isNavigating || idx === currentDestIndex) return;
+  isNavigating = true;
+  zoomTarget = null; // cancel any splash zoom in progress
+  const dest   = GALAXY_DESTINATIONS[idx];
+  const startT = cameraTarget.clone();
+  const endT   = dest.pos.clone();
+  const startZ = orbitZoom;
+  const midZ   = Math.max(startZ, 18); // pull back mid-flight
+  const endZ   = 1.6;
+  const dur    = 3800;
+  const t0     = performance.now();
+
+  // Update menu UI to show navigating state
+  document.querySelectorAll('.gx-item').forEach(el => el.classList.add('navigating'));
+
+  function step() {
+    const p    = Math.min((performance.now() - t0) / dur, 1);
+    const ease = p < 0.5 ? 4*p*p*p : 1 - Math.pow(-2*p+2,3)/2; // cubic in-out
+
+    // Smoothly move cameraTarget
+    cameraTarget.lerpVectors(startT, endT, ease);
+    panOffset.set(0,0,0);
+
+    // Zoom arc: pull out then zoom in
+    if (p < 0.45) {
+      orbitZoom = startZ + (midZ - startZ) * (p / 0.45);
+    } else {
+      const pp = (p - 0.45) / 0.55;
+      const e2 = pp < 0.5 ? 2*pp*pp : -1+(4-2*pp)*pp;
+      orbitZoom = midZ + (endZ - midZ) * e2;
+    }
+
+    if (p < 1) {
+      requestAnimationFrame(step);
+    } else {
+      currentDestIndex = idx;
+      isNavigating     = false;
+      rebuildGalaxyMenu();
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+// ── Galaxy menu UI ────────────────────────────────────────────────
+const galaxyBtn  = document.getElementById('galaxy-btn');
+const galaxyList = document.getElementById('galaxy-list');
+
+function rebuildGalaxyMenu() {
+  galaxyList.innerHTML = '';
+  GALAXY_DESTINATIONS.forEach((dest, i) => {
+    const el = document.createElement('div');
+    el.className = 'gx-item' + (i === currentDestIndex ? ' current' : '');
+    el.innerHTML = `<span>${dest.name}</span><span class="gx-dist">${dest.dist}</span>`;
+    el.addEventListener('click', () => {
+      galaxyList.classList.remove('open');
+      galaxyBtn.classList.remove('open');
+      navigateTo(i);
+    });
+    galaxyList.appendChild(el);
+  });
+  galaxyBtn.textContent = '⬡ ' + GALAXY_DESTINATIONS[currentDestIndex].name;
+}
+
+galaxyBtn.addEventListener('click', () => {
+  const open = galaxyList.classList.toggle('open');
+  galaxyBtn.classList.toggle('open', open);
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('#galaxy-menu')) {
+    galaxyList.classList.remove('open');
+    galaxyBtn.classList.remove('open');
+  }
+});
+
+rebuildGalaxyMenu();
+
+// Spin orbiting planets at each destination
+const _origAnimate = animate;
+(function patchAnimate() {
+  const origRender = renderer.render.bind(renderer);
+  renderer.render = (scene, camera) => {
+    const t = performance.now() * 0.001;
+    GALAXY_DESTINATIONS.forEach(dest => {
+      if (dest._orb) dest._orb.rotation.y = t * 0.4;
+    });
+    origRender(scene, camera);
+  };
+})();
+
+// ── Splash intro sequence ─────────────────────────────────────────
+(function() {
+  const splash  = document.getElementById('splash');
+  const helloEl = document.getElementById('s-hello');
+  const faceEl  = document.getElementById('s-face');
+
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Start camera very far out; the animate loop will log-lerp it to 3.0
+  orbitZoom = 4000;
+
+  async function run() {
+    await wait(200);
+
+    // ── Phase 1: HELLO WORLD ───────────────────────────────────────
+    helloEl.style.opacity = '1';
+    await wait(1600);
+    helloEl.style.opacity = '0';
+    await wait(750);
+
+    // ── Phase 2: Type ":)" ─────────────────────────────────────────
+    faceEl.style.transition = 'none';
+    faceEl.style.transform  = 'rotate(0deg)';
+    faceEl.style.filter     = 'none';
+    faceEl.textContent = '';
+    await wait(100);
+    faceEl.textContent = ':';
+    await wait(380);
+    faceEl.textContent = ':)';
+    await wait(900);
+
+    // ── Phase 3: Rotate 90° → proper smiley face ──────────────────
+    faceEl.style.transition = 'transform 1.1s cubic-bezier(0.34, 1.26, 0.64, 1)';
+    faceEl.style.transform  = 'rotate(90deg)';
+    await wait(1300);
+
+    // ── Phase 4: zoom into the eye ────────────────────────────────────
+    await wait(500);
+    faceEl.style.transition = 'transform 1.4s cubic-bezier(0.4, 0, 1, 1), filter 1.4s ease';
+    faceEl.style.filter     = 'blur(0px) brightness(1)';
+    faceEl.style.transform  = 'rotate(90deg) scale(120)';
+    faceEl.style.filter     = 'blur(18px) brightness(8)';
+    await wait(900);
+
+    // ── Phase 5: Fade splash — zoom starts HERE so the user's first view
+    //    of the 3D scene is from 4000× and they watch it zoom in. ────────
+    zoomTarget = 3.0;   // log-lerp fires from this exact frame onward
+    splash.style.transition = 'opacity 0.9s ease';
+    splash.style.opacity    = '0';
+    await wait(900);
+    splash.style.display = 'none';
+    rebuildGalaxyMenu();
+    // zoom continues past the fade, settling gently near orbitZoom 3
+  }
+
+  run();
+})();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
