@@ -1585,21 +1585,30 @@ function colorizeGlobe(geo, baseR, ps, wl) {
     let r, g, b;
     if (hasLiquid && faceR <= liquidR * 1.002) {
       if (hasWater) {
-        // Slight tint variation keeps oceans faceted without a separate sphere shell.
-        const tint = (f % 11) / 11;
-        r = 0.10 + tint * 0.02;
-        g = 0.32 + tint * 0.04;
-        b = 0.66 + tint * 0.06;
+        // Water keeps a blue body and transitions to aqua right at the shore.
+        const waterBandStart = liquidR * 0.988;
+        const waterBandSize = Math.max(liquidR * 0.012, 0.0001);
+        const shoreBlend = Math.min(Math.max((faceR - waterBandStart) / waterBandSize, 0), 1);
+        const facet = (f % 11) / 11;
+        const coreR = 0.08 + facet * 0.02;
+        const coreG = 0.30 + facet * 0.03;
+        const coreB = 0.66 + facet * 0.05;
+        const shoreR = 0.20;
+        const shoreG = 0.88;
+        const shoreB = 0.86;
+        r = coreR + (shoreR - coreR) * shoreBlend;
+        g = coreG + (shoreG - coreG) * shoreBlend;
+        b = coreB + (shoreB - coreB) * shoreBlend;
       } else if (hasLava) {
-        // Lava uses the same polygon fill approach: yellow core with red shoreline.
-        const lavaBandStart = liquidR * 0.985;
-        const lavaBandSize = Math.max(liquidR * 0.017, 0.0001);
+        // Lava uses a yellow body with a tighter red shoreline band.
+        const lavaBandStart = liquidR * 0.991;
+        const lavaBandSize = Math.max(liquidR * 0.009, 0.0001);
         const shoreBlend = Math.min(Math.max((faceR - lavaBandStart) / lavaBandSize, 0), 1);
         const facet = (f % 9) / 9;
-        const coreR = 0.93 - facet * 0.03;
-        const coreG = 0.82 - facet * 0.04;
-        const coreB = 0.05;
-        const shoreR = 0.68;
+        const coreR = 0.95 - facet * 0.03;
+        const coreG = 0.84 - facet * 0.03;
+        const coreB = 0.06;
+        const shoreR = 0.78;
         const shoreG = 0.05;
         const shoreB = 0.02;
         r = coreR + (shoreR - coreR) * shoreBlend;
@@ -1636,6 +1645,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built = [];
 
     const ps = state.peakScale, wl = state.waterLevel;
+    const liquidState = getLiquidState(wl, baseR);
 
     const idxGeo  = buildGlobe(baseR, d, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
@@ -1662,13 +1672,43 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     const atmo = new THREE.Mesh(
       new THREE.SphereGeometry(baseR * 1.10, 24, 24),
       new THREE.MeshBasicMaterial({
-        color: 0x4499ff, transparent: true, opacity: 0.06,
+        color: liquidState.hasLava ? 0xff6a22 : 0x44aaff,
+        transparent: true,
+        opacity: liquidState.hasLava ? (0.02 + liquidState.strength * 0.05) : 0.06,
         side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
       })
     );
     atmo.renderOrder = 3;
 
-    built = [depthBack, terrain, wire, atmo];
+    const lavaGlowYellow = new THREE.Mesh(
+      new THREE.SphereGeometry(baseR * 1.14, 22, 22),
+      new THREE.MeshBasicMaterial({
+        color: 0xffd64f,
+        transparent: true,
+        opacity: liquidState.hasLava ? (0.02 + liquidState.strength * 0.07) : 0,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    lavaGlowYellow.visible = liquidState.hasLava;
+    lavaGlowYellow.renderOrder = 4;
+
+    const lavaGlowRed = new THREE.Mesh(
+      new THREE.SphereGeometry(baseR * 1.20, 22, 22),
+      new THREE.MeshBasicMaterial({
+        color: 0xff3a1f,
+        transparent: true,
+        opacity: liquidState.hasLava ? (0.01 + liquidState.strength * 0.055) : 0,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    lavaGlowRed.visible = liquidState.hasLava;
+    lavaGlowRed.renderOrder = 4;
+
+    built = [depthBack, terrain, wire, atmo, lavaGlowYellow, lavaGlowRed];
     pickables = [terrain];
     spin.add(...built);
   }
