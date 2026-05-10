@@ -935,13 +935,13 @@ input[type=range]::-moz-range-thumb {
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script>
 // ── Renderer ──────────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 0.001, 2000000);
+const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 0.01, 120000);
 
 // ── Lighting: sun is the only real source ─────────────────────────
 // Very dim ambient keeps the night-sides from going pure black
@@ -1612,7 +1612,7 @@ function colorizeGlobe(geo, baseR, ps, wl) {
       } else {
         r = 0.76; g = 0.12; b = 0.05;
       }
-      const glow = isShoreFace ? [1.00, 0.90, 0.28] : [1.00, 0.26, 0.10];
+      const glow = isShoreFace ? [0.78, 0.68, 0.20] : [0.66, 0.20, 0.08];
       for (let v = 0; v < 3; v++) {
         const i = f * 3 + v;
         lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
@@ -1676,13 +1676,13 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       const glowMat = new THREE.MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: 0.72,
+        opacity: 0.28,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         side: THREE.DoubleSide
       });
       const glowMesh = new THREE.Mesh(glowGeo, glowMat);
-      glowMesh.scale.setScalar(1.0025);
+      glowMesh.scale.setScalar(1.0012);
       glowMesh.renderOrder = 1;
       return glowMesh;
     })();
@@ -1691,6 +1691,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       new THREE.EdgesGeometry(idxGeo),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
     );
+    wire.scale.setScalar(1.0015);
     wire.renderOrder = 2;
 
     const atmo = new THREE.Mesh(
@@ -1698,7 +1699,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       new THREE.MeshBasicMaterial({
         color: liquidState.hasLava ? 0xff6a22 : 0x44aaff,
         transparent: true,
-        opacity: liquidState.hasLava ? (0.02 + liquidState.strength * 0.05) : 0.06,
+        opacity: liquidState.hasLava ? (0.01 + liquidState.strength * 0.03) : 0.06,
         side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
       })
     );
@@ -1719,6 +1720,12 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     setWater: () => {},
     setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
     syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
+    setWireOpacity: (v) => {
+      const a = Math.max(0, Math.min(1, v));
+      built.forEach(c => {
+        if (c.isLineSegments && c.material) c.material.opacity = a;
+      });
+    },
     getPickables: () => pickables,
   };
 }
@@ -2326,6 +2333,11 @@ function animate() {
 
   // Smooth scale lerp (camera/universe view only; objects keep real size)
   curScale += (targetScale - curScale) * 0.08;
+
+  // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
+  const wireFade = camMode === CAM_PLANET ? 1 : Math.max(0, 1 - (curScale - 8) / 44);
+  const wireOpacity = 0.25 * wireFade;
+  managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
 
   // Camera orbits the sun (world origin), pulls back as curScale grows
   updateCamera(curScale);
