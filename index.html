@@ -1635,23 +1635,32 @@ scene.add(linkLine);
 
 // ── Binary planet physics (positions relative to binary COM) ──────
 // G=1, M1=3, M2=1.5, sep=3.5, T_binary ≈ 19 sim-s at 1× warp
-const G=1, M1=3, M2=1.5, SEP=3.5, MT=M1+M2;
-const ω0 = Math.sqrt(G * MT / (SEP ** 3));
+const G=1, BASE_M1=3, BASE_M2=1.5, SEP=3.5, BASE_MT=BASE_M1+BASE_M2;
+const SOLAR_MU = 4.6;
+const PLANET_INTERACTION_STRENGTH = 0.0045;
+const ω0 = Math.sqrt(G * BASE_MT / (SEP ** 3));
 const body = [
-  { pos: new THREE.Vector3(-(M2/MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0,  ω0*(M2/MT)*SEP), mass: M1 },
-  { pos: new THREE.Vector3( (M1/MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0, -ω0*(M1/MT)*SEP), mass: M2 },
+  { pos: new THREE.Vector3(-(BASE_M2/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0,  ω0*(BASE_M2/BASE_MT)*SEP) },
+  { pos: new THREE.Vector3( (BASE_M1/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0, -ω0*(BASE_M1/BASE_MT)*SEP) },
 ];
-function stepGravity(dt) {
+function stepGravity(dt, m1, m2) {
   const dx = body[1].pos.x - body[0].pos.x;
   const dy = body[1].pos.y - body[0].pos.y;
   const dz = body[1].pos.z - body[0].pos.z;
   const d2e = dx*dx + dy*dy + dz*dz + 0.0625;   // Plummer softening ε=0.25
-  const inv = G * M1 * M2 / (d2e * Math.sqrt(d2e));
+  const inv = G * m1 * m2 / (d2e * Math.sqrt(d2e));
   const fx = inv*dx, fy = inv*dy, fz = inv*dz;
-  body[0].vel.x += fx/M1*dt; body[0].vel.y += fy/M1*dt; body[0].vel.z += fz/M1*dt;
-  body[1].vel.x -= fx/M2*dt; body[1].vel.y -= fy/M2*dt; body[1].vel.z -= fz/M2*dt;
+  body[0].vel.x += fx/m1*dt; body[0].vel.y += fy/m1*dt; body[0].vel.z += fz/m1*dt;
+  body[1].vel.x -= fx/m2*dt; body[1].vel.y -= fy/m2*dt; body[1].vel.z -= fz/m2*dt;
   body[0].pos.addScaledVector(body[0].vel, dt);
   body[1].pos.addScaledVector(body[1].vel, dt);
+}
+
+function shortestAngleDiff(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
 }
 
 // ── Binary COM orbit around sun ───────────────────────────────────
@@ -1710,7 +1719,7 @@ function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRate
                          angle: orbitAngle ?? (Math.random() * Math.PI * 2),
                          spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2),
                          orbitCenter: orbitCenter ?? (isBinary ? 'binary' : 'sun'),
-                         orbitSlotKey: orbitSlotKey ?? null });
+                         orbitSlotKey: orbitSlotKey ?? null, orbitBaseR: orbitR || 0 });
 }
 
 // Register original binary planets
@@ -1722,6 +1731,13 @@ function getSpinRateFromSize(mp) {
   // Approximation: angular velocity scales as 1 / R^2 for similar planets.
   const rawRate = mp.spinRateBase / (size * size);
   return Math.min(mp.spinRateBase * 4, Math.max(mp.spinRateBase * 0.25, rawRate));
+}
+
+function getPlanetMass(mp) {
+  const size = Math.max(mp.obj.state.size, 0.2);
+  const baseVolume = Math.pow(Math.max(mp.obj.baseRadius || 0.8, 0.2), 3);
+  const density = mp.isBinary ? 3.5 : 1.6;
+  return density * baseVolume * Math.pow(size, 3);
 }
 
 function reserveSolarOrbitSlot() {
@@ -2103,31 +2119,68 @@ function animate() {
   if (timeWarp > 0) {
     const dt    = BASE_DT * timeWarp;
     const steps = Math.max(1, Math.ceil(timeWarp * 2));
+    const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+    const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const binaryMassNorm = Math.max((mass1 + mass2) / BASE_MT, 0.25);
 
-    // Step binary gravity (sub-stepped for stability)
-    for (let i = 0; i < steps; i++) stepGravity(dt / steps);
+    // Step binary gravity (sub-stepped for stability). Bigger planets pull harder.
+    for (let i = 0; i < steps; i++) stepGravity(dt / steps, mass1, mass2);
 
-    // Advance binary COM's heliocentric orbit
-    comAngle += COM_OMEGA * dt;
+    // Heavier binary systems sweep their heliocentric arc faster.
+    comAngle += COM_OMEGA * dt * Math.sqrt(binaryMassNorm);
 
     sunSpin += 0.0004 * timeWarp;
 
-    // Animate planets: orbital motion + spin.
-    managedPlanets.forEach(mp => {
-      if (!mp.isBinary) {
-        mp.angle += mp.orbitSpeed * timeWarp;
-        mp.obj.pivot.position.set(
-          Math.cos(mp.angle) * mp.orbitR,
-          0,
-          Math.sin(mp.angle) * mp.orbitR
-        );
+    // Sun-orbiting planets: size impacts solar pull + neighbor perturbations.
+    const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
+    sunOrbiters.forEach(mp => { mp._speedKick = 0; });
+    for (let i = 0; i < sunOrbiters.length; i++) {
+      for (let j = i + 1; j < sunOrbiters.length; j++) {
+        const a = sunOrbiters[i], b = sunOrbiters[j];
+        const dAng = shortestAngleDiff(a.angle, b.angle);
+        const chordSq = a.orbitR*a.orbitR + b.orbitR*b.orbitR - 2*a.orbitR*b.orbitR*Math.cos(dAng) + 0.25;
+        const accelA = PLANET_INTERACTION_STRENGTH * getPlanetMass(b) / chordSq;
+        const accelB = PLANET_INTERACTION_STRENGTH * getPlanetMass(a) / chordSq;
+        const tangent = Math.sign(Math.sin(dAng)) || 1;
+        a._speedKick += tangent * accelA;
+        b._speedKick -= tangent * accelB;
       }
-      mp.spinAngle += getSpinRateFromSize(mp) * timeWarp;
+    }
+    sunOrbiters.forEach(mp => {
+      const mass = getPlanetMass(mp);
+      const slotBase = Math.max(mp.orbitBaseR || mp.orbitR || 6, 4);
+      const sunPull = Math.min(0.24, 0.018 * Math.log1p(mass));
+      const targetR = Math.max(4, slotBase * (1 - sunPull));
+      mp.orbitR += (targetR - mp.orbitR) * 0.05 * timeWarp;
+      const kepler = Math.sqrt(SOLAR_MU / Math.pow(Math.max(mp.orbitR, 1), 3));
+      const sizeDrag = 1 / (1 + 0.16 * Math.max(0, mp.obj.state.size - 1));
+      const targetSpeed = Math.sign(mp.orbitSpeed || 1) * kepler * sizeDrag;
+      mp.orbitSpeed += (targetSpeed - mp.orbitSpeed) * 0.12 * timeWarp;
+      mp.orbitSpeed += (mp._speedKick || 0) * timeWarp;
+      mp.angle += mp.orbitSpeed * timeWarp;
+      mp.obj.pivot.position.set(
+        Math.cos(mp.angle) * mp.orbitR,
+        0,
+        Math.sin(mp.angle) * mp.orbitR
+      );
+    });
+
+    // Spin dynamics: size, orbit distance, and sun interaction affect rotation.
+    managedPlanets.forEach(mp => {
+      let spinRate = getSpinRateFromSize(mp);
+      if (!mp.isBinary) {
+        const dist = Math.max(mp.orbitR, 4);
+        spinRate *= 1 / (1 + 0.0045 * getPlanetMass(mp) / (dist * dist));
+      }
+      mp.spinAngle += spinRate * timeWarp;
     });
   }
 
-  // Place the binary system's COM around the sun at fixed physical radius.
-  const comR = SUN_ORBIT;
+  // Size changes the binary system's interaction with the sun.
+  const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+  const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+  const binaryMassNormNow = Math.max((mass1Now + mass2Now) / BASE_MT, 0.25);
+  const comR = SUN_ORBIT / Math.pow(binaryMassNormNow, 0.08);
   sysGroup.position.set(comR * Math.cos(comAngle), 0, comR * Math.sin(comAngle));
 
   // Planet positions are relative to binary COM (physics units in world space)
