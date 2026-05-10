@@ -10,8 +10,7 @@ Single-page Three.js scene: AstraBound polygon planets, galaxy jumps, Cloudflare
 This repo is configured to auto-deploy to Cloudflare Pages project
 `astrabound` whenever code is pushed to the `main` branch.
 Deployments are published from `main`:
-`https://astrabound.pages.dev/`
-(and branch previews like `https://main.astrabound.pages.dev/`).
+`https://astrabound-4ov.pages.dev/`.
 
 One-time setup in GitHub (Settings → Secrets and variables → Actions):
 
