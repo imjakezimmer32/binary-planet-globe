@@ -3131,13 +3131,12 @@ function animate() {
     const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(timeWarp) * 6)));
     const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
     const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
-    const binaryMassNorm = Math.max((mass1 + mass2) / BASE_MT, 0.25);
 
     // Step binary gravity (sub-stepped for stability). Bigger planets pull harder.
     for (let i = 0; i < steps; i++) stepGravity(dt / steps, mass1, mass2);
 
-    // Heavier binary systems sweep their heliocentric arc faster.
-    comAngle += COM_OMEGA * dt * Math.sqrt(binaryMassNorm);
+    // Binary heliocentric orbit remains fixed regardless of size edits.
+    comAngle += COM_OMEGA * dt;
 
     sunSpin += 0.0004 * timeWarp;
 
@@ -3204,12 +3203,8 @@ function animate() {
     });
   }
 
-  // Size changes the binary system's interaction with the sun.
-  const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-  const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
-  const binaryMassNormNow = Math.max((mass1Now + mass2Now) / BASE_MT, 0.25);
-  const comR = SUN_ORBIT / Math.pow(binaryMassNormNow, 0.08);
-  sysGroup.position.set(comR * Math.cos(comAngle), 0, comR * Math.sin(comAngle));
+  // Keep the binary COM on a fixed-radius sun orbit.
+  sysGroup.position.set(SUN_ORBIT * Math.cos(comAngle), 0, SUN_ORBIT * Math.sin(comAngle));
 
   // Planet positions are relative to binary COM (physics units in world space)
   p1.pivot.position.copy(body[0].pos);
