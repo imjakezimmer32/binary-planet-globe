@@ -1456,9 +1456,10 @@ const trail1 = makeTrail(), trail2 = makeTrail();
 const linkPos = new Float32Array(6);
 const linkGeo = new THREE.BufferGeometry();
 linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
-scene.add(new THREE.Line(linkGeo,
+const linkLine = new THREE.Line(linkGeo,
   new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07, depthTest: false })
-));
+);
+scene.add(linkLine);
 
 // ── Binary planet physics (positions relative to binary COM) ──────
 // G=1, M1=3, M2=1.5, sep=3.5, T_binary ≈ 19 sim-s at 1× warp
@@ -1896,19 +1897,24 @@ function animate() {
 
   // Trails — world-space positions so the heliocentric orbit is captured correctly
   const cx = sysGroup.position.x, cy = sysGroup.position.y, cz = sysGroup.position.z;
-  pushTrail(trail1,
-    cx + body[0].pos.x,
-    cy + body[0].pos.y,
-    cz + body[0].pos.z);
-  pushTrail(trail2,
-    cx + body[1].pos.x,
-    cy + body[1].pos.y,
-    cz + body[1].pos.z);
+  const renderSolTrails = !isNavigating && currentDestIndex === 0;
+  if (renderSolTrails) {
+    pushTrail(trail1,
+      cx + body[0].pos.x,
+      cy + body[0].pos.y,
+      cz + body[0].pos.z);
+    pushTrail(trail2,
+      cx + body[1].pos.x,
+      cy + body[1].pos.y,
+      cz + body[1].pos.z);
+  }
 
   // Gravity link line — world space
-  linkPos[0]=cx+body[0].pos.x; linkPos[1]=cy+body[0].pos.y; linkPos[2]=cz+body[0].pos.z;
-  linkPos[3]=cx+body[1].pos.x; linkPos[4]=cy+body[1].pos.y; linkPos[5]=cz+body[1].pos.z;
-  linkGeo.attributes.position.needsUpdate = true;
+  if (renderSolTrails) {
+    linkPos[0]=cx+body[0].pos.x; linkPos[1]=cy+body[0].pos.y; linkPos[2]=cz+body[0].pos.z;
+    linkPos[3]=cx+body[1].pos.x; linkPos[4]=cy+body[1].pos.y; linkPos[5]=cz+body[1].pos.z;
+    linkGeo.attributes.position.needsUpdate = true;
+  }
 
   // Sun size stays fixed; scale slider no longer changes body size.
   sunGroup.scale.setScalar(SUN_R);
@@ -1930,6 +1936,18 @@ const GALAXY_DESTINATIONS = [
 let currentDestIndex = 0;
 let isNavigating     = false;
 const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
+
+function syncTrailVisibility() {
+  const activeDest = isNavigating ? -1 : currentDestIndex;
+  const showSolTrails = activeDest === 0;
+  trail1.line.visible = showSolTrails;
+  trail2.line.visible = showSolTrails;
+  linkLine.visible = showSolTrails;
+  GALAXY_DESTINATIONS.forEach((dest, i) => {
+    if (!dest._trail) return;
+    dest._trail.line.visible = i === activeDest && i !== 0;
+  });
+}
 
 // Beacon sun visual at each non-home destination
 GALAXY_DESTINATIONS.forEach((dest, i) => {
@@ -1968,11 +1986,13 @@ GALAXY_DESTINATIONS.forEach((dest, i) => {
   dest._trail = orbitTrail;
   scene.add(grp);
 });
+syncTrailVisibility();
 
 // ── Galaxy navigation ─────────────────────────────────────────────
 function navigateTo(idx) {
   if (isNavigating || idx === currentDestIndex) return;
   isNavigating = true;
+  syncTrailVisibility();
   zoomTarget = null; // cancel any splash zoom in progress
   const dest   = GALAXY_DESTINATIONS[idx];
   const startT = cameraTarget.clone();
@@ -2008,6 +2028,7 @@ function navigateTo(idx) {
     } else {
       currentDestIndex = idx;
       isNavigating     = false;
+      syncTrailVisibility();
       rebuildGalaxyMenu();
     }
   }
@@ -2067,10 +2088,11 @@ const _origAnimate = animate;
   const _destPlanetWorld = new THREE.Vector3();
   renderer.render = (scene, camera) => {
     const t = performance.now() * 0.001;
-    GALAXY_DESTINATIONS.forEach(dest => {
+    GALAXY_DESTINATIONS.forEach((dest, i) => {
       if (!dest._orb) return;
       dest._orb.rotation.y = t * 0.4;
-      if (dest._planetMesh && dest._trail) {
+      const shouldRenderTrail = !isNavigating && i === currentDestIndex && i !== 0;
+      if (shouldRenderTrail && dest._planetMesh && dest._trail) {
         dest._planetMesh.getWorldPosition(_destPlanetWorld);
         pushTrail(dest._trail, _destPlanetWorld.x, _destPlanetWorld.y, _destPlanetWorld.z);
       }
