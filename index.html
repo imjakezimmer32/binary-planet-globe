@@ -870,7 +870,7 @@ input[type=range]::-moz-range-thumb {
       </div>
       <div class="pe-row">
         <span class="pe-lbl" id="lbl-water-edit">Water 48%</span>
-        <input type="range" id="dial-water-edit" min="0" max="1" step="0.005" value="0.48">
+        <input type="range" id="dial-water-edit" min="-1" max="1" step="0.005" value="0.48">
       </div>
     </div>
   </div>
@@ -1448,16 +1448,19 @@ function noise3(x, y, z) {
 
 // ── Globe geometry ────────────────────────────────────────────────
 function getLiquidState(wl, baseR) {
-  const waterLevel = Math.min(1, Math.max(0, wl));
-  const hasWater = waterLevel > 0;
-  const hasLava = !hasWater;
-  // Shared slider spectrum: >0 is water, exactly 0 flips to lava.
-  const spectrumLevel = hasWater ? waterLevel : (1 - waterLevel);
-  const liquidScale = 0.80 + spectrumLevel * 0.42;
+  const signedLevel = Math.max(-1, Math.min(1, wl));
+  // Shared slider spectrum: + side is water, - side is lava.
+  const hasWater = signedLevel > 0.0001;
+  const hasLava = signedLevel < -0.0001;
+  const strength = Math.abs(signedLevel);
+  const hasLiquid = strength > 0.0001;
+  const liquidScale = 0.80 + strength * 0.42;
   return {
+    signedLevel,
     hasWater,
     hasLava,
-    waterLevel,
+    hasLiquid,
+    strength,
     liquidScale,
     liquidR: baseR * liquidScale,
   };
@@ -1468,6 +1471,7 @@ function buildGlobe(radius, detail, seed, ps, wl) {
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
   const liquid = getLiquidState(wl, radius);
+  const hasLiquid = liquid.hasLiquid;
   const liquidR = liquid.liquidR;
   for (let i = 0; i < geo.attributes.position.count; i++) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
@@ -1475,9 +1479,9 @@ function buildGlobe(radius, detail, seed, ps, wl) {
     const nx = ox/len, ny = oy/len, nz = oz/len;
     const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
              + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
-    // Clamp low terrain to liquid level so water/lava polygons match the terrain mesh.
+    // Clamp low terrain only when a liquid exists so 0 stays dry.
     const rawR = radius * (1 + d);
-    const r = Math.max(rawR, liquidR);
+    const r = hasLiquid ? Math.max(rawR, liquidR) : rawR;
     arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
   }
   geo.attributes.position.needsUpdate = true;
@@ -1544,10 +1548,12 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const liquid = getLiquidState(wl, baseR);
   const hasWater = liquid.hasWater;
   const hasLava = liquid.hasLava;
+  const hasLiquid = liquid.hasLiquid;
+  const liquidStrength = liquid.strength;
   const liquidR = liquid.liquidR;
 
-  // Blend palette: green fades in as soon as water appears.
-  const wet = hasWater ? Math.min(Math.max(wl / 0.20, 0), 1) : 0;
+  // Blend palette: green fades in as water amount rises on the + side.
+  const wet = hasWater ? Math.min(Math.max(liquidStrength / 0.20, 0), 1) : 0;
   const pal = blendPalette(wet);
 
   // Pass 1: find actual elevation min/max for palette stretching
@@ -1577,7 +1583,7 @@ function colorizeGlobe(geo, baseR, ps, wl) {
     const ne     = (sumE / 3 / baseR - 1) / ps;
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
     let r, g, b;
-    if (faceR <= liquidR * 1.002) {
+    if (hasLiquid && faceR <= liquidR * 1.002) {
       if (hasWater) {
         // Slight tint variation keeps oceans faceted without a separate sphere shell.
         const tint = (f % 11) / 11;
@@ -2037,8 +2043,11 @@ function setPlanetPanelOpen(open) {
 }
 
 function waterLabelText(wl) {
-  const waterPct = Math.round(Math.min(1, Math.max(0, wl)) * 100);
-  return waterPct === 0 ? 'Water 0% · Lava 100%' : `Water ${waterPct}%`;
+  const level = Math.max(-1, Math.min(1, wl));
+  const pct = Math.round(Math.abs(level) * 100);
+  if (level > 0.0001) return `Water ${pct}%`;
+  if (level < -0.0001) return `Lava ${pct}%`;
+  return 'Water/Lava 0%';
 }
 
 if (planetPanelToggle) {
