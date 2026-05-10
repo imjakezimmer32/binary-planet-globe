@@ -2335,7 +2335,7 @@ function animate() {
   curScale += (targetScale - curScale) * 0.08;
 
   // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
-  const wireFade = camMode === CAM_PLANET ? 1 : Math.max(0, 1 - (curScale - 8) / 44);
+  const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScale - 8) / 44);
   const wireOpacity = 0.25 * wireFade;
   managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
 
