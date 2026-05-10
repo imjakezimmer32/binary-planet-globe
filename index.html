@@ -24,7 +24,15 @@
 <title>AstraBound</title>
 <style>
 /* ── Shared (all viewports) ─────────────────────────────────────── */
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0; padding: 0; box-sizing: border-box;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
 html { height: 100%; -webkit-text-size-adjust: 100%; }
 body {
   background: #000; overflow: hidden; font-family: monospace;
@@ -33,6 +41,7 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 canvas { display: block; touch-action: none; }
+::selection { background: transparent; color: inherit; }
 
 /* Splash: same structure on all viewports; font sizes tuned per breakpoint */
 #splash {
@@ -939,6 +948,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
+document.addEventListener('selectstart', (e) => e.preventDefault(), { passive: false });
 
 const scene  = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 0.01, 120000);
