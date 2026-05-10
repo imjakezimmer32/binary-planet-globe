@@ -935,8 +935,8 @@ sunGroup.add(new THREE.Mesh(
 );
 
 // ── Camera — orbits the sun (world origin) ────────────────────────
-// Distance = ORBIT_BASE * userZoom.
-// Planet + sun scaling is handled in animate via curScale so proportions stay consistent.
+// Distance = ORBIT_BASE * curScale * userZoom.
+// Camera scales with the system so proportions stay stable while scaling.
 const ORBIT_BASE = 30;
 const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 
@@ -1158,7 +1158,7 @@ function updateCamera(curScale) {
     dPhi *= 0.88;
     if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) orbitTheta += 0.0007; // gentle idle drift
 
-    const r = ORBIT_BASE * orbitZoom;
+    const r = ORBIT_BASE * curScale * orbitZoom;
     const sp = Math.sin(orbitPhi), cp = Math.cos(orbitPhi);
     const lookAt = cameraTarget.clone().add(panOffset);
     camera.position.set(
