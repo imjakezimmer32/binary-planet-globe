@@ -1083,7 +1083,8 @@ function onMobilePointerMove(e) {
 
       if (doPinchZoom) {
         zoomTarget = null;
-        const ratio = dist / prevD;
+        // Spread fingers → zoom in (smaller orbit radius); pinch together → zoom out — matches maps / photos
+        const ratio = prevD / dist;
         const zf = Math.pow(ratio, 1.13);
         orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * zf));
       } else if (doPlanePan) {
