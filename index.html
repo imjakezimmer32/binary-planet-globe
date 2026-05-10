@@ -1416,23 +1416,29 @@ sysGroup.add(p1.pivot, p2.pivot);
 
 // ── Orbit trails (in sysGroup local space = binary-relative) ──────
 const TRAIL_LEN = 520;
-function makeTrail() {
-  const positions = new Float32Array(TRAIL_LEN * 3);
-  const colors    = new Float32Array(TRAIL_LEN * 3);
+function makeTrail(opts) {
+  const cfg = Object.assign({ len: TRAIL_LEN, color: 0xffffff, opacity: 0.60 }, opts || {});
+  const positions = new Float32Array(cfg.len * 3);
+  const colors    = new Float32Array(cfg.len * 3);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
   geo.setDrawRange(0, 0);
   const line = new THREE.Line(geo,
-    new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.60 })
+    new THREE.LineBasicMaterial({
+      color: cfg.color,
+      vertexColors: true,
+      transparent: true,
+      opacity: cfg.opacity
+    })
   );
   line.renderOrder = 0;
   scene.add(line);
-  return { positions, colors, line, count: 0 };
+  return { positions, colors, line, count: 0, max: cfg.len };
 }
 function pushTrail(t, x, y, z) {
   const { positions: p, colors: c } = t;
-  const N = TRAIL_LEN;
+  const N = t.max || TRAIL_LEN;
   if (t.count < N) { p[t.count*3]=x; p[t.count*3+1]=y; p[t.count*3+2]=z; t.count++; }
   else { p.copyWithin(0, 3); p[(N-1)*3]=x; p[(N-1)*3+1]=y; p[(N-1)*3+2]=z; }
   const n = t.count;
@@ -1955,8 +1961,11 @@ GALAXY_DESTINATIONS.forEach((dest, i) => {
   pMesh.position.set(28, 0, 0);
   orb.add(pMesh);
   grp.add(orb);
+  const orbitTrail = makeTrail({ len: 220, color: dest.color, opacity: 0.45 });
   dest._orb  = orb;
   dest._grp  = grp;
+  dest._planetMesh = pMesh;
+  dest._trail = orbitTrail;
   scene.add(grp);
 });
 
@@ -2055,10 +2064,16 @@ rebuildGalaxyMenu();
 const _origAnimate = animate;
 (function patchAnimate() {
   const origRender = renderer.render.bind(renderer);
+  const _destPlanetWorld = new THREE.Vector3();
   renderer.render = (scene, camera) => {
     const t = performance.now() * 0.001;
     GALAXY_DESTINATIONS.forEach(dest => {
-      if (dest._orb) dest._orb.rotation.y = t * 0.4;
+      if (!dest._orb) return;
+      dest._orb.rotation.y = t * 0.4;
+      if (dest._planetMesh && dest._trail) {
+        dest._planetMesh.getWorldPosition(_destPlanetWorld);
+        pushTrail(dest._trail, _destPlanetWorld.x, _destPlanetWorld.y, _destPlanetWorld.z);
+      }
     });
     origRender(scene, camera);
   };
