@@ -1026,6 +1026,7 @@ const cameraTarget = new THREE.Vector3(0, 0, 0);
 const panOffset = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _up    = new THREE.Vector3();
+const _selectedPlanetWorld = new THREE.Vector3();
 
 // ── Walk mode (sausage avatar on planet surface) ───────────────────
 const walkMode = { active: false, planetIdx: null };
@@ -1404,16 +1405,25 @@ function updateCamera(curScale) {
     );
     camera.lookAt(lookAt);
   } else {
-    // Planet view: orbit around the currently selected destination system.
+    // Planet view: orbit around selected planet (fallback to system center).
     pOrbitTheta += pDTheta; pDTheta *= 0.88;
     pOrbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, pOrbitPhi + pDPhi));
     pDPhi *= 0.88;
     if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
 
-    const systemCenter = currentDestIndex === 0
-      ? sysGroup.position
-      : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
-    const base = systemCenter.clone().add(panOffset);
+    let baseTarget = null;
+    if (selectedPlanetIdx !== null) {
+      const selected = managedPlanets[selectedPlanetIdx];
+      if (selected?.obj?.pivot) {
+        baseTarget = selected.obj.pivot.getWorldPosition(_selectedPlanetWorld);
+      }
+    }
+    if (!baseTarget) {
+      baseTarget = currentDestIndex === 0
+        ? sysGroup.position
+        : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
+    }
+    const base = baseTarget.clone().add(panOffset);
     const r = PLANET_ORBIT_BASE * orbitZoom * curScale;
     const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
     camera.position.set(
@@ -2020,6 +2030,8 @@ if (planetPanelHeader) {
 
 function selectPlanet(idx) {
   selectedPlanetIdx = idx;
+  // Reset pan so selected planet is centered immediately.
+  panOffset.set(0, 0, 0);
   rebuildPlanetList();
   const mp = managedPlanets[idx];
   editPanel.style.display = 'flex';
