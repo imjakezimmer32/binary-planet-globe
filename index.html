@@ -2032,10 +2032,12 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const WATER_DEEP = [0.06, 0.46, 0.56];
   const WATER_AQUA = [0.20, 0.78, 0.76];
   const WATER_SAND = [0.84, 0.75, 0.50];
+  const LAND_SAND = [0.87, 0.78, 0.55];
   const LAVA_BLACK = [0.08, 0.08, 0.09];
   const LAVA_RED = [0.82, 0.10, 0.04];
   const LAVA_YELLOW = [1.00, 0.88, 0.18];
   const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
+  const landShoreBand = shoreBand * 1.55;
   const lavaBand = shoreBand * 1.08;
 
   function mix3(a, b, t) {
@@ -2127,6 +2129,20 @@ function colorizeGlobe(geo, baseR, ps, wl) {
       continue;
     } else {
       [r,g,b] = elevColor(mapped, pal);
+      if (hasWater) {
+        // Land-facing shoreline tint: blend terrain into sand near sea level.
+        for (let v = 0; v < 3; v++) {
+          const i = faceIdx[v];
+          const rr = faceR[v];
+          const edgeT = Math.max(0, Math.min(1, (rr - liquidR) / landShoreBand));
+          const sandBlend = Math.pow(1 - edgeT, 1.18) * 0.92;
+          const c = mix3([r, g, b], LAND_SAND, sandBlend);
+          col[i*3] = c[0];
+          col[i*3+1] = c[1];
+          col[i*3+2] = c[2];
+        }
+        continue;
+      }
     }
     for (let v = 0; v < 3; v++) {
       col[(f*3+v)*3]=r; col[(f*3+v)*3+1]=g; col[(f*3+v)*3+2]=b;
