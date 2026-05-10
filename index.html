@@ -1805,6 +1805,7 @@ const GALAXY_DESTINATIONS = [
 ];
 let currentDestIndex = 0;
 let isNavigating     = false;
+const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
 
 // Beacon sun visual at each non-home destination
 GALAXY_DESTINATIONS.forEach((dest, i) => {
@@ -1851,7 +1852,7 @@ function navigateTo(idx) {
   const endT   = dest.pos.clone();
   const startZ = orbitZoom;
   const midZ   = Math.max(startZ, 18); // pull back mid-flight
-  const endZ   = 1.6;
+  const endZ   = SYSTEM_FIT_ZOOM;
   const dur    = 3800;
   const t0     = performance.now();
 
@@ -1991,7 +1992,7 @@ const _origAnimate = animate;
 
     // ── Phase 5: Fade splash — zoom starts HERE so the user's first view
     //    of the 3D scene is from 4000× and they watch it zoom in. ────────
-    zoomTarget = 3.0;   // log-lerp fires from this exact frame onward
+    zoomTarget = SYSTEM_FIT_ZOOM;   // log-lerp fires from this exact frame onward
     splash.style.transition = 'opacity 0.9s ease';
     splash.style.opacity    = '0';
     await wait(900);
