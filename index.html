@@ -1637,7 +1637,10 @@ scene.add(linkLine);
 // G=1, M1=3, M2=1.5, sep=3.5, T_binary ≈ 19 sim-s at 1× warp
 const G=1, BASE_M1=3, BASE_M2=1.5, SEP=3.5, BASE_MT=BASE_M1+BASE_M2;
 const SOLAR_MU = 4.6;
-const PLANET_INTERACTION_STRENGTH = 0.0045;
+const SUN_ORBIT_MIN_R = 4.2;
+const SUN_ORBIT_MAX_R = 30.0;
+const ORBIT_SOFTENING = 0.06;
+const MAX_BOUND_SPEED_FACTOR = 0.95;
 const ω0 = Math.sqrt(G * BASE_MT / (SEP ** 3));
 const body = [
   { pos: new THREE.Vector3(-(BASE_M2/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3(0, 0,  ω0*(BASE_M2/BASE_MT)*SEP) },
@@ -1654,13 +1657,6 @@ function stepGravity(dt, m1, m2) {
   body[1].vel.x -= fx/m2*dt; body[1].vel.y -= fy/m2*dt; body[1].vel.z -= fz/m2*dt;
   body[0].pos.addScaledVector(body[0].vel, dt);
   body[1].pos.addScaledVector(body[1].vel, dt);
-}
-
-function shortestAngleDiff(a, b) {
-  let d = b - a;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return d;
 }
 
 // ── Binary COM orbit around sun ───────────────────────────────────
@@ -1710,7 +1706,7 @@ dialWarp.addEventListener('input', () => {
 const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
 const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
 const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
-let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey }
+let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitPos, orbitVel }
 let selectedPlanetIdx = null;
 
 function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle) {
@@ -1719,7 +1715,8 @@ function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRate
                          angle: orbitAngle ?? (Math.random() * Math.PI * 2),
                          spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2),
                          orbitCenter: orbitCenter ?? (isBinary ? 'binary' : 'sun'),
-                         orbitSlotKey: orbitSlotKey ?? null, orbitBaseR: orbitR || 0 });
+                         orbitSlotKey: orbitSlotKey ?? null, orbitBaseR: orbitR || 0,
+                         orbitPos: null, orbitVel: null });
 }
 
 // Register original binary planets
@@ -1738,6 +1735,24 @@ function getPlanetMass(mp) {
   const baseVolume = Math.pow(Math.max(mp.obj.baseRadius || 0.8, 0.2), 3);
   const density = mp.isBinary ? 3.5 : 1.6;
   return density * baseVolume * Math.pow(size, 3);
+}
+
+function initializeSunOrbiterState(mp) {
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
+  if (!mp.orbitPos) {
+    mp.orbitPos = new THREE.Vector3(
+      Math.cos(mp.angle) * Math.max(mp.orbitR, SUN_ORBIT_MIN_R),
+      0,
+      Math.sin(mp.angle) * Math.max(mp.orbitR, SUN_ORBIT_MIN_R)
+    );
+  }
+  if (!mp.orbitVel) {
+    const r = Math.max(mp.orbitPos.length(), SUN_ORBIT_MIN_R);
+    const tangent = new THREE.Vector3(-Math.sin(mp.angle), 0, Math.cos(mp.angle));
+    const sign = mp.orbitSpeed < 0 ? -1 : 1;
+    const speed = Math.sqrt(SOLAR_MU / r);
+    mp.orbitVel = tangent.multiplyScalar(speed * sign);
+  }
 }
 
 function reserveSolarOrbitSlot() {
@@ -1792,7 +1807,10 @@ function createSunOrbitPlanet({
     slotKey,
     orbitAngle
   );
-  return managedPlanets.length - 1;
+  const newIdx = managedPlanets.length - 1;
+  const mp = managedPlanets[newIdx];
+  initializeSunOrbiterState(mp);
+  return newIdx;
 }
 
 function rebuildPlanetList() {
@@ -2131,38 +2149,62 @@ function animate() {
 
     sunSpin += 0.0004 * timeWarp;
 
-    // Sun-orbiting planets: size impacts solar pull + neighbor perturbations.
+    // Sun-orbiting planets: Newtonian gravity between planets + sun, with hard orbital bounds.
     const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
-    sunOrbiters.forEach(mp => { mp._speedKick = 0; });
-    for (let i = 0; i < sunOrbiters.length; i++) {
-      for (let j = i + 1; j < sunOrbiters.length; j++) {
-        const a = sunOrbiters[i], b = sunOrbiters[j];
-        const dAng = shortestAngleDiff(a.angle, b.angle);
-        const chordSq = a.orbitR*a.orbitR + b.orbitR*b.orbitR - 2*a.orbitR*b.orbitR*Math.cos(dAng) + 0.25;
-        const accelA = PLANET_INTERACTION_STRENGTH * getPlanetMass(b) / chordSq;
-        const accelB = PLANET_INTERACTION_STRENGTH * getPlanetMass(a) / chordSq;
-        const tangent = Math.sign(Math.sin(dAng)) || 1;
-        a._speedKick += tangent * accelA;
-        b._speedKick -= tangent * accelB;
+    const subSteps = Math.max(2, steps * 2);
+    const subDt = dt / subSteps;
+    for (let k = 0; k < subSteps; k++) {
+      const acc = sunOrbiters.map(() => new THREE.Vector3());
+      sunOrbiters.forEach((mp, i) => {
+        initializeSunOrbiterState(mp);
+        const pos = mp.orbitPos;
+        const r2 = pos.x*pos.x + pos.z*pos.z + ORBIT_SOFTENING;
+        const invR3 = 1 / (r2 * Math.sqrt(r2));
+        // Sun gravity
+        acc[i].set(-SOLAR_MU * pos.x * invR3, 0, -SOLAR_MU * pos.z * invR3);
+      });
+      for (let i = 0; i < sunOrbiters.length; i++) {
+        const a = sunOrbiters[i];
+        for (let j = i + 1; j < sunOrbiters.length; j++) {
+          const b = sunOrbiters[j];
+          const dx = b.orbitPos.x - a.orbitPos.x;
+          const dz = b.orbitPos.z - a.orbitPos.z;
+          const d2 = dx*dx + dz*dz + ORBIT_SOFTENING;
+          const invD3 = 1 / (d2 * Math.sqrt(d2));
+          const ma = getPlanetMass(a);
+          const mb = getPlanetMass(b);
+          acc[i].x += G * mb * dx * invD3;
+          acc[i].z += G * mb * dz * invD3;
+          acc[j].x -= G * ma * dx * invD3;
+          acc[j].z -= G * ma * dz * invD3;
+        }
       }
+      sunOrbiters.forEach((mp, i) => {
+        mp.orbitVel.addScaledVector(acc[i], subDt);
+        mp.orbitPos.addScaledVector(mp.orbitVel, subDt);
+        const r = Math.max(mp.orbitPos.length(), 1e-6);
+        const radial = mp.orbitPos.clone().multiplyScalar(1 / r);
+        if (r < SUN_ORBIT_MIN_R) {
+          mp.orbitPos.copy(radial).multiplyScalar(SUN_ORBIT_MIN_R);
+          const vr = mp.orbitVel.dot(radial);
+          if (vr < 0) mp.orbitVel.addScaledVector(radial, -vr);
+        } else if (r > SUN_ORBIT_MAX_R) {
+          mp.orbitPos.copy(radial).multiplyScalar(SUN_ORBIT_MAX_R);
+          const vr = mp.orbitVel.dot(radial);
+          if (vr > 0) mp.orbitVel.addScaledVector(radial, -vr);
+          const esc = Math.sqrt(2 * SOLAR_MU / SUN_ORBIT_MAX_R) * MAX_BOUND_SPEED_FACTOR;
+          const speed = mp.orbitVel.length();
+          if (speed > esc) mp.orbitVel.multiplyScalar(esc / speed);
+        }
+      });
     }
     sunOrbiters.forEach(mp => {
-      const mass = getPlanetMass(mp);
-      const slotBase = Math.max(mp.orbitBaseR || mp.orbitR || 6, 4);
-      const sunPull = Math.min(0.24, 0.018 * Math.log1p(mass));
-      const targetR = Math.max(4, slotBase * (1 - sunPull));
-      mp.orbitR += (targetR - mp.orbitR) * 0.05 * timeWarp;
-      const kepler = Math.sqrt(SOLAR_MU / Math.pow(Math.max(mp.orbitR, 1), 3));
-      const sizeDrag = 1 / (1 + 0.16 * Math.max(0, mp.obj.state.size - 1));
-      const targetSpeed = Math.sign(mp.orbitSpeed || 1) * kepler * sizeDrag;
-      mp.orbitSpeed += (targetSpeed - mp.orbitSpeed) * 0.12 * timeWarp;
-      mp.orbitSpeed += (mp._speedKick || 0) * timeWarp;
-      mp.angle += mp.orbitSpeed * timeWarp;
-      mp.obj.pivot.position.set(
-        Math.cos(mp.angle) * mp.orbitR,
-        0,
-        Math.sin(mp.angle) * mp.orbitR
-      );
+      const r = Math.max(mp.orbitPos.length(), SUN_ORBIT_MIN_R);
+      mp.orbitR = r;
+      mp.angle = Math.atan2(mp.orbitPos.z, mp.orbitPos.x);
+      const tangential = (-mp.orbitVel.x * Math.sin(mp.angle)) + (mp.orbitVel.z * Math.cos(mp.angle));
+      mp.orbitSpeed = tangential / r;
+      mp.obj.pivot.position.set(mp.orbitPos.x, 0, mp.orbitPos.z);
     });
 
     // Spin dynamics: size, orbit distance, and sun interaction affect rotation.
