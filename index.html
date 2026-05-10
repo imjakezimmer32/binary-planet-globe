@@ -856,6 +856,10 @@ input[type=range]::-moz-range-thumb {
   font-size: 10px;
   letter-spacing: 0.08em;
 }
+#walk-controls button[data-walk="view"] {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
 
 </style>
 </head>
@@ -946,6 +950,7 @@ input[type=range]::-moz-range-thumb {
   <button type="button" data-walk="back">▼</button>
   <button type="button" data-walk="jump">JUMP</button>
   <button type="button" data-walk="sprint">RUN</button>
+  <button type="button" data-walk="view">TP</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -1064,15 +1069,20 @@ const WALK_CFG = {
   coyoteTime: 0.12,
   jumpLock: 0.11,
   gravityScale: 1.35,
-  cameraHeight: 0.68,
-  cameraDistance: 1.45,
-  cameraLead: 0.70,
-  cameraTargetLift: 0.24,
+  cameraHeight: 0.92,
+  cameraDistance: 2.55,
+  cameraLead: 1.02,
+  cameraTargetLift: 0.30,
+  fpEyeHeight: 0.34,
+  fpForwardOffset: 0.04,
+  fpLookDistance: 4.8,
+  fpBobAmp: 0.006,
   lookSensitivity: 0.0038,
   mobileLookSensitivity: 0.0046,
   sprintBobFreq: 13,
   sprintBobAmp: 0.036,
 };
+let walkCameraMode = 'tp';
 let walkPrevMs = performance.now();
 const walkState = {
   position: new THREE.Vector3(),
@@ -1176,15 +1186,21 @@ function desktopPointerUp(e) {
   try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
 }
 function desktopPointerMove(e) {
+  if (walkMode.active) {
+    const rawDX = dragging ? (e.clientX - lastPX) : (e.movementX || 0);
+    const rawDY = dragging ? (e.clientY - lastPY) : (e.movementY || 0);
+    if (dragging) {
+      lastPX = e.clientX;
+      lastPY = e.clientY;
+    }
+    queueWalkLook(rawDX, rawDY, false);
+    return;
+  }
   if (!dragging) return;
   const rawDX = e.clientX - lastPX;
   const rawDY = e.clientY - lastPY;
   lastPX = e.clientX;
   lastPY = e.clientY;
-  if (walkMode.active) {
-    queueWalkLook(rawDX, rawDY, false);
-    return;
-  }
   if (dragButton === 2) {
     camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
     const panSpeed = 0.012 * orbitZoom;
@@ -1431,6 +1447,11 @@ function queueWalkJump() {
   walkState.jumpBufferTimer = Math.max(walkState.jumpBufferTimer, WALK_CFG.jumpBuffer);
 }
 
+function toggleWalkCameraMode() {
+  walkCameraMode = walkCameraMode === 'tp' ? 'fp' : 'tp';
+  refreshWalkUi();
+}
+
 function clearWalkInputState() {
   walkInput.left = false;
   walkInput.right = false;
@@ -1442,11 +1463,18 @@ function clearWalkInputState() {
 function refreshWalkUi() {
   const btn = document.getElementById('btn-walk');
   const controls = document.getElementById('walk-controls');
+  const viewBtn = controls ? controls.querySelector('button[data-walk="view"]') : null;
   if (btn) {
     btn.classList.toggle('active', walkMode.active);
   }
   if (controls) {
     controls.style.display = walkMode.active ? 'grid' : 'none';
+  }
+  if (viewBtn) {
+    viewBtn.textContent = walkCameraMode === 'fp' ? 'FP' : 'TP';
+    viewBtn.title = walkCameraMode === 'fp'
+      ? 'Switch to third-person view (V/C)'
+      : 'Switch to first-person view (V/C)';
   }
 }
 
@@ -1490,7 +1518,7 @@ function startWalkMode(idx) {
   walkState.sprintBobPhase = 0;
   walkState.sprintBlend = 0;
   sausage.position.copy(walkState.position);
-  sausage.visible = true;
+  sausage.visible = walkCameraMode !== 'fp';
   refreshWalkUi();
 }
 
@@ -1653,15 +1681,28 @@ function updateWalkMode(dt) {
   _walkQ.setFromRotationMatrix(_walkBasisMat);
   sausage.quaternion.slerp(_walkQ, 0.35);
 
-  _walkCamTarget.copy(walkState.position)
-    .addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bob)
-    .addScaledVector(walkState.forward, WALK_CFG.cameraLead);
-  _walkCamPos.copy(walkState.position)
-    .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bob)
-    .addScaledVector(walkState.forward, -WALK_CFG.cameraDistance);
-  camera.position.lerp(_walkCamPos, 0.24);
-  camera.up.lerp(walkState.up, 0.35).normalize();
-  camera.lookAt(_walkCamTarget);
+  const fpMode = walkCameraMode === 'fp';
+  sausage.visible = !fpMode;
+  if (fpMode) {
+    const fpBob = Math.sin(walkState.sprintBobPhase) * WALK_CFG.fpBobAmp * walkState.sprintBlend;
+    _walkCamPos.copy(walkState.position)
+      .addScaledVector(walkState.up, WALK_CFG.fpEyeHeight + fpBob)
+      .addScaledVector(walkState.forward, WALK_CFG.fpForwardOffset);
+    _walkCamTarget.copy(_walkCamPos).addScaledVector(walkState.viewDir, WALK_CFG.fpLookDistance);
+    camera.position.lerp(_walkCamPos, 0.42);
+    camera.up.lerp(walkState.up, 0.46).normalize();
+    camera.lookAt(_walkCamTarget);
+  } else {
+    _walkCamTarget.copy(walkState.position)
+      .addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bob)
+      .addScaledVector(walkState.forward, WALK_CFG.cameraLead);
+    _walkCamPos.copy(walkState.position)
+      .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bob)
+      .addScaledVector(walkState.forward, -WALK_CFG.cameraDistance);
+    camera.position.lerp(_walkCamPos, 0.24);
+    camera.up.lerp(walkState.up, 0.35).normalize();
+    camera.lookAt(_walkCamTarget);
+  }
 }
 
 function updateCamera(curScale) {
@@ -2556,6 +2597,7 @@ function setWalkInputFlag(key, down) {
   if (key === 'back') walkInput.back = down;
   if (key === 'sprint') walkInput.sprint = down;
   if (key === 'jump' && down) queueWalkJump();
+  if (key === 'view' && down) toggleWalkCameraMode();
 }
 
 if (walkControlsEl) {
@@ -2579,11 +2621,12 @@ window.addEventListener('keydown', e => {
   if (k === 'd' || k === 'arrowright') walkInput.right = true;
   if (k === 'shift') walkInput.sprint = true;
   if (k === ' ') queueWalkJump();
+  if (k === 'v' || k === 'c') toggleWalkCameraMode();
   if (k === 'escape') {
     stopWalkMode();
     updateWalkButtonVisibility();
   }
-  if (['w','a','s','d',' ','shift','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
+  if (['w','a','s','d',' ','shift','v','c','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
 });
 
 window.addEventListener('keyup', e => {
