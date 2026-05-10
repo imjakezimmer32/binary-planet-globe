@@ -1180,13 +1180,16 @@ function updateCamera(curScale) {
     );
     camera.lookAt(lookAt);
   } else {
-    // Planet view: orbit around the binary system's COM in world space
+    // Planet view: orbit around the currently selected destination system.
     pOrbitTheta += pDTheta; pDTheta *= 0.88;
     pOrbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, pOrbitPhi + pDPhi));
     pDPhi *= 0.88;
     if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
 
-    const base = sysGroup.position.clone().add(panOffset);
+    const systemCenter = currentDestIndex === 0
+      ? sysGroup.position
+      : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
+    const base = systemCenter.clone().add(panOffset);
     const r = PLANET_ORBIT_BASE * orbitZoom * curScale;
     const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
     camera.position.set(
