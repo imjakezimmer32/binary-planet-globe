@@ -843,22 +843,22 @@ input[type=range]::-moz-range-thumb {
 
 <div id="cam-settings">
   <div class="cs-row">
-    <span class="cs-label" id="cs-lbl-fov">FOV &nbsp;65°</span>
-    <input type="range" id="cs-fov" min="20" max="110" step="1" value="65">
+    <span class="cs-label" id="cs-lbl-fov">FOV &nbsp;20°</span>
+    <input type="range" id="cs-fov" min="20" max="110" step="1" value="20">
   </div>
   <div class="cs-row">
-    <span class="cs-label" id="cs-lbl-speed">Orbit Speed &nbsp;1.0×</span>
-    <input type="range" id="cs-speed" min="0.1" max="4" step="0.05" value="1">
+    <span class="cs-label" id="cs-lbl-speed">Orbit Speed &nbsp;0.1×</span>
+    <input type="range" id="cs-speed" min="0.1" max="4" step="0.05" value="0.1">
   </div>
   <div class="cs-row">
-    <span class="cs-label" id="cs-lbl-zoom">Zoom Speed &nbsp;1.0×</span>
-    <input type="range" id="cs-zoom" min="0.1" max="4" step="0.05" value="1">
+    <span class="cs-label" id="cs-lbl-zoom">Zoom Speed &nbsp;0.1×</span>
+    <input type="range" id="cs-zoom" min="0.1" max="4" step="0.05" value="0.1">
   </div>
   <div class="cs-row">
     <span class="cs-label">Auto Rotate</span>
     <div class="cs-toggle">
-      <button id="cs-rot-on" class="on">On</button>
-      <button id="cs-rot-off">Off</button>
+      <button id="cs-rot-on">On</button>
+      <button id="cs-rot-off" class="on">Off</button>
     </div>
   </div>
 </div>
@@ -879,7 +879,7 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.001, 2000000);
+const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 0.001, 2000000);
 
 // ── Lighting: sun is the only real source ─────────────────────────
 // Very dim ambient keeps the night-sides from going pure black
@@ -950,9 +950,9 @@ let pOrbitTheta = -0.3, pOrbitPhi = 1.1;
 let pDTheta = 0, pDPhi = 0;
 
 let cameraMode    = 'sun'; // 'sun' | 'planet'
-let autoRotate    = true;
-let orbitSpeedMul = 1.0;
-let zoomSpeedMul  = 1.0;
+let autoRotate    = false;
+let orbitSpeedMul = 0.1;
+let zoomSpeedMul  = 0.1;
 let dragButton = 0;
 let dragging = false, lastPX = 0, lastPY = 0;
 
@@ -1697,6 +1697,16 @@ function setAutoRotate(v) {
 }
 csRotOn.addEventListener('click',  () => setAutoRotate(true));
 csRotOff.addEventListener('click', () => setAutoRotate(false));
+
+// Match Three.js + runtime to panel defaults (all devices start at minimum cam settings)
+camera.fov = parseFloat(csFov.value);
+camera.updateProjectionMatrix();
+csLblFov.textContent = `FOV  ${camera.fov}°`;
+orbitSpeedMul = parseFloat(csSpeed.value);
+csLblSpeed.textContent = `Orbit Speed  ${orbitSpeedMul.toFixed(1)}×`;
+zoomSpeedMul = parseFloat(csZoom.value);
+csLblZoom.textContent = `Zoom Speed  ${zoomSpeedMul.toFixed(1)}×`;
+setAutoRotate(false);
 
 // ── Animate ───────────────────────────────────────────────────────
 const BASE_DT = 1 / 60;
