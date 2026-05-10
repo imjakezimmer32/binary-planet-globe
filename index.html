@@ -864,7 +864,7 @@ input[type=range]::-moz-range-thumb {
 </div>
 <div id="ui">
   <div class="row-label" id="lbl-scale">SCALE &nbsp;1.00 &nbsp;·&nbsp; DETAIL &nbsp;3</div>
-  <input type="range" id="dial-scale" min="0" max="1" step="0.001" value="0.483">
+  <input type="range" id="dial-scale" min="0" max="1" step="0.001" value="0">
   <div class="gap"></div>
   <div class="row-label" id="lbl-warp">TIME WARP &nbsp;1.00×</div>
   <input type="range" id="dial-warp" min="0" max="4" step="0.05" value="1">
@@ -1472,7 +1472,7 @@ const COM_OMEGA = 0.012;
 let comAngle = 0;
 
 // ── Dial wiring ───────────────────────────────────────────────────
-const SCALE_MIN = 0.08, SCALE_MAX = 150;
+const SCALE_MIN = 1.0, SCALE_MAX = 150;
 const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
 function sliderToScale(v) { return SCALE_MIN * Math.exp(SCALE_LOG * v); }
 function scaleToDetail(s) {
@@ -1480,11 +1480,7 @@ function scaleToDetail(s) {
   // Scale down = camera closer relative to planet size → more detail needed.
   if (s >= 50.00) return 1;
   if (s >= 15.00) return 2;
-  if (s >=  4.50) return 3;
-  if (s >=  1.60) return 4;
-  if (s >=  0.55) return 5;
-  if (s >=  0.20) return 6;
-  return 7;
+  return 3;
 }
 
 let targetScale = 1.0, timeWarp = 1.0, curDetail = 3;
