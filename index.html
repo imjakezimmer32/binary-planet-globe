@@ -832,7 +832,7 @@ input[type=range]::-moz-range-thumb {
 </div>
 <div id="hint">
   <span class="hint-desktop">drag to orbit &nbsp;·&nbsp; scroll to zoom &nbsp;·&nbsp; right-drag to pan</span>
-  <span class="hint-touch">one finger: orbit &nbsp;·&nbsp; pinch: zoom &nbsp;·&nbsp; two fingers drag: pan</span>
+  <span class="hint-touch">one finger: orbit &nbsp;·&nbsp; pinch in/out: zoom &nbsp;·&nbsp; two fingers drag together: move on plane</span>
 </div>
 <div id="cam-buttons">
   <button class="cam-btn active" id="btn-sun">Solar View</button>
@@ -966,8 +966,9 @@ const _right = new THREE.Vector3();
 const _up    = new THREE.Vector3();
 
 // ── Camera input: separate paths (do not mix) ─────────────────────
-// Desktop: mouse / pen — left = orbit, right = pan, wheel = zoom (unchanged).
-// Touch: pointerType "touch" only — 1 finger = orbit, 2 = pinch zoom + pan.
+// Desktop: mouse / pen — left = orbit, right = pan on plane, wheel = zoom.
+// Touch: 1 finger = orbit; 2 fingers pinch (spacing change) = zoom;
+//        2 fingers drag together (spacing ~stable) = pan on view plane.
 const _canvas = renderer.domElement;
 
 function isTouchPointer(e) {
@@ -1011,6 +1012,11 @@ let mobPinchDist = 0;
 let mobMidX = 0, mobMidY = 0;
 let mobSingleLX = 0, mobSingleLY = 0;
 let mobSingleReady = false;
+// Split 2-finger gestures: pinch → zoom; parallel drag → pan on camera plane (like desktop right-drag)
+const MOB_SPREAD_ZOOM = 0.55;   // px finger-spacing change → pinch zoom
+const MOB_PAN_DOM = 0.48;       // plane-pan only if spacing shifts < this × travel
+const MOB_PAN_MIN = 0.45;       // min midpoint motion (px) for plane pan
+const MOB_ZOOM_VS_PAN = 0.28;   // zoom wins if spacing shift > this × pan motion
 
 function mobPinchPair() {
   const pts = Array.from(mobPointers.values());
@@ -1060,22 +1066,35 @@ function onMobilePointerMove(e) {
     const midX = (pair.a.x + pair.b.x) * 0.5;
     const midY = (pair.a.y + pair.b.y) * 0.5;
 
-    if (mobPinchDist > 12 && dist > 12) {
-      zoomTarget = null;
-      const ratio = dist / mobPinchDist;
-      const zf = Math.pow(ratio, 1.12);
-      orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * zf));
-    }
-    mobPinchDist = dist;
+    const prevD = mobPinchDist;
+    const prevMx = mobMidX;
+    const prevMy = mobMidY;
 
-    if (mobMidX !== 0 || mobMidY !== 0) {
-      const mdx = midX - mobMidX;
-      const mdy = midY - mobMidY;
-      camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
-      const panSpeed = 0.014 * orbitZoom;
-      panOffset.addScaledVector(_right, -mdx * panSpeed);
-      panOffset.addScaledVector(_up,     mdy * panSpeed);
+    if (prevD > 10 && dist > 10) {
+      const spreadPx = Math.abs(dist - prevD);
+      const mdx = midX - prevMx;
+      const mdy = midY - prevMy;
+      const panLen = Math.hypot(mdx, mdy);
+
+      const doPinchZoom =
+        spreadPx >= MOB_SPREAD_ZOOM && spreadPx > panLen * MOB_ZOOM_VS_PAN;
+      const doPlanePan =
+        panLen >= MOB_PAN_MIN && spreadPx < panLen * MOB_PAN_DOM;
+
+      if (doPinchZoom) {
+        zoomTarget = null;
+        const ratio = dist / prevD;
+        const zf = Math.pow(ratio, 1.13);
+        orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * zf));
+      } else if (doPlanePan) {
+        camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
+        const panSpeed = 0.019 * orbitZoom;
+        panOffset.addScaledVector(_right, -mdx * panSpeed);
+        panOffset.addScaledVector(_up,     mdy * panSpeed);
+      }
     }
+
+    mobPinchDist = dist;
     mobMidX = midX;
     mobMidY = midY;
   }
