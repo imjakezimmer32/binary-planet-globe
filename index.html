@@ -1451,17 +1451,17 @@ function buildGlobe(radius, detail, seed, ps, wl) {
   // ps = peakScale, wl = waterLevel (explicit per-planet)
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
-  const seaScale = 0.80 + wl * 0.42;
-  const seaR = wl >= 0.05 ? radius * seaScale : -Infinity;
+  const liquidScale = 0.80 + wl * 0.42;
+  const liquidR = radius * liquidScale;
   for (let i = 0; i < geo.attributes.position.count; i++) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
     const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
              + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
-    // Clamp low terrain to sea level so water directly matches terrain polygons.
+    // Clamp low terrain to liquid level so liquid directly matches terrain polygons.
     const rawR = radius * (1 + d);
-    const r = Math.max(rawR, seaR);
+    const r = Math.max(rawR, liquidR);
     arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
   }
   geo.attributes.position.needsUpdate = true;
@@ -1525,46 +1525,77 @@ function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const faceCount = pos.count / 3;
-  const hasWater = wl >= 0.05;
-  const seaR = baseR * seaScale;
+  const waterMode = wl >= 0.05;
+  const liquidR = baseR * seaScale;
+  const liquidEps = liquidR * 0.0018;
+  const lavaGlowPos = [];
+  const lavaGlowCol = [];
 
   // Blend palette: green fades in when wl > 0.05, fully green at 0.20
   const wet = Math.min(Math.max((wl - 0.05) / 0.15, 0), 1);
   const pal = blendPalette(wet);
 
-  // Pass 1: find actual elevation min/max for palette stretching
+  // Pass 1: find terrain (non-liquid) elevation range for palette stretching
   let minNe = Infinity, maxNe = -Infinity;
   for (let f = 0; f < faceCount; f++) {
     let sumE = 0;
+    let liquidVerts = 0;
     for (let v = 0; v < 3; v++) {
       const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      sumE += Math.sqrt(x*x + y*y + z*z);
+      const rr = Math.sqrt(x*x + y*y + z*z);
+      sumE += rr;
+      if (rr <= liquidR + liquidEps) liquidVerts++;
     }
+    if (liquidVerts > 0) continue;
     const ne = (sumE / 3 / baseR - 1) / ps;
     if (ne < minNe) minNe = ne;
     if (ne > maxNe) maxNe = ne;
+  }
+  if (!Number.isFinite(minNe) || !Number.isFinite(maxNe)) {
+    minNe = -0.2;
+    maxNe = 0.2;
   }
   const pMin = pal[0][0], pMax = pal[pal.length-1][0];
   const negScale = minNe < 0 ? pMin / minNe : 1;
   const posScale = maxNe > 0 ? pMax / maxNe : 1;
 
-  // Pass 2: colorize terrain and sea polygons on this same mesh
+  // Pass 2: colorize terrain and liquid polygons on this same mesh
   for (let f = 0; f < faceCount; f++) {
     let sumE = 0;
+    let liquidVerts = 0;
     for (let v = 0; v < 3; v++) {
       const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      sumE += Math.sqrt(x*x + y*y + z*z);
+      const rr = Math.sqrt(x*x + y*y + z*z);
+      sumE += rr;
+      if (rr <= liquidR + liquidEps) liquidVerts++;
     }
-    const faceR  = sumE / 3;
+    const isLiquidFace = liquidVerts > 0;
+    const isShoreFace = isLiquidFace && liquidVerts < 3;
     const ne     = (sumE / 3 / baseR - 1) / ps;
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
     let r, g, b;
-    if (hasWater && faceR <= seaR * 1.002) {
-      // Slight tint variation keeps oceans faceted without a separate sphere shell.
-      const tint = (f % 11) / 11;
-      r = 0.10 + tint * 0.02;
-      g = 0.32 + tint * 0.04;
-      b = 0.66 + tint * 0.06;
+    if (isLiquidFace) {
+      if (waterMode) {
+        // Water body rule: only liquid touching land is shore; interior is solid.
+        if (isShoreFace) {
+          r = 0.28; g = 0.34; b = 0.20;
+        } else {
+          r = 0.12; g = 0.35; b = 0.72;
+        }
+      } else {
+        // Lava body rule: red core, yellow shore.
+        if (isShoreFace) {
+          r = 0.99; g = 0.78; b = 0.16;
+        } else {
+          r = 0.76; g = 0.12; b = 0.05;
+        }
+        const glow = isShoreFace ? [1.00, 0.90, 0.28] : [1.00, 0.26, 0.10];
+        for (let v = 0; v < 3; v++) {
+          const i = f * 3 + v;
+          lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+          lavaGlowCol.push(glow[0], glow[1], glow[2]);
+        }
+      }
     } else {
       [r,g,b] = elevColor(mapped, pal);
     }
@@ -1573,6 +1604,9 @@ function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
     }
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return {
+    lavaGlow: lavaGlowPos.length > 0 ? { positions: lavaGlowPos, colors: lavaGlowCol } : null
+  };
 }
 
 // ── Planet factory ────────────────────────────────────────────────
@@ -1599,7 +1633,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 
     const idxGeo  = buildGlobe(baseR, d, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
-    colorizeGlobe(flatGeo, baseR, ps, wl, ws);
+    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, ws);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
@@ -1612,6 +1646,24 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
     terrain.renderOrder = 0;
+    const lavaGlow = (() => {
+      if (!colorMeta?.lavaGlow) return null;
+      const glowGeo = new THREE.BufferGeometry();
+      glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(colorMeta.lavaGlow.positions, 3));
+      glowGeo.setAttribute('color', new THREE.Float32BufferAttribute(colorMeta.lavaGlow.colors, 3));
+      const glowMat = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.72,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      const glowMesh = new THREE.Mesh(glowGeo, glowMat);
+      glowMesh.scale.setScalar(1.0025);
+      glowMesh.renderOrder = 1;
+      return glowMesh;
+    })();
 
     const wire = new THREE.LineSegments(
       new THREE.EdgesGeometry(idxGeo),
@@ -1628,7 +1680,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     );
     atmo.renderOrder = 3;
 
-    built = [depthBack, terrain, wire, atmo];
+    built = [depthBack, terrain];
+    if (lavaGlow) built.push(lavaGlow);
+    built.push(wire, atmo);
     pickables = [terrain];
     spin.add(...built);
   }
