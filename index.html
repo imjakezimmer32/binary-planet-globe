@@ -1833,6 +1833,9 @@ csLblZoom.textContent = `Zoom Speed  ${zoomSpeedMul.toFixed(1)}×`;
 setAutoRotate(true);
 
 // ── Animate ───────────────────────────────────────────────────────
+let currentDestIndex = 0;
+let isNavigating     = false;
+const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
 const BASE_DT = 1 / 60;
 
 function animate() {
@@ -1933,9 +1936,6 @@ const GALAXY_DESTINATIONS = [
   { name: 'Kepler-442',      dist: '1,206 ly',  color: 0xff9966, pos: new THREE.Vector3( 3100,-700, 1500)  },
   { name: "Gliese 667C",     dist: '23.6 ly',   color: 0xff6644, pos: new THREE.Vector3(-1500, 600,-2300)  },
 ];
-let currentDestIndex = 0;
-let isNavigating     = false;
-const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
 
 function syncTrailVisibility() {
   const activeDest = isNavigating ? -1 : currentDestIndex;
