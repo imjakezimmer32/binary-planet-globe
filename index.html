@@ -1595,9 +1595,17 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     }));
     terrain.renderOrder = 0;
 
+    // Low-poly dome shell to match polygon style and reduce water flicker artifacts.
     const water = new THREE.Mesh(
-      new THREE.SphereGeometry(baseR, 72, 36),
-      new THREE.MeshPhongMaterial({ color: 0x003a8c, specular: 0x2266dd, shininess: 120 })
+      new THREE.IcosahedronGeometry(baseR, 2),
+      new THREE.MeshPhongMaterial({
+        color: 0x1f63b8,
+        specular: 0x7fb8ff,
+        shininess: 90,
+        flatShading: true,
+        transparent: true,
+        opacity: 0.62
+      })
     );
     water.scale.setScalar(ws);
     water.visible = wl >= 0.05;   // hide completely when dry — no shrunk bubble
