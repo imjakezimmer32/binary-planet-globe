@@ -1446,26 +1446,22 @@ function noise3(x, y, z) {
   );
 }
 
-// ── Terrain / water globals ───────────────────────────────────────
-let peakScale  = 1.0;
-let waterLevel = 0.48;
-function waterScale() { return 0.80 + waterLevel * 0.42; }
-//  waterLevel 0   → 0.80 × baseR  (dry, water below terrain)
-//  waterLevel 0.48 → ~1.00 × baseR  (sea level)
-//  waterLevel 1   → 1.22 × baseR  (full ocean)
-
 // ── Globe geometry ────────────────────────────────────────────────
-function buildGlobe(radius, detail, seed, ps) {
-  // ps = peakScale for this planet (explicit, not global)
+function buildGlobe(radius, detail, seed, ps, wl) {
+  // ps = peakScale, wl = waterLevel (explicit per-planet)
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
+  const seaScale = 0.80 + wl * 0.42;
+  const seaR = wl >= 0.05 ? radius * seaScale : -Infinity;
   for (let i = 0; i < geo.attributes.position.count; i++) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
     const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
              + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
-    const r = radius * (1 + d);
+    // Clamp low terrain to sea level so water directly matches terrain polygons.
+    const rawR = radius * (1 + d);
+    const r = Math.max(rawR, seaR);
     arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
   }
   geo.attributes.position.needsUpdate = true;
@@ -1523,12 +1519,14 @@ function blendPalette(wet) {
   ]);
 }
 
-function colorizeGlobe(geo, baseR, ps, wl) {
+function colorizeGlobe(geo, baseR, ps, wl, seaScale) {
   // ps = peakScale, wl = waterLevel — explicit per-planet, not global
   ps = Math.max(ps, 0.001);
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const faceCount = pos.count / 3;
+  const hasWater = wl >= 0.05;
+  const seaR = baseR * seaScale;
 
   // Blend palette: green fades in when wl > 0.05, fully green at 0.20
   const wet = Math.min(Math.max((wl - 0.05) / 0.15, 0), 1);
@@ -1550,16 +1548,26 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const negScale = minNe < 0 ? pMin / minNe : 1;
   const posScale = maxNe > 0 ? pMax / maxNe : 1;
 
-  // Pass 2: colorize using elevation only — water sphere covers underwater faces
+  // Pass 2: colorize terrain and sea polygons on this same mesh
   for (let f = 0; f < faceCount; f++) {
     let sumE = 0;
     for (let v = 0; v < 3; v++) {
       const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
       sumE += Math.sqrt(x*x + y*y + z*z);
     }
+    const faceR  = sumE / 3;
     const ne     = (sumE / 3 / baseR - 1) / ps;
     const mapped = ne < 0 ? ne * negScale : ne * posScale;
-    const [r,g,b] = elevColor(mapped, pal);
+    let r, g, b;
+    if (hasWater && faceR <= seaR * 1.002) {
+      // Slight tint variation keeps oceans faceted without a separate sphere shell.
+      const tint = (f % 11) / 11;
+      r = 0.10 + tint * 0.02;
+      g = 0.32 + tint * 0.04;
+      b = 0.66 + tint * 0.06;
+    } else {
+      [r,g,b] = elevColor(mapped, pal);
+    }
     for (let v = 0; v < 3; v++) {
       col[(f*3+v)*3]=r; col[(f*3+v)*3+1]=g; col[(f*3+v)*3+2]=b;
     }
@@ -1573,7 +1581,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   const spin  = new THREE.Group();
   spin.rotation.z = axisTilt;
   pivot.add(spin);
-  let built = [], waterRef = null, pickables = [];
+  let built = [], pickables = [];
 
   // Per-planet state — independent of any global
   const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
@@ -1587,13 +1595,13 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built = [];
 
     const ps = state.peakScale, wl = state.waterLevel;
-    const ws = 0.80 + wl * 0.42;          // water sphere scale factor
+    const ws = 0.80 + wl * 0.42;
 
-    const idxGeo  = buildGlobe(baseR, d, seed, ps);
+    const idxGeo  = buildGlobe(baseR, d, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
-    colorizeGlobe(flatGeo, baseR, ps, wl);
+    colorizeGlobe(flatGeo, baseR, ps, wl, ws);
 
-    // Depth pre-pass: back-faces seal the silhouette so water can't bleed through
+    // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
       new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: THREE.BackSide })
     );
@@ -1604,23 +1612,6 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
     terrain.renderOrder = 0;
-
-    // Low-poly dome shell to match polygon style and reduce water flicker artifacts.
-    const water = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(baseR, 2),
-      new THREE.MeshPhongMaterial({
-        color: 0x1f63b8,
-        specular: 0x7fb8ff,
-        shininess: 90,
-        flatShading: true,
-        transparent: true,
-        opacity: 0.62
-      })
-    );
-    water.scale.setScalar(ws);
-    water.visible = wl >= 0.05;   // hide completely when dry — no shrunk bubble
-    water.renderOrder = 1;
-    waterRef = water;
 
     const wire = new THREE.LineSegments(
       new THREE.EdgesGeometry(idxGeo),
@@ -1637,8 +1628,8 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     );
     atmo.renderOrder = 3;
 
-    built = [depthBack, terrain, water, wire, atmo];
-    pickables = [terrain, water];
+    built = [depthBack, terrain, wire, atmo];
+    pickables = [terrain];
     spin.add(...built);
   }
 
@@ -1647,7 +1638,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     pivot, spin, state,
     baseRadius: baseR,
     rebuild:  build,
-    setWater: (s, wl) => { if (waterRef) { waterRef.scale.setScalar(s); waterRef.visible = (wl === undefined ? s > 0.84 : wl >= 0.05); } },
+    setWater: () => {},
     setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
     syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
     getPickables: () => pickables,
