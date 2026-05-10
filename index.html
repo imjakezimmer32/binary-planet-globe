@@ -100,52 +100,136 @@ input[type=range]::-webkit-slider-thumb {
   border-color: rgba(255,255,255,0.55);
 }
 
-/* ── Planet panel ────────────────────────────────────────────────── */
+/* ── Planet panel (minimal card — system UI, not monospace) ──────── */
 #planet-panel {
-  position: fixed; bottom: 30px; right: 24px;
-  background: rgba(0,0,0,0.82);
-  border: 1px solid rgba(255,255,255,0.12);
-  padding: 0; min-width: 230px;
-  display: flex; flex-direction: column;
-  backdrop-filter: blur(8px);
-  max-height: 80vh; overflow-y: auto;
+  position: fixed;
+  bottom: 30px;
+  right: 24px;
+  width: min(268px, 30vw);
+  max-height: min(74vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 12, 18, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 #planet-panel-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.pp-toggle { display: none; }
+.pp-head-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 #planet-panel-title {
-  color: rgba(255,255,255,0.4);
-  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.pp-count {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
 }
 #add-planet-btn {
-  background: none; border: 1px solid rgba(255,255,255,0.22);
-  color: rgba(255,255,255,0.5); font-family: monospace;
-  font-size: 10px; letter-spacing: 1px; padding: 3px 8px; cursor: pointer;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 18px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#add-planet-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+#add-planet-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.28);
+}
+#planet-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+#planet-list {
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 6px 8px 8px;
+}
 .planet-item {
-  padding: 8px 14px;
-  display: flex; align-items: center; gap: 8px;
-  cursor: pointer; border-left: 2px solid transparent;
-  transition: background 0.1s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 2px 0;
+  border-radius: 9px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
 }
-.planet-item:hover { background: rgba(255,255,255,0.06); }
-.planet-item.selected { border-left-color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.05); }
+.planet-item:hover { background: rgba(255, 255, 255, 0.05); }
+.planet-item.selected {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.11);
+}
 .planet-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 .planet-name {
-  color: rgba(255,255,255,0.55); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; flex: 1;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  font-weight: 450;
+  letter-spacing: 0.02em;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.planet-item.selected .planet-name { color: #fff; }
+.planet-item.selected .planet-name { color: rgba(255, 255, 255, 0.95); }
 #planet-edit-panel {
-  padding: 12px 14px;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.22);
 }
-#planet-edit-panel .row-label { pointer-events: none; }
+.pe-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pe-lbl {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+  pointer-events: none;
+}
 #planet-edit-panel input[type=range] { width: 100%; }
 
 /* ── Galaxy navigation menu ─────────────────────────────────────── */
@@ -479,90 +563,168 @@ input[type=range]::-moz-range-thumb {
   box-shadow: 0 0 8px rgba(255,255,255,.9);
 }
 
+/* Mobile: small floating card above scale sliders; tap header to expand */
 #planet-panel {
   position: fixed;
-  top: calc(max(8px, env(safe-area-inset-top, 0px)) + min(124px, 28vw));
-  left: max(8px, env(safe-area-inset-left, 0px));
+  top: auto;
+  left: auto;
   right: max(8px, env(safe-area-inset-right, 0px));
-  bottom: auto;
+  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 108px);
   width: auto;
-  min-width: unset;
-  max-height: min(34vh, 280px);
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  z-index: 25;
-  background: rgba(0,0,0,0.88);
-  border: 1px solid rgba(255,255,255,0.12);
-  padding: 0;
+  min-width: min(168px, 44vw);
+  max-width: min(300px, 92vw);
+  max-height: min(46vh, 320px);
+  overflow: hidden;
+  z-index: 32;
   display: flex;
   flex-direction: column;
-  backdrop-filter: blur(10px);
+  background: rgba(10, 12, 18, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 14px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+#planet-panel:not(.pp-open) #planet-panel-body {
+  display: none !important;
+}
+#planet-panel.pp-open #planet-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 #planet-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-#planet-panel-title {
-  font-size: clamp(9px, 2.6vw, 11px);
-  color: rgba(255,255,255,0.4);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-#add-planet-btn {
-  background: none;
-  border: 1px solid rgba(255,255,255,0.22);
-  color: rgba(255,255,255,0.5);
-  font-family: monospace;
-  font-size: clamp(9px, 2.5vw, 11px);
-  letter-spacing: 0.08em;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 6px 8px 6px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   min-height: 44px;
-  cursor: pointer;
 }
-.planet-item {
-  padding: 12px 14px;
-  min-height: 48px;
+.pp-toggle {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
-  border-left: 2px solid transparent;
-  transition: background 0.1s;
+  transition: color 0.15s, transform 0.2s ease, background 0.15s;
+}
+.pp-toggle:active { background: rgba(255, 255, 255, 0.06); }
+#planet-panel.pp-open .pp-toggle {
+  transform: rotate(180deg);
+  color: rgba(255, 255, 255, 0.65);
+}
+.pp-head-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+#planet-panel-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+.pp-count {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+}
+#add-planet-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 20px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+#planet-list {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 8px 6px;
+  max-height: none;
+  -webkit-overflow-scrolling: touch;
+}
+.planet-item {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 7px 12px;
+  min-height: 36px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  transition: background 0.12s, border-color 0.12s;
 }
 .planet-item.selected {
-  border-left-color: rgba(255,255,255,0.5);
-  background: rgba(255,255,255,0.05);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
 }
 .planet-dot {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .planet-name {
-  font-size: clamp(9px, 2.5vw, 11px);
-  color: rgba(255,255,255,0.55);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  flex: 1;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.planet-item.selected .planet-name { color: #fff; }
+.planet-item.selected .planet-name { color: rgba(255, 255, 255, 0.95); }
 #planet-edit-panel {
-  padding: 14px 16px;
-  gap: 10px;
-  border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 8px;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.2);
 }
-#planet-edit-panel .row-label { pointer-events: none; }
+.pe-lbl {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+}
+.pe-row { display: flex; flex-direction: column; gap: 3px; }
 #planet-edit-panel input[type=range] {
   width: 100%;
-  height: 6px;
+  height: 5px;
   -webkit-appearance: none;
-  background: rgba(255,255,255,0.20);
+  background: rgba(255, 255, 255, 0.18);
   outline: none;
   cursor: pointer;
 }
@@ -605,8 +767,9 @@ input[type=range]::-moz-range-thumb {
 }
 
 #planet-panel {
-  top: calc(max(6px, env(safe-area-inset-top, 0px)) + 96px);
-  max-height: min(42vh, 200px);
+  bottom: calc(max(6px, env(safe-area-inset-bottom, 0px)) + 96px);
+  max-height: min(40vh, 200px);
+  max-width: min(280px, 88vw);
 }
 
 #ui {
@@ -629,19 +792,29 @@ input[type=range]::-moz-range-thumb {
 
 <div id="planet-panel">
   <div id="planet-panel-header">
-    <span id="planet-panel-title">Planets</span>
-    <button id="add-planet-btn">+ Add</button>
+    <button type="button" id="planet-panel-toggle" class="pp-toggle" aria-expanded="false" aria-controls="planet-panel-body" aria-label="Show or hide planet list">⌄</button>
+    <div class="pp-head-main">
+      <span id="planet-panel-title">Planets</span>
+      <span id="planet-count" class="pp-count" aria-hidden="true">0</span>
+    </div>
+    <button type="button" id="add-planet-btn" aria-label="Add planet">+</button>
   </div>
-  <div id="planet-list"></div>
-  <div id="planet-edit-panel" style="display:none">
-    <div class="row-label" id="lbl-size-edit">SIZE  1.00×</div>
-    <input type="range" id="dial-size-edit" min="0.1" max="5" step="0.05" value="1">
-    <div class="gap"></div>
-    <div class="row-label" id="lbl-peak-edit">PEAKS  1.00×</div>
-    <input type="range" id="dial-peak-edit" min="0" max="3" step="0.01" value="1">
-    <div class="gap"></div>
-    <div class="row-label" id="lbl-water-edit">WATER  48%</div>
-    <input type="range" id="dial-water-edit" min="0" max="1" step="0.005" value="0.48">
+  <div id="planet-panel-body">
+    <div id="planet-list"></div>
+    <div id="planet-edit-panel" style="display:none">
+      <div class="pe-row">
+        <span class="pe-lbl" id="lbl-size-edit">Size 1.00×</span>
+        <input type="range" id="dial-size-edit" min="0.1" max="5" step="0.05" value="1">
+      </div>
+      <div class="pe-row">
+        <span class="pe-lbl" id="lbl-peak-edit">Peaks 1.00×</span>
+        <input type="range" id="dial-peak-edit" min="0" max="3" step="0.01" value="1">
+      </div>
+      <div class="pe-row">
+        <span class="pe-lbl" id="lbl-water-edit">Water 48%</span>
+        <input type="range" id="dial-water-edit" min="0" max="1" step="0.005" value="0.48">
+      </div>
+    </div>
   </div>
 </div>
 
@@ -730,7 +903,7 @@ scene.add(sunLight);   // stays at origin; position never needs updating
   ));
 })();
 
-// ── Sun visual (at world origin, scales with planet scale) ────────
+// ── Sun visual (fixed world radius; universe scale moves orbits only) ─
 // Core + nested corona layers using additive blending
 const SUN_R = 2.5;    // sun radius in physics units
 const sunGroup = new THREE.Group();
@@ -756,8 +929,8 @@ sunGroup.add(new THREE.Mesh(
 );
 
 // ── Camera — orbits the sun (world origin) ────────────────────────
-// Distance = ORBIT_BASE * curScale * userZoom.  Planet scale grows
-// → camera pulls back → system always fills the same FOV.
+// Distance = ORBIT_BASE * curScale * userZoom (pull back as system spreads).
+// Planet mesh scale is compensated so body radii stay fixed vs the sun.
 const ORBIT_BASE = 30;
 const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 
@@ -1204,12 +1377,47 @@ function rebuildPlanetList() {
     el.addEventListener('click', () => selectPlanet(i));
     list.appendChild(el);
   });
+  syncPlanetCount();
 }
 
 const editPanel   = $('planet-edit-panel');
 const dialSizeE   = $('dial-size-edit'),  lblSizeE  = $('lbl-size-edit');
 const dialPeakE   = $('dial-peak-edit'),  lblPeakE  = $('lbl-peak-edit');
 const dialWaterE  = $('dial-water-edit'), lblWaterE = $('lbl-water-edit');
+const planetPanel = $('planet-panel');
+const planetPanelToggle = $('planet-panel-toggle');
+const planetPanelHeader = $('planet-panel-header');
+const planetCountEl = $('planet-count');
+
+function syncPlanetCount() {
+  if (planetCountEl) planetCountEl.textContent = String(managedPlanets.length);
+}
+
+function isNarrowPlanetUI() {
+  return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 768px)').matches;
+}
+
+function setPlanetPanelOpen(open) {
+  if (!planetPanel || !isNarrowPlanetUI()) return;
+  planetPanel.classList.toggle('pp-open', open);
+  if (planetPanelToggle) planetPanelToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+if (planetPanelToggle) {
+  planetPanelToggle.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!isNarrowPlanetUI()) return;
+    setPlanetPanelOpen(!planetPanel.classList.contains('pp-open'));
+  });
+}
+if (planetPanelHeader) {
+  planetPanelHeader.addEventListener('click', e => {
+    if (!isNarrowPlanetUI()) return;
+    if (e.target.closest('#add-planet-btn')) return;
+    if (e.target.closest('#planet-panel-toggle')) return;
+    setPlanetPanelOpen(!planetPanel.classList.contains('pp-open'));
+  });
+}
 
 function selectPlanet(idx) {
   selectedPlanetIdx = idx;
@@ -1219,24 +1427,24 @@ function selectPlanet(idx) {
   dialSizeE.value  = mp.obj.state.size;
   dialPeakE.value  = mp.obj.state.peakScale;
   dialWaterE.value = mp.obj.state.waterLevel;
-  lblSizeE.textContent  = `SIZE  ${mp.obj.state.size.toFixed(2)}×`;
-  lblPeakE.textContent  = `PEAKS  ${mp.obj.state.peakScale.toFixed(2)}×`;
-  lblWaterE.textContent = `WATER  ${Math.round(mp.obj.state.waterLevel*100)}%`;
+  lblSizeE.textContent  = `Size ${mp.obj.state.size.toFixed(2)}×`;
+  lblPeakE.textContent  = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
+  lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
+  setPlanetPanelOpen(true);
 }
 
 dialSizeE.addEventListener('input', () => {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   mp.obj.state.size = parseFloat(dialSizeE.value);
-  lblSizeE.textContent = `SIZE  ${mp.obj.state.size.toFixed(2)}×`;
-  // pivot.scale is updated every frame in the animate loop — no rebuild needed
+  lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
 });
 
 dialPeakE.addEventListener('input', () => {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   mp.obj.state.peakScale = parseFloat(dialPeakE.value);
-  lblPeakE.textContent = `PEAKS  ${mp.obj.state.peakScale.toFixed(2)}×`;
+  lblPeakE.textContent = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
   mp.obj.rebuild(curDetail); mp.obj.syncGrid();
 });
 
@@ -1244,12 +1452,13 @@ dialWaterE.addEventListener('input', () => {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   mp.obj.state.waterLevel = parseFloat(dialWaterE.value);
-  lblWaterE.textContent = `WATER  ${Math.round(mp.obj.state.waterLevel*100)}%`;
+  lblWaterE.textContent = `Water ${Math.round(mp.obj.state.waterLevel * 100)}%`;
   mp.obj.rebuild(curDetail); mp.obj.syncGrid();
 });
 
 // Add planet button
-$('add-planet-btn').addEventListener('click', () => {
+$('add-planet-btn').addEventListener('click', e => {
+  e.stopPropagation();
   const idx   = managedPlanets.length;
   const seed  = Math.random() * 99;
   const color = PLANET_COLORS[idx % PLANET_COLORS.length];
@@ -1395,10 +1604,11 @@ function animate() {
   p1.spin.rotation.y = spin1;
   p2.spin.rotation.y = spin2;
 
-  // Size dial is a multiplier on top of the universe scale — planet world-size
-  // = baseR × state.size × curScale, so it stays proportional to its orbit.
+  // Universe scale multiplies sysGroup (orbits / spacing). Counter-scale pivots
+  // so world radius stays baseR × state.size — constant relative to the sun.
+  const scaleSafe = Math.max(curScale, 1e-5);
   managedPlanets.forEach(mp => {
-    mp.obj.pivot.scale.setScalar(mp.obj.state.size);
+    mp.obj.pivot.scale.setScalar(mp.obj.state.size / scaleSafe);
   });
 
   // Trails — world-space positions so the heliocentric orbit is captured correctly
