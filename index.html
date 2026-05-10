@@ -936,7 +936,7 @@ sunGroup.add(new THREE.Mesh(
 
 // ── Camera — orbits the sun (world origin) ────────────────────────
 // Distance = ORBIT_BASE * curScale * userZoom.
-// Camera scales with the system so proportions stay stable while scaling.
+// Scale now controls camera distance only (solar system size stays fixed).
 const ORBIT_BASE = 30;
 const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 
@@ -1483,7 +1483,7 @@ function scaleToDetail(s) {
   return 3;
 }
 
-let targetScale = 1.0, timeWarp = 1.0, curDetail = 3;
+let targetScale = 1.0, curScale = 1.0, timeWarp = 1.0, curDetail = 3;
 let spin1 = 0, spin2 = 0, sunSpin = 0;
 
 const $ = id => document.getElementById(id);
@@ -1722,10 +1722,8 @@ function animate() {
     }
   }
 
-  // Smooth scale lerp
-  const s = sysGroup.scale.x;
-  const curScale = s + (targetScale - s) * 0.08;
-  sysGroup.scale.setScalar(curScale);
+  // Smooth scale lerp (camera/universe view only; objects keep real size)
+  curScale += (targetScale - curScale) * 0.08;
 
   // Camera orbits the sun (world origin), pulls back as curScale grows
   updateCamera(curScale);
@@ -1757,18 +1755,17 @@ function animate() {
     });
   }
 
-  // Place the binary system's COM around the sun.
-  // sysGroup.position is in scene units; physics orbit radius scales with curScale.
-  const comR = SUN_ORBIT * curScale;
+  // Place the binary system's COM around the sun at fixed physical radius.
+  const comR = SUN_ORBIT;
   sysGroup.position.set(comR * Math.cos(comAngle), 0, comR * Math.sin(comAngle));
 
-  // Planet positions are relative to binary COM (physics units → scaled by sysGroup)
+  // Planet positions are relative to binary COM (physics units in world space)
   p1.pivot.position.copy(body[0].pos);
   p2.pivot.position.copy(body[1].pos);
   p1.spin.rotation.y = spin1;
   p2.spin.rotation.y = spin2;
 
-  // Scale planets with the system so distances and planet radii remain proportional.
+  // Apply per-planet size edits only; global scale does not resize bodies.
   managedPlanets.forEach(mp => {
     mp.obj.pivot.scale.setScalar(mp.obj.state.size);
   });
@@ -1776,21 +1773,21 @@ function animate() {
   // Trails — world-space positions so the heliocentric orbit is captured correctly
   const cx = sysGroup.position.x, cy = sysGroup.position.y, cz = sysGroup.position.z;
   pushTrail(trail1,
-    cx + body[0].pos.x * curScale,
-    cy + body[0].pos.y * curScale,
-    cz + body[0].pos.z * curScale);
+    cx + body[0].pos.x,
+    cy + body[0].pos.y,
+    cz + body[0].pos.z);
   pushTrail(trail2,
-    cx + body[1].pos.x * curScale,
-    cy + body[1].pos.y * curScale,
-    cz + body[1].pos.z * curScale);
+    cx + body[1].pos.x,
+    cy + body[1].pos.y,
+    cz + body[1].pos.z);
 
   // Gravity link line — world space
-  linkPos[0]=cx+body[0].pos.x*curScale; linkPos[1]=cy+body[0].pos.y*curScale; linkPos[2]=cz+body[0].pos.z*curScale;
-  linkPos[3]=cx+body[1].pos.x*curScale; linkPos[4]=cy+body[1].pos.y*curScale; linkPos[5]=cz+body[1].pos.z*curScale;
+  linkPos[0]=cx+body[0].pos.x; linkPos[1]=cy+body[0].pos.y; linkPos[2]=cz+body[0].pos.z;
+  linkPos[3]=cx+body[1].pos.x; linkPos[4]=cy+body[1].pos.y; linkPos[5]=cz+body[1].pos.z;
   linkGeo.attributes.position.needsUpdate = true;
 
-  // Keep the sun scaled with the system so all bodies stay proportionate.
-  sunGroup.scale.setScalar(SUN_R * curScale);
+  // Sun size stays fixed; scale slider no longer changes body size.
+  sunGroup.scale.setScalar(SUN_R);
   sunGroup.rotation.y = sunSpin;
 
   renderer.render(scene, camera);
