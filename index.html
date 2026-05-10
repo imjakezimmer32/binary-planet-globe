@@ -2127,8 +2127,10 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 
     const ps = state.peakScale, wl = state.waterLevel;
     const liquidState = getLiquidState(wl, baseR);
+    // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
+    const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
 
-    const idxGeo  = buildGlobe(baseR, d, seed, ps, wl);
+    const idxGeo  = buildGlobe(baseR, buildDetail, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
     const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl);
 
@@ -2151,13 +2153,17 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       const glowMat = new THREE.MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.42,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        depthTest: true,
         side: THREE.DoubleSide
       });
       const glowMesh = new THREE.Mesh(glowGeo, glowMat);
-      glowMesh.scale.setScalar(1.0012);
+      glowGeo.computeBoundingSphere();
+      glowMesh.scale.setScalar(1.0032);
+      // Avoid long-range culling glitches on thin additive geometry.
+      glowMesh.frustumCulled = false;
       glowMesh.renderOrder = 1;
       return glowMesh;
     })();
@@ -2174,7 +2180,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       new THREE.MeshBasicMaterial({
         color: liquidState.hasLava ? 0xff3c1a : 0x44aaff,
         transparent: true,
-        opacity: liquidState.hasLava ? (0.01 + liquidState.strength * 0.03) : 0.06,
+        opacity: liquidState.hasLava ? (0.05 + liquidState.strength * 0.09) : 0.06,
         side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
       })
     );
