@@ -923,7 +923,7 @@ input[type=range]::-moz-range-thumb {
   <input type="range" id="dial-scale" min="0" max="1" step="0.001" value="0">
   <div class="gap"></div>
   <div class="row-label" id="lbl-warp">TIME WARP &nbsp;1.00×</div>
-  <input type="range" id="dial-warp" min="0" max="4" step="0.05" value="1">
+  <input type="range" id="dial-warp" min="0" max="40" step="0.1" value="1">
 </div>
 <div id="walk-controls">
   <button type="button" data-walk="left">◀</button>
@@ -2046,7 +2046,7 @@ dialWaterE.addEventListener('input', () => {
 addPlanetBtn.addEventListener('click', e => {
   e.stopPropagation();
   const slot = reserveSolarOrbitSlot();
-  const orbitSpeed = (0.03 + Math.random() * 0.04) * (Math.random()<0.5?1:-1);
+  const orbitSpeed = (Math.random()<0.5 ? -1 : 1) * Math.sqrt(SOLAR_MU / Math.pow(slot.radius, 3));
   const newIdx = createSunOrbitPlanet({
     orbitR: slot.radius,
     orbitSpeed,
@@ -2228,7 +2228,7 @@ function animate() {
 
   if (timeWarp > 0) {
     const dt    = BASE_DT * timeWarp;
-    const steps = Math.max(1, Math.ceil(timeWarp * 2));
+    const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(timeWarp) * 6)));
     const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
     const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
     const binaryMassNorm = Math.max((mass1 + mass2) / BASE_MT, 0.25);
@@ -2243,7 +2243,7 @@ function animate() {
 
     // Sun-orbiting planets: Newtonian gravity between planets + sun, with hard orbital bounds.
     const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
-    const subSteps = Math.max(2, steps * 2);
+    const subSteps = Math.max(2, Math.min(64, steps * 2));
     const subDt = dt / subSteps;
     for (let k = 0; k < subSteps; k++) {
       const acc = sunOrbiters.map(() => new THREE.Vector3());
@@ -2299,16 +2299,25 @@ function animate() {
       mp.obj.pivot.position.set(mp.orbitPos.x, 0, mp.orbitPos.z);
     });
 
-    // Planetary orbiters (moons): orbit around their parent planet.
+    // Planetary orbiters (moons): orbit around parent planets but remain sun-bound via Hill limits.
     const moonOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'planet' && mp.orbitParentId !== null);
     moonOrbiters.forEach(mp => {
       const parent = managedPlanets[mp.orbitParentId];
       if (!parent) return;
-      const r = Math.max(mp.orbitR, 0.5);
+      parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+      const parentSunR = Math.max(Math.hypot(_orbitParentWorld.x, _orbitParentWorld.z), SUN_ORBIT_MIN_R);
       const parentMass = Math.max(getPlanetMass(parent), 0.2);
-      const targetSpeed = Math.sign(mp.orbitSpeed || 1) * Math.sqrt((0.35 + parentMass * 0.3) / Math.pow(r, 3));
-      mp.orbitSpeed += (targetSpeed - mp.orbitSpeed) * 0.18 * timeWarp;
-      mp.angle += mp.orbitSpeed * timeWarp;
+      const parentRadius = Math.max((parent.obj.baseRadius || 0.8) * parent.obj.state.size, 0.25);
+      const hillR = parentSunR * Math.cbrt(parentMass / (3 * SOLAR_MU));
+      const maxMoonR = Math.max(parentRadius * 1.6, Math.min(12, hillR * 0.45));
+      const minMoonR = Math.max(parentRadius * 1.2, 0.45);
+      mp.orbitR = Math.max(minMoonR, Math.min(maxMoonR, mp.orbitR));
+      const r = Math.max(mp.orbitR, 0.5);
+      const tideFactor = Math.max(0.62, 1 - 0.28 * (r / Math.max(maxMoonR, 0.5)));
+      const targetSpeed = Math.sign(mp.orbitSpeed || 1) * Math.sqrt((0.35 + parentMass * 0.3) / Math.pow(r, 3)) * tideFactor;
+      const blend = Math.min(1, 6 * dt);
+      mp.orbitSpeed += (targetSpeed - mp.orbitSpeed) * blend;
+      mp.angle += mp.orbitSpeed * dt;
     });
 
     // Spin dynamics: size, orbit distance, and sun interaction affect rotation.
