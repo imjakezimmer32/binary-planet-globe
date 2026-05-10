@@ -452,27 +452,32 @@ input[type=range]::-webkit-slider-thumb {
   flex-wrap: nowrap;
   align-items: stretch;
   gap: 6px;
-  width: min(152px, 40vw);
+  width: min(176px, 46vw);
   z-index: 55;
 }
 .cam-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.18);
-  color: rgba(255,255,255,0.45);
+  background: linear-gradient(180deg, rgba(24,40,66,0.78), rgba(13,22,38,0.72));
+  border: 1px solid rgba(112,205,255,0.34);
+  color: rgba(188, 236, 255, 0.86);
   font-family: monospace;
-  font-size: clamp(8px, 2.3vw, 10px);
+  font-size: clamp(8px, 2.35vw, 10px);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 10px 8px;
   min-height: 44px;
   text-align: center;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.28), inset 0 0 10px rgba(102,206,255,0.08);
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s;
 }
 .cam-btn.active {
-  background: rgba(255,255,255,0.14);
-  color: #fff;
-  border-color: rgba(255,255,255,0.55);
+  background: linear-gradient(180deg, rgba(43,95,145,0.9), rgba(26,62,102,0.86));
+  color: #f0fbff;
+  border-color: rgba(152, 233, 255, 0.9);
+}
+.cam-btn:active {
+  transform: translateY(1px);
 }
 
 #cam-settings {
@@ -492,8 +497,10 @@ input[type=range]::-webkit-slider-thumb {
   gap: 12px;
   display: none;
   flex-direction: column;
-  background: rgba(0,0,0,0.88);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: linear-gradient(165deg, rgba(13,18,31,0.94), rgba(8,12,23,0.9));
+  border: 1px solid rgba(126, 218, 255, 0.24);
+  border-radius: 14px;
+  box-shadow: 0 14px 36px rgba(0,0,0,0.46);
   backdrop-filter: blur(8px);
 }
 #cam-settings.open { display: flex; }
@@ -593,24 +600,22 @@ input[type=range]::-moz-range-thumb {
 /* Mobile: small floating card above scale sliders; tap header to expand */
 #planet-panel {
   position: fixed;
-  top: auto;
-  left: auto;
+  left: max(8px, env(safe-area-inset-left, 0px));
   right: max(8px, env(safe-area-inset-right, 0px));
-  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 108px);
+  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 96px);
   width: auto;
-  min-width: min(168px, 44vw);
-  max-width: min(300px, 92vw);
-  max-height: min(46vh, 320px);
+  max-width: none;
+  max-height: min(52vh, 380px);
   overflow: hidden;
   z-index: 32;
   display: flex;
   flex-direction: column;
-  background: rgba(10, 12, 18, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 14px;
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: linear-gradient(165deg, rgba(14,18,30,0.94), rgba(8,10,18,0.9));
+  border: 1px solid rgba(98, 200, 255, 0.24);
+  border-radius: 16px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.56), inset 0 0 24px rgba(84, 188, 255, 0.08);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 #planet-panel:not(.pp-open) #planet-panel-body {
@@ -626,8 +631,8 @@ input[type=range]::-moz-range-thumb {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px 6px 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 8px 10px 8px 4px;
+  border-bottom: 1px solid rgba(120, 214, 255, 0.2);
   min-height: 44px;
 }
 .pp-toggle {
@@ -662,14 +667,14 @@ input[type=range]::-moz-range-thumb {
 #planet-panel-title {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(146, 224, 255, 0.9);
 }
 .pp-count {
   font-size: 9px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(146, 224, 255, 0.62);
 }
 #add-planet-btn,
 #add-twin-btn {
@@ -678,9 +683,9 @@ input[type=range]::-moz-range-thumb {
   height: 40px;
   padding: 0;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(104, 205, 255, 0.34);
+  background: linear-gradient(180deg, rgba(45,77,118,0.36), rgba(18,34,58,0.34));
+  color: rgba(208, 242, 255, 0.95);
   font-size: 20px;
   line-height: 1;
   font-family: inherit;
@@ -691,33 +696,32 @@ input[type=range]::-moz-range-thumb {
   cursor: not-allowed;
 }
 #planet-list {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 8px 8px 6px;
-  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 10px 8px;
+  max-height: 180px;
   -webkit-overflow-scrolling: touch;
 }
 .planet-item {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 0;
-  padding: 7px 12px;
-  min-height: 36px;
-  border-radius: 999px;
+  padding: 10px 10px;
+  min-height: 42px;
+  border-radius: 12px;
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(100, 189, 255, 0.18);
+  background: rgba(20, 35, 58, 0.5);
   transition: background 0.12s, border-color 0.12s;
 }
 .planet-item.selected {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(126, 217, 255, 0.65);
+  background: linear-gradient(180deg, rgba(40, 78, 120, 0.66), rgba(28, 56, 90, 0.58));
+  box-shadow: inset 0 0 12px rgba(127, 216, 255, 0.22);
 }
 .planet-dot {
   width: 7px;
@@ -736,20 +740,20 @@ input[type=range]::-moz-range-thumb {
 }
 .planet-item.selected .planet-name { color: rgba(255, 255, 255, 0.95); }
 #planet-edit-panel {
-  padding: 8px 10px 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(120, 214, 255, 0.18);
   gap: 8px;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(8, 14, 24, 0.66);
 }
 .pe-lbl {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.32);
+  color: rgba(160, 231, 255, 0.8);
 }
 .pe-row { display: flex; flex-direction: column; gap: 3px; }
 #planet-edit-panel input[type=range] {
@@ -883,7 +887,7 @@ input[type=range]::-moz-range-thumb {
 </div>
 <div id="hint">
   <span class="hint-desktop">drag to orbit &nbsp;·&nbsp; scroll to zoom &nbsp;·&nbsp; right-drag to pan</span>
-  <span class="hint-touch">one finger: orbit &nbsp;·&nbsp; pinch in/out: zoom &nbsp;·&nbsp; two fingers drag together: move on plane</span>
+  <span class="hint-touch">one finger: orbit &nbsp;·&nbsp; pinch: zoom &nbsp;·&nbsp; tap a planet: edit</span>
 </div>
 <div id="cam-buttons">
   <button class="cam-btn active" id="btn-sun">Solar View</button>
@@ -1055,6 +1059,36 @@ scene.add(sausage);
 // Touch: 1 finger = orbit; 2 fingers pinch (spacing change) = zoom;
 //        2 fingers drag together (spacing ~stable) = pan on view plane.
 const _canvas = renderer.domElement;
+const _pickRay = new THREE.Raycaster();
+const _pickNdc = new THREE.Vector2();
+let tapCandidate = null;
+
+function pickPlanetFromScreen(clientX, clientY) {
+  if (walkMode.active) return;
+  const rect = _canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  _pickNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  _pickNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  _pickRay.setFromCamera(_pickNdc, camera);
+
+  const pickObjects = [];
+  const objectToPlanet = new Map();
+  managedPlanets.forEach((mp, idx) => {
+    const targets = mp.obj.getPickables ? mp.obj.getPickables() : [];
+    targets.forEach(obj => {
+      if (!obj || !obj.visible) return;
+      pickObjects.push(obj);
+      objectToPlanet.set(obj.uuid, idx);
+    });
+  });
+  if (pickObjects.length === 0) return;
+  const hits = _pickRay.intersectObjects(pickObjects, false);
+  if (!hits.length) return;
+  const idx = objectToPlanet.get(hits[0].object.uuid);
+  if (idx === undefined) return;
+  if (cameraMode !== 'planet') setCamMode('planet');
+  selectPlanet(idx);
+}
 
 function isTouchPointer(e) {
   return e.pointerType === 'touch';
@@ -1230,6 +1264,28 @@ window.addEventListener('pointermove', e => {
   } else {
     desktopPointerMove(e);
   }
+});
+
+_canvas.addEventListener('pointerdown', e => {
+  tapCandidate = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+});
+
+_canvas.addEventListener('pointermove', e => {
+  if (!tapCandidate || tapCandidate.id !== e.pointerId) return;
+  if (Math.hypot(e.clientX - tapCandidate.x, e.clientY - tapCandidate.y) > 8) {
+    tapCandidate.moved = true;
+  }
+});
+
+_canvas.addEventListener('pointerup', e => {
+  if (!tapCandidate || tapCandidate.id !== e.pointerId) return;
+  const shouldPick = !tapCandidate.moved && (isTouchPointer(e) || e.button === 0);
+  tapCandidate = null;
+  if (shouldPick) pickPlanetFromScreen(e.clientX, e.clientY);
+});
+
+_canvas.addEventListener('pointercancel', e => {
+  if (tapCandidate && tapCandidate.id === e.pointerId) tapCandidate = null;
 });
 
 _canvas.addEventListener('wheel', e => {
@@ -1507,7 +1563,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   const spin  = new THREE.Group();
   spin.rotation.z = axisTilt;
   pivot.add(spin);
-  let built = [], waterRef = null;
+  let built = [], waterRef = null, pickables = [];
 
   // Per-planet state — independent of any global
   const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
@@ -1564,6 +1620,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     atmo.renderOrder = 3;
 
     built = [depthBack, terrain, water, wire, atmo];
+    pickables = [terrain, water];
     spin.add(...built);
   }
 
@@ -1575,6 +1632,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     setWater: (s, wl) => { if (waterRef) { waterRef.scale.setScalar(s); waterRef.visible = (wl === undefined ? s > 0.84 : wl >= 0.05); } },
     setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
     syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
+    getPickables: () => pickables,
   };
 }
 
@@ -2062,6 +2120,7 @@ window.addEventListener('keyup', e => {
 rebuildPlanetList();
 updateTwinButtonVisibility();
 updateWalkButtonVisibility();
+if (isNarrowPlanetUI()) setPlanetPanelOpen(true);
 
 // ── Camera view buttons ───────────────────────────────────────────
 const btnSun    = document.getElementById('btn-sun');
@@ -2466,11 +2525,6 @@ document.addEventListener('click', e => {
     if (!e.target.closest('#cam-settings') && !e.target.closest('#btn-cam-settings')) {
       camSettingsEl.classList.remove('open');
       btnCamSettings.classList.remove('active');
-    }
-  }
-  if (isNarrowPlanetUI() && planetPanel && planetPanel.classList.contains('pp-open')) {
-    if (!e.target.closest('#planet-panel')) {
-      setPlanetPanelOpen(false);
     }
   }
 });
