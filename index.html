@@ -857,8 +857,8 @@ input[type=range]::-moz-range-thumb {
   <div class="cs-row">
     <span class="cs-label">Auto Rotate</span>
     <div class="cs-toggle">
-      <button id="cs-rot-on">On</button>
-      <button id="cs-rot-off" class="on">Off</button>
+      <button id="cs-rot-on" class="on">On</button>
+      <button id="cs-rot-off">Off</button>
     </div>
   </div>
 </div>
@@ -1706,7 +1706,7 @@ orbitSpeedMul = parseFloat(csSpeed.value);
 csLblSpeed.textContent = `Orbit Speed  ${orbitSpeedMul.toFixed(1)}×`;
 zoomSpeedMul = parseFloat(csZoom.value);
 csLblZoom.textContent = `Zoom Speed  ${zoomSpeedMul.toFixed(1)}×`;
-setAutoRotate(false);
+setAutoRotate(true);
 
 // ── Animate ───────────────────────────────────────────────────────
 const BASE_DT = 1 / 60;
