@@ -2392,6 +2392,97 @@ function getOrbitalClearance(mp) {
   return Math.max(1.6, size * 2.8, Math.cbrt(mass) * 1.35);
 }
 
+const _sunBoundRadial = new THREE.Vector3();
+const SUN_COLLISION_PASSES = 3;
+
+function applySunOrbiterBounds(mp) {
+  if (!mp?.orbitPos || !mp?.orbitVel) return;
+  const r = Math.max(Math.hypot(mp.orbitPos.x, mp.orbitPos.z), 1e-6);
+  _sunBoundRadial.set(mp.orbitPos.x / r, 0, mp.orbitPos.z / r);
+  if (r < SUN_ORBIT_MIN_R) {
+    mp.orbitPos.copy(_sunBoundRadial).multiplyScalar(SUN_ORBIT_MIN_R);
+    const vr = mp.orbitVel.dot(_sunBoundRadial);
+    if (vr < 0) mp.orbitVel.addScaledVector(_sunBoundRadial, -vr);
+  } else if (r > SUN_ORBIT_MAX_R) {
+    mp.orbitPos.copy(_sunBoundRadial).multiplyScalar(SUN_ORBIT_MAX_R);
+    const vr = mp.orbitVel.dot(_sunBoundRadial);
+    if (vr > 0) mp.orbitVel.addScaledVector(_sunBoundRadial, -vr);
+    const esc = Math.sqrt(2 * SOLAR_MU / SUN_ORBIT_MAX_R) * MAX_BOUND_SPEED_FACTOR;
+    const speed = mp.orbitVel.length();
+    if (speed > esc) mp.orbitVel.multiplyScalar(esc / speed);
+  }
+}
+
+function enforceSunOrbiterNoOverlap(sunOrbiters) {
+  if (!sunOrbiters || sunOrbiters.length < 2) return;
+  const twoPi = Math.PI * 2;
+  for (let pass = 0; pass < SUN_COLLISION_PASSES; pass++) {
+    for (let i = 0; i < sunOrbiters.length; i++) {
+      const a = sunOrbiters[i];
+      if (!a?.orbitPos || !a?.orbitVel) continue;
+      for (let j = i + 1; j < sunOrbiters.length; j++) {
+        const b = sunOrbiters[j];
+        if (!b?.orbitPos || !b?.orbitVel) continue;
+
+        const ra = Math.max((a.obj.baseRadius || 0.8) * Math.max(a.obj.state.size, 0.2), 0.2);
+        const rb = Math.max((b.obj.baseRadius || 0.8) * Math.max(b.obj.state.size, 0.2), 0.2);
+        const hardBodySep = (ra + rb) * 2.35;
+        const laneSep = (getOrbitalClearance(a) + getOrbitalClearance(b)) * 0.92;
+        const minSep = Math.max(hardBodySep, laneSep, 1.4);
+
+        const dx = b.orbitPos.x - a.orbitPos.x;
+        const dz = b.orbitPos.z - a.orbitPos.z;
+        const d2 = dx * dx + dz * dz;
+        const minSep2 = minSep * minSep;
+        if (d2 >= minSep2) continue;
+
+        let nx;
+        let nz;
+        let dist = Math.sqrt(Math.max(d2, 1e-10));
+        if (dist < 1e-5) {
+          const angle = (((i + 1) * 1.61803398875) + ((j + 1) * 2.41421356237) + pass * 0.7) % twoPi;
+          nx = Math.cos(angle);
+          nz = Math.sin(angle);
+          dist = 0;
+        } else {
+          nx = dx / dist;
+          nz = dz / dist;
+        }
+
+        const overlap = minSep - dist;
+        if (overlap <= 0) continue;
+        const split = overlap * 0.5;
+        a.orbitPos.x -= nx * split;
+        a.orbitPos.z -= nz * split;
+        b.orbitPos.x += nx * split;
+        b.orbitPos.z += nz * split;
+
+        // Cancel closing velocity along separation normal so bodies cannot merge.
+        const rvx = b.orbitVel.x - a.orbitVel.x;
+        const rvz = b.orbitVel.z - a.orbitVel.z;
+        const closing = rvx * nx + rvz * nz;
+        if (closing < 0) {
+          const impulse = -closing * 0.92;
+          a.orbitVel.x -= nx * impulse * 0.5;
+          a.orbitVel.z -= nz * impulse * 0.5;
+          b.orbitVel.x += nx * impulse * 0.5;
+          b.orbitVel.z += nz * impulse * 0.5;
+        }
+
+        // Tiny tangent split keeps close packed pairs from re-merging every step.
+        const tx = -nz;
+        const tz = nx;
+        const tangentBias = Math.min(0.08, 0.02 + overlap * 0.03);
+        a.orbitVel.x -= tx * tangentBias;
+        a.orbitVel.z -= tz * tangentBias;
+        b.orbitVel.x += tx * tangentBias;
+        b.orbitVel.z += tz * tangentBias;
+      }
+    }
+    sunOrbiters.forEach(applySunOrbiterBounds);
+  }
+}
+
 function initializeSunOrbiterState(mp) {
   if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
   if (!mp.orbitPos) {
@@ -2976,21 +3067,9 @@ function animate() {
       sunOrbiters.forEach((mp, i) => {
         mp.orbitVel.addScaledVector(acc[i], subDt);
         mp.orbitPos.addScaledVector(mp.orbitVel, subDt);
-        const r = Math.max(mp.orbitPos.length(), 1e-6);
-        const radial = mp.orbitPos.clone().multiplyScalar(1 / r);
-        if (r < SUN_ORBIT_MIN_R) {
-          mp.orbitPos.copy(radial).multiplyScalar(SUN_ORBIT_MIN_R);
-          const vr = mp.orbitVel.dot(radial);
-          if (vr < 0) mp.orbitVel.addScaledVector(radial, -vr);
-        } else if (r > SUN_ORBIT_MAX_R) {
-          mp.orbitPos.copy(radial).multiplyScalar(SUN_ORBIT_MAX_R);
-          const vr = mp.orbitVel.dot(radial);
-          if (vr > 0) mp.orbitVel.addScaledVector(radial, -vr);
-          const esc = Math.sqrt(2 * SOLAR_MU / SUN_ORBIT_MAX_R) * MAX_BOUND_SPEED_FACTOR;
-          const speed = mp.orbitVel.length();
-          if (speed > esc) mp.orbitVel.multiplyScalar(esc / speed);
-        }
+        applySunOrbiterBounds(mp);
       });
+      enforceSunOrbiterNoOverlap(sunOrbiters);
     }
     sunOrbiters.forEach(mp => {
       const r = Math.max(mp.orbitPos.length(), SUN_ORBIT_MIN_R);
