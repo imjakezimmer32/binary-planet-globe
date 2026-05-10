@@ -851,7 +851,7 @@ input[type=range]::-moz-range-thumb {
       <span id="planet-count" class="pp-count" aria-hidden="true">0</span>
     </div>
     <button type="button" id="add-planet-btn" aria-label="Add planet">+</button>
-    <button type="button" id="add-twin-btn" aria-label="Add moon or twin to selected orbit" title="Add moon/twin to selected orbit">⊚</button>
+    <button type="button" id="add-twin-btn" aria-label="Add moon to selected planet orbit" title="Add moon to selected planet orbit">☾</button>
   </div>
   <div id="planet-panel-body">
     <div id="planet-list"></div>
@@ -1706,17 +1706,17 @@ dialWarp.addEventListener('input', () => {
 const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
 const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
 const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
-let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitPos, orbitVel }
+let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitPos, orbitVel, orbitParentId }
 let selectedPlanetIdx = null;
 
-function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle) {
+function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle, orbitParentId) {
   managedPlanets.push({ id: managedPlanets.length, name, obj, color, isBinary,
                          orbitR: orbitR||0, orbitSpeed: orbitSpeed||0,
                          angle: orbitAngle ?? (Math.random() * Math.PI * 2),
                          spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2),
                          orbitCenter: orbitCenter ?? (isBinary ? 'binary' : 'sun'),
                          orbitSlotKey: orbitSlotKey ?? null, orbitBaseR: orbitR || 0,
-                         orbitPos: null, orbitVel: null });
+                         orbitPos: null, orbitVel: null, orbitParentId: orbitParentId ?? null });
 }
 
 // Register original binary planets
@@ -1805,12 +1805,60 @@ function createSunOrbitPlanet({
     undefined,
     'sun',
     slotKey,
-    orbitAngle
+    orbitAngle,
+    null
   );
   const newIdx = managedPlanets.length - 1;
   const mp = managedPlanets[newIdx];
   initializeSunOrbiterState(mp);
   return newIdx;
+}
+
+const _orbitParentWorld = new THREE.Vector3();
+
+function createPlanetMoonOrbit(parentIdx) {
+  const parent = managedPlanets[parentIdx];
+  if (!parent) return null;
+  const idx = managedPlanets.length;
+  const seed = Math.random() * 99;
+  const color = PLANET_COLORS[idx % PLANET_COLORS.length];
+  const parentRadius = Math.max((parent.obj.baseRadius || 0.8) * parent.obj.state.size, 0.3);
+  const orbitR = Math.max(0.9, parentRadius * (2.0 + Math.random() * 1.8));
+  const orbitAngle = Math.random() * Math.PI * 2;
+  const moonMassProxy = Math.max(0.25, getPlanetMass(parent) * 0.045);
+  const orbitSpeed = (Math.random() < 0.5 ? -1 : 1) * Math.sqrt((0.6 + moonMassProxy) / Math.pow(orbitR, 3));
+  const spinRateBase = 0.008 + Math.random() * 0.008;
+  const tilt = (Math.random() - 0.5) * 0.6;
+  const baseRadius = Math.max(0.22, Math.min(0.65, parentRadius * (0.28 + Math.random() * 0.2)));
+  const moon = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, {
+    peakScale: parent.obj.state.peakScale,
+    waterLevel: parent.obj.state.waterLevel,
+    size: Math.max(0.25, parent.obj.state.size * (0.35 + Math.random() * 0.25)),
+  });
+  scene.add(moon.pivot);
+  parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+  moon.pivot.position.set(
+    _orbitParentWorld.x + Math.cos(orbitAngle) * orbitR,
+    _orbitParentWorld.y,
+    _orbitParentWorld.z + Math.sin(orbitAngle) * orbitR
+  );
+  moon.setGrid(gridOn);
+  const sameParentCount = managedPlanets.filter(mp => mp.orbitCenter === 'planet' && mp.orbitParentId === parent.id).length + 1;
+  registerPlanet(
+    moon,
+    `${parent.name} Moon ${sameParentCount}`,
+    color,
+    false,
+    orbitR,
+    orbitSpeed,
+    spinRateBase,
+    undefined,
+    'planet',
+    null,
+    orbitAngle,
+    parent.id
+  );
+  return managedPlanets.length - 1;
 }
 
 function rebuildPlanetList() {
@@ -1844,17 +1892,16 @@ function syncPlanetCount() {
   if (planetCountEl) planetCountEl.textContent = String(managedPlanets.length);
 }
 
-function canCreateTwinFromSelection() {
+function canCreateMoonFromSelection() {
   if (selectedPlanetIdx === null) return false;
-  const selected = managedPlanets[selectedPlanetIdx];
-  return !!selected && !selected.isBinary && selected.orbitCenter === 'sun';
+  return !!managedPlanets[selectedPlanetIdx];
 }
 
 function updateTwinButtonVisibility() {
   if (!addTwinBtn) return;
   const inPlanetView = cameraMode === 'planet';
   addTwinBtn.style.display = inPlanetView ? '' : 'none';
-  const canTwin = inPlanetView && canCreateTwinFromSelection();
+  const canTwin = inPlanetView && canCreateMoonFromSelection();
   addTwinBtn.disabled = !canTwin;
 }
 
@@ -1952,26 +1999,12 @@ addPlanetBtn.addEventListener('click', e => {
   selectPlanet(newIdx);
 });
 
-// Add moon/twin button (same sun orbit lane as selected planet)
+// Add moon button (planetary orbit around selected planet)
 addTwinBtn.addEventListener('click', e => {
   e.stopPropagation();
-  if (cameraMode !== 'planet' || !canCreateTwinFromSelection()) return;
-  const base = managedPlanets[selectedPlanetIdx];
-  const twinAngle = base.angle + Math.PI;
-  const sizeFactor = 0.7 + Math.random() * 0.35;
-  const newIdx = createSunOrbitPlanet({
-    orbitR: base.orbitR,
-    orbitSpeed: base.orbitSpeed,
-    orbitAngle: twinAngle,
-    slotKey: null,
-    spinRateBase: base.spinRateBase,
-    initState: {
-      peakScale: base.obj.state.peakScale,
-      waterLevel: base.obj.state.waterLevel,
-      size: Math.max(0.2, base.obj.state.size * sizeFactor),
-    },
-    name: `${base.name} Twin`,
-  });
+  if (cameraMode !== 'planet' || !canCreateMoonFromSelection()) return;
+  const newIdx = createPlanetMoonOrbit(selectedPlanetIdx);
+  if (newIdx === null) return;
   rebuildPlanetList();
   selectPlanet(newIdx);
 });
@@ -2207,6 +2240,18 @@ function animate() {
       mp.obj.pivot.position.set(mp.orbitPos.x, 0, mp.orbitPos.z);
     });
 
+    // Planetary orbiters (moons): orbit around their parent planet.
+    const moonOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'planet' && mp.orbitParentId !== null);
+    moonOrbiters.forEach(mp => {
+      const parent = managedPlanets[mp.orbitParentId];
+      if (!parent) return;
+      const r = Math.max(mp.orbitR, 0.5);
+      const parentMass = Math.max(getPlanetMass(parent), 0.2);
+      const targetSpeed = Math.sign(mp.orbitSpeed || 1) * Math.sqrt((0.35 + parentMass * 0.3) / Math.pow(r, 3));
+      mp.orbitSpeed += (targetSpeed - mp.orbitSpeed) * 0.18 * timeWarp;
+      mp.angle += mp.orbitSpeed * timeWarp;
+    });
+
     // Spin dynamics: size, orbit distance, and sun interaction affect rotation.
     managedPlanets.forEach(mp => {
       let spinRate = getSpinRateFromSize(mp);
@@ -2228,6 +2273,20 @@ function animate() {
   // Planet positions are relative to binary COM (physics units in world space)
   p1.pivot.position.copy(body[0].pos);
   p2.pivot.position.copy(body[1].pos);
+
+  // Update moon world positions from their parent planets.
+  managedPlanets.forEach(mp => {
+    if (mp.orbitCenter !== 'planet' || mp.orbitParentId === null) return;
+    const parent = managedPlanets[mp.orbitParentId];
+    if (!parent) return;
+    parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+    mp.obj.pivot.position.set(
+      _orbitParentWorld.x + Math.cos(mp.angle) * mp.orbitR,
+      _orbitParentWorld.y,
+      _orbitParentWorld.z + Math.sin(mp.angle) * mp.orbitR
+    );
+  });
+
   // Apply per-planet size edits only; global scale does not resize bodies.
   managedPlanets.forEach(mp => {
     mp.obj.pivot.scale.setScalar(mp.obj.state.size);
