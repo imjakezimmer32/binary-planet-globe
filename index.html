@@ -1601,18 +1601,18 @@ function colorizeGlobe(geo, baseR, ps, wl) {
     if (isLiquidFace && hasWater) {
       // Shore = only liquid polygons touching land; interior water is solid.
       if (isShoreFace) {
-        r = 0.28; g = 0.34; b = 0.20;
+        r = 0.04; g = 0.64; b = 0.67;
       } else {
-        r = 0.12; g = 0.35; b = 0.72;
+        r = 0.06; g = 0.26; b = 0.62;
       }
     } else if (isLiquidFace && hasLava) {
-      // Shore = yellow lava, interior = red lava.
+      // Shore = bright yellow lava, interior = deep red lava.
       if (isShoreFace) {
-        r = 0.99; g = 0.78; b = 0.16;
+        r = 1.00; g = 0.86; b = 0.12;
       } else {
-        r = 0.76; g = 0.12; b = 0.05;
+        r = 0.62; g = 0.05; b = 0.02;
       }
-      const glow = isShoreFace ? [0.78, 0.68, 0.20] : [0.66, 0.20, 0.08];
+      const glow = isShoreFace ? [0.62, 0.54, 0.12] : [0.56, 0.12, 0.05];
       for (let v = 0; v < 3; v++) {
         const i = f * 3 + v;
         lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
@@ -1697,7 +1697,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     const atmo = new THREE.Mesh(
       new THREE.SphereGeometry(baseR * 1.10, 24, 24),
       new THREE.MeshBasicMaterial({
-        color: liquidState.hasLava ? 0xff6a22 : 0x44aaff,
+        color: liquidState.hasLava ? 0xff3c1a : 0x44aaff,
         transparent: true,
         opacity: liquidState.hasLava ? (0.01 + liquidState.strength * 0.03) : 0.06,
         side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
