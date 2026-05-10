@@ -1919,10 +1919,23 @@ galaxyBtn.addEventListener('click', () => {
   const open = galaxyList.classList.toggle('open');
   galaxyBtn.classList.toggle('open', open);
 });
+
+// Tap / click outside any overlay closes it (canvas, empty space, other UI)
 document.addEventListener('click', e => {
   if (!e.target.closest('#galaxy-menu')) {
     galaxyList.classList.remove('open');
     galaxyBtn.classList.remove('open');
+  }
+  if (camSettingsEl.classList.contains('open')) {
+    if (!e.target.closest('#cam-settings') && !e.target.closest('#btn-cam-settings')) {
+      camSettingsEl.classList.remove('open');
+      btnCamSettings.classList.remove('active');
+    }
+  }
+  if (isNarrowPlanetUI() && planetPanel && planetPanel.classList.contains('pp-open')) {
+    if (!e.target.closest('#planet-panel')) {
+      setPlanetPanelOpen(false);
+    }
   }
 });
 
