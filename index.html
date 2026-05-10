@@ -1467,7 +1467,7 @@ function stepGravity(dt) {
 // The binary system as a whole orbits the sun (at origin).
 // SUN_ORBIT: orbit radius in physics units.
 // COM_OMEGA: angular velocity, rad/sim-s → period ≈ 126 sim-s (≈6.5× binary period).
-const SUN_ORBIT = 40;
+const SUN_ORBIT = 20;
 const COM_OMEGA = 0.012;
 let comAngle = 0;
 
@@ -1506,26 +1506,52 @@ dialWarp.addEventListener('input', () => {
 
 // ── Planet management ─────────────────────────────────────────────
 // managedPlanets mirrors the actual planet objects + metadata.
-// Extra added planets use simple circular orbits around the solar COM.
+// Extra added planets use sun-centered orbit slots (a simple placement grid).
 const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
-let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle }
+const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26];
+const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
+let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey }
 let selectedPlanetIdx = null;
 
-function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle) {
+function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle) {
   managedPlanets.push({ id: managedPlanets.length, name, obj, color, isBinary,
-                         orbitR: orbitR||0, orbitSpeed: orbitSpeed||0, angle: Math.random()*Math.PI*2,
-                         spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2) });
+                         orbitR: orbitR||0, orbitSpeed: orbitSpeed||0,
+                         angle: orbitAngle ?? (Math.random() * Math.PI * 2),
+                         spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2),
+                         orbitCenter: orbitCenter ?? (isBinary ? 'binary' : 'sun'),
+                         orbitSlotKey: orbitSlotKey ?? null });
 }
 
 // Register original binary planets
-registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true, 0, 0, 0.006, 0);
-registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true, 0, 0, 0.009, 0);
+registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true, 0, 0, 0.006, 0, 'binary', null, 0);
+registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true, 0, 0, 0.009, 0, 'binary', null, 0);
 
 function getSpinRateFromSize(mp) {
   const size = Math.max(mp.obj.state.size, 0.1);
   // Approximation: angular velocity scales as 1 / R^2 for similar planets.
   const rawRate = mp.spinRateBase / (size * size);
   return Math.min(mp.spinRateBase * 4, Math.max(mp.spinRateBase * 0.25, rawRate));
+}
+
+function reserveSolarOrbitSlot() {
+  const used = new Set(
+    managedPlanets
+      .filter(mp => !mp.isBinary && mp.orbitCenter === 'sun' && mp.orbitSlotKey)
+      .map(mp => mp.orbitSlotKey)
+  );
+  for (const r of SOLAR_ORBIT_GRID_RADII) {
+    for (let i = 0; i < SOLAR_ORBIT_GRID_PHASE_COUNT; i++) {
+      const key = `${r}:${i}`;
+      if (used.has(key)) continue;
+      return {
+        key,
+        radius: r,
+        angle: (i / SOLAR_ORBIT_GRID_PHASE_COUNT) * Math.PI * 2,
+      };
+    }
+  }
+  const fallbackR = SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1];
+  return { key: null, radius: fallbackR, angle: Math.random() * Math.PI * 2 };
 }
 
 function rebuildPlanetList() {
@@ -1624,15 +1650,16 @@ $('add-planet-btn').addEventListener('click', e => {
   const idx   = managedPlanets.length;
   const seed  = Math.random() * 99;
   const color = PLANET_COLORS[idx % PLANET_COLORS.length];
-  const orbitR     = 5 + Math.random() * 8;
+  const slot = reserveSolarOrbitSlot();
+  const orbitR     = slot.radius;
   const orbitSpeed = (0.03 + Math.random() * 0.04) * (Math.random()<0.5?1:-1);
   const spinRateBase = 0.006 + Math.random() * 0.006;
   const tilt  = (Math.random() - 0.5) * 0.6;
   const newP  = createPlanet(0.5 + Math.random() * 0.6, Math.max(1, curDetail-1), seed, tilt);
-  sysGroup.add(newP.pivot);
-  newP.pivot.position.set(orbitR, 0, 0);
+  scene.add(newP.pivot);
+  newP.pivot.position.set(Math.cos(slot.angle) * orbitR, 0, Math.sin(slot.angle) * orbitR);
   newP.setGrid(gridOn);   // match current grid toggle state
-  registerPlanet(newP, `Planet ${idx+1}`, color, false, orbitR, orbitSpeed, spinRateBase);
+  registerPlanet(newP, `Planet ${idx+1}`, color, false, orbitR, orbitSpeed, spinRateBase, undefined, 'sun', slot.key, slot.angle);
   rebuildPlanetList();
   selectPlanet(managedPlanets.length - 1);
 });
