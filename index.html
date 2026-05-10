@@ -1074,38 +1074,39 @@ const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, sprint: false };
 const walkLookInput = { x: 0, y: 0 };
 const WALK_CFG = {
-  footOffset: 0.10,
-  snapDistance: 0.16,
-  groundAccel: 17,
-  airAccel: 4.5,
-  groundDrag: 12,
-  airDrag: 1.6,
-  maxGroundSpeed: 3.0,
-  maxAirSpeed: 3.6,
-  sprintBoost: 1.55,
-  jumpSpeed: 3.9,
+  footOffset: 0.055,
+  snapDistance: 0.09,
+  groundAccel: 4.2,
+  airAccel: 1.2,
+  groundDrag: 7.2,
+  airDrag: 1.25,
+  maxGroundSpeed: 0.55,
+  maxAirSpeed: 0.72,
+  sprintBoost: 1.35,
+  jumpSpeed: 0.85,
   jumpBuffer: 0.14,
   coyoteTime: 0.12,
   jumpLock: 0.11,
   gravityScale: 1.35,
-  cameraHeight: 0.96,
-  cameraDistance: 3.2,
-  cameraLead: 1.02,
-  cameraTargetLift: 0.30,
-  fpEyeHeight: 0.34,
-  fpForwardOffset: 0.04,
-  fpLookDistance: 4.8,
+  walkFov: 62,
+  cameraHeight: 0.54,
+  cameraDistance: 4.6,
+  cameraLead: 0.22,
+  cameraTargetLift: 0.14,
+  fpEyeHeight: 0.13,
+  fpForwardOffset: 0.02,
+  fpLookDistance: 3.6,
   fpBobAmp: 0.006,
-  tpDistanceMin: 1.2,
-  tpDistanceMax: 8.0,
-  tpZoomWheelStep: 1.11,
+  tpDistanceMin: 2.2,
+  tpDistanceMax: 12.0,
+  tpZoomWheelStep: 1.08,
   tpZoomSmooth: 8.5,
-  lookSensitivity: 0.0038,
-  mobileLookSensitivity: 0.0046,
+  lookSensitivity: 0.0028,
+  mobileLookSensitivity: 0.0034,
   pitchDotLimit: 0.96,
   upParallelLimit: 0.985,
   sprintBobFreq: 13,
-  sprintBobAmp: 0.036,
+  sprintBobAmp: 0.012,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -1124,6 +1125,7 @@ const walkState = {
   jumpLockTimer: 0,
   sprintBobPhase: 0,
   sprintBlend: 0,
+  prevFov: null,
 };
 const _walkCenter = new THREE.Vector3();
 const _walkCamPos = new THREE.Vector3();
@@ -1162,13 +1164,13 @@ const _walkSurfaceScratch = {
 };
 
 const sausage = new THREE.Group();
-const sausageMat = new THREE.MeshLambertMaterial({ color: 0xf1a76a });
-const sausageBody = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.38, 14), sausageMat);
+const sausageMat = new THREE.MeshLambertMaterial({ color: 0xffcc7a });
+const sausageBody = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.14, 12), sausageMat);
 sausageBody.rotation.z = Math.PI * 0.5;
-const sausageEndA = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), sausageMat);
-const sausageEndB = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), sausageMat);
-sausageEndA.position.x = 0.19;
-sausageEndB.position.x = -0.19;
+const sausageEndA = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 10), sausageMat);
+const sausageEndB = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 10), sausageMat);
+sausageEndA.position.x = 0.07;
+sausageEndB.position.x = -0.07;
 sausage.add(sausageBody, sausageEndA, sausageEndB);
 sausage.visible = false;
 scene.add(sausage);
@@ -1607,6 +1609,11 @@ function stopWalkMode() {
   if (!walkMode.active) return;
   walkMode.active = false;
   walkMode.spawnPlanetIdx = null;
+  if (walkState.prevFov !== null) {
+    camera.fov = walkState.prevFov;
+    camera.updateProjectionMatrix();
+    walkState.prevFov = null;
+  }
   sausage.visible = false;
   clearWalkInputState();
   walkLookInput.x = 0;
@@ -1620,9 +1627,15 @@ function startWalkMode(idx) {
   if (!mp) return;
   walkMode.active = true;
   walkMode.spawnPlanetIdx = idx;
+  walkCameraMode = 'tp';
+  if (walkState.prevFov === null) walkState.prevFov = camera.fov;
+  camera.fov = WALK_CFG.walkFov;
+  camera.updateProjectionMatrix();
   walkPrevMs = performance.now();
   walkLookInput.x = 0;
   walkLookInput.y = 0;
+  setWalkTpDistanceTarget(walkTpDistanceTarget);
+  walkTpDistance = walkTpDistanceTarget;
   mp.obj.pivot.getWorldPosition(_walkCenter);
   walkState.up.copy(camera.position).sub(_walkCenter);
   if (walkState.up.lengthSq() < 1e-6) walkState.up.set(0, 1, 0);
