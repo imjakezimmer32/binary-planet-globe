@@ -3093,7 +3093,8 @@ function animate() {
 
     sunSpin += 0.0004 * timeWarp;
 
-    // Sun-orbiting planets: Newtonian gravity between planets + sun, with hard orbital bounds.
+    // Sun-orbiting planets: sun-only gravity (no inter-planet gravity between independent planets).
+    // Twin/moon behavior remains in their dedicated parent-orbit logic below.
     const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
     const subSteps = Math.max(2, Math.min(64, steps * 2));
     const subDt = dt / subSteps;
@@ -3107,23 +3108,6 @@ function animate() {
         // Sun gravity
         acc[i].set(-SOLAR_MU * pos.x * invR3, 0, -SOLAR_MU * pos.z * invR3);
       });
-      for (let i = 0; i < sunOrbiters.length; i++) {
-        const a = sunOrbiters[i];
-        for (let j = i + 1; j < sunOrbiters.length; j++) {
-          const b = sunOrbiters[j];
-          const dx = b.orbitPos.x - a.orbitPos.x;
-          const dy = b.orbitPos.y - a.orbitPos.y;
-          const dz = b.orbitPos.z - a.orbitPos.z;
-          const d2 = dx*dx + dy*dy + dz*dz + ORBIT_SOFTENING;
-          const invD3 = 1 / (d2 * Math.sqrt(d2));
-          const ma = getPlanetMass(a);
-          const mb = getPlanetMass(b);
-          acc[i].x += G * mb * dx * invD3;
-          acc[i].z += G * mb * dz * invD3;
-          acc[j].x -= G * ma * dx * invD3;
-          acc[j].z -= G * ma * dz * invD3;
-        }
-      }
       sunOrbiters.forEach((mp, i) => {
         mp.orbitVel.addScaledVector(acc[i], subDt);
         mp.orbitPos.addScaledVector(mp.orbitVel, subDt);
