@@ -1484,7 +1484,7 @@ function scaleToDetail(s) {
 }
 
 let targetScale = 1.0, curScale = 1.0, timeWarp = 1.0, curDetail = 3;
-let spin1 = 0, spin2 = 0, sunSpin = 0;
+let sunSpin = 0;
 
 const $ = id => document.getElementById(id);
 const dialScale = $('dial-scale'), lblScale = $('lbl-scale');
@@ -1508,17 +1508,25 @@ dialWarp.addEventListener('input', () => {
 // managedPlanets mirrors the actual planet objects + metadata.
 // Extra added planets use simple circular orbits around the solar COM.
 const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
-let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary }
+let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle }
 let selectedPlanetIdx = null;
 
-function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed) {
+function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle) {
   managedPlanets.push({ id: managedPlanets.length, name, obj, color, isBinary,
-                         orbitR: orbitR||0, orbitSpeed: orbitSpeed||0, angle: Math.random()*Math.PI*2 });
+                         orbitR: orbitR||0, orbitSpeed: orbitSpeed||0, angle: Math.random()*Math.PI*2,
+                         spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2) });
 }
 
 // Register original binary planets
-registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true);
-registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true);
+registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true, 0, 0, 0.006, 0);
+registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true, 0, 0, 0.009, 0);
+
+function getSpinRateFromSize(mp) {
+  const size = Math.max(mp.obj.state.size, 0.1);
+  // Approximation: angular velocity scales as 1 / R^2 for similar planets.
+  const rawRate = mp.spinRateBase / (size * size);
+  return Math.min(mp.spinRateBase * 4, Math.max(mp.spinRateBase * 0.25, rawRate));
+}
 
 function rebuildPlanetList() {
   const list = $('planet-list');
@@ -1618,12 +1626,13 @@ $('add-planet-btn').addEventListener('click', e => {
   const color = PLANET_COLORS[idx % PLANET_COLORS.length];
   const orbitR     = 5 + Math.random() * 8;
   const orbitSpeed = (0.03 + Math.random() * 0.04) * (Math.random()<0.5?1:-1);
+  const spinRateBase = 0.006 + Math.random() * 0.006;
   const tilt  = (Math.random() - 0.5) * 0.6;
   const newP  = createPlanet(0.5 + Math.random() * 0.6, Math.max(1, curDetail-1), seed, tilt);
   sysGroup.add(newP.pivot);
   newP.pivot.position.set(orbitR, 0, 0);
   newP.setGrid(gridOn);   // match current grid toggle state
-  registerPlanet(newP, `Planet ${idx+1}`, color, false, orbitR, orbitSpeed);
+  registerPlanet(newP, `Planet ${idx+1}`, color, false, orbitR, orbitSpeed, spinRateBase);
   rebuildPlanetList();
   selectPlanet(managedPlanets.length - 1);
 });
@@ -1738,20 +1747,19 @@ function animate() {
     // Advance binary COM's heliocentric orbit
     comAngle += COM_OMEGA * dt;
 
-    spin1   += 0.006  * timeWarp;
-    spin2   += 0.009  * timeWarp;
     sunSpin += 0.0004 * timeWarp;
 
-    // Animate extra (non-binary) added planets in simple circular orbits
+    // Animate planets: orbital motion + spin.
     managedPlanets.forEach(mp => {
-      if (mp.isBinary) return;
-      mp.angle += mp.orbitSpeed * timeWarp;
-      mp.obj.pivot.position.set(
-        Math.cos(mp.angle) * mp.orbitR,
-        0,
-        Math.sin(mp.angle) * mp.orbitR
-      );
-      mp.obj.spin.rotation.y += 0.008 * timeWarp;
+      if (!mp.isBinary) {
+        mp.angle += mp.orbitSpeed * timeWarp;
+        mp.obj.pivot.position.set(
+          Math.cos(mp.angle) * mp.orbitR,
+          0,
+          Math.sin(mp.angle) * mp.orbitR
+        );
+      }
+      mp.spinAngle += getSpinRateFromSize(mp) * timeWarp;
     });
   }
 
@@ -1762,12 +1770,10 @@ function animate() {
   // Planet positions are relative to binary COM (physics units in world space)
   p1.pivot.position.copy(body[0].pos);
   p2.pivot.position.copy(body[1].pos);
-  p1.spin.rotation.y = spin1;
-  p2.spin.rotation.y = spin2;
-
   // Apply per-planet size edits only; global scale does not resize bodies.
   managedPlanets.forEach(mp => {
     mp.obj.pivot.scale.setScalar(mp.obj.state.size);
+    mp.obj.spin.rotation.y = mp.spinAngle;
   });
 
   // Trails — world-space positions so the heliocentric orbit is captured correctly
