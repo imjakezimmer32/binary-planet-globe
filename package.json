@@ -1,11 +1,11 @@
 {
-  "name": "binary-planet-globe",
+  "name": "astrabound",
   "private": true,
   "version": "1.0.0",
-  "description": "Binary Planet System — static Three.js globe (Cloudflare Pages)",
+  "description": "AstraBound — polygon space and planet simulation (Cloudflare Pages)",
   "scripts": {
     "dev": "npx serve -l 5500 .",
-    "deploy": "wrangler pages deploy . --project-name binary-planet-globe"
+    "deploy": "wrangler pages deploy . --project-name astrabound --branch main"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
