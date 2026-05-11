@@ -66,11 +66,23 @@ body.scene-visible canvas { opacity: 1; }
   transition: opacity 0.5s ease;
   user-select: none;
   -webkit-user-select: none;
+  overflow: hidden;
+}
+#start-starfield {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+  pointer-events: none;
 }
 @media (pointer: coarse) {
   #start-screen { cursor: pointer; }
 }
 #start-title {
+  position: relative;
+  z-index: 1;
   font-family: "Exo 2", system-ui, sans-serif;
   font-weight: 900;
   font-size: clamp(64px, 19vw, 260px);
@@ -83,6 +95,8 @@ body.scene-visible canvas { opacity: 1; }
     0 0 28px rgba(180, 230, 255, 0.35);
 }
 #start-hint {
+  position: relative;
+  z-index: 1;
   font-family: "Exo 2", system-ui, sans-serif;
   font-weight: 700;
   font-style: italic;
@@ -1342,9 +1356,116 @@ input[type=range]::-moz-range-thumb {
 </div>
 
 <div id="start-screen" role="dialog" aria-modal="true" aria-labelledby="start-title" aria-describedby="start-hint">
+  <canvas id="start-starfield" width="300" height="150" aria-hidden="true"></canvas>
   <div id="start-title">astra</div>
   <p id="start-hint"></p>
 </div>
+<script>
+(function startScreenStarfield() {
+  const canvas = document.getElementById('start-starfield');
+  const startScreen = document.getElementById('start-screen');
+  if (!canvas || !startScreen || !canvas.getContext) return;
+  let ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  if (!ctx) ctx = canvas.getContext('2d', { alpha: false });
+  if (!ctx) return;
+
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (prefersReduced) return;
+
+  const stars = [];
+  let w = 0, h = 0, cx = 0, cy = 0;
+  const focal = 0.42;
+  const maxZ = 1.65;
+  const minZ = 0.018;
+  let nStars = 1100;
+  let running = true;
+  let last = performance.now();
+  let obs = null;
+
+  function layout() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    w = Math.max(1, Math.floor(window.innerWidth));
+    h = Math.max(1, Math.floor(window.innerHeight));
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = w * 0.5;
+    cy = h * 0.5;
+    nStars = w < 520 ? 650 : w < 900 ? 900 : 1100;
+    stars.length = 0;
+    for (let i = 0; i < nStars; i++) {
+      stars.push({
+        x: (Math.random() - 0.5) * 2.4,
+        y: (Math.random() - 0.5) * 2.4,
+        z: minZ + Math.random() * maxZ,
+        tw: Math.random() < 0.12 ? 1 : 0,
+      });
+    }
+  }
+
+  function recycle(s) {
+    s.x = (Math.random() - 0.5) * 2.4;
+    s.y = (Math.random() - 0.5) * 2.4;
+    s.z = maxZ * (0.72 + Math.random() * 0.28);
+    s.tw = Math.random() < 0.12 ? 1 : 0;
+  }
+
+  function shutdown() {
+    if (!running) return;
+    running = false;
+    window.removeEventListener('resize', layout);
+    if (obs) obs.disconnect();
+  }
+
+  function frame(now) {
+    if (!running) return;
+    if (startScreen.style.display === 'none') {
+      shutdown();
+      return;
+    }
+    const dt = Math.min(48, now - last) / 16.67;
+    last = now;
+    const speed = 0.11 * dt;
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+
+    const scale = Math.min(w, h) * focal;
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i];
+      s.z -= speed * (0.35 + s.z * 0.95);
+      if (s.z <= minZ) recycle(s);
+      const inv = 1 / s.z;
+      const px = cx + s.x * scale * inv;
+      const py = cy + s.y * scale * inv;
+      if (px < -4 || px > w + 4 || py < -4 || py > h + 4) continue;
+      const t = Math.min(1, inv * inv * 0.42);
+      const sz = Math.max(0.4, Math.min(3.2, inv * 2.8));
+      if (s.tw) {
+        ctx.fillStyle = 'rgba(200,228,255,' + (0.15 + t * 0.85) + ')';
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + t * 0.88) + ')';
+      }
+      ctx.fillRect(px - sz * 0.5, py - sz * 0.5, sz, sz);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  obs = new MutationObserver(function () {
+    if (startScreen.style.display === 'none') shutdown();
+  });
+  obs.observe(startScreen, { attributes: true, attributeFilter: ['style'] });
+
+  layout();
+  window.addEventListener('resize', layout);
+  requestAnimationFrame(function (t0) {
+    last = t0;
+    requestAnimationFrame(frame);
+  });
+})();
+</script>
 
 <div id="splash">
   <div id="s-hello">Hello Universe</div>
