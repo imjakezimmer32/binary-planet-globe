@@ -3852,6 +3852,16 @@ const _origAnimate = animate;
     brandEl.dataset.maxRatio = String(maxWidthRatio);
     fitSplashBrand(maxWidthRatio);
   }
+  function dualTypeFrame(leftPart, rightPart, step) {
+    return `A${leftPart.slice(0, step)}B${rightPart.slice(0, step)}`;
+  }
+  async function typeFromAB(leftPart, rightPart, stepDelay = 85) {
+    const maxSteps = Math.max(leftPart.length, rightPart.length);
+    for (let step = 1; step <= maxSteps; step++) {
+      setBrandText(dualTypeFrame(leftPart, rightPart, step), 0.13, 0.9);
+      await wait(stepDelay);
+    }
+  }
 
   // Start camera very far out; the animate loop will log-lerp it to 3.0
   orbitZoom = 4000;
@@ -3869,10 +3879,11 @@ const _origAnimate = animate;
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
     await wait(900);
 
-    // ── Phase 3: Morph AB → AstraBound ─────────────────────────────
+    // ── Phase 3: Type out from both letters: A>stra and B>ound ─────
+    await typeFromAB('stra', 'ound');
     setBrandText('AstraBound', 0.13, 0.9);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1.02)';
-    await wait(1450);
+    await wait(980);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
     await wait(220);
 
