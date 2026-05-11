@@ -54,6 +54,34 @@ canvas:not(#start-starfield) {
 body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
 ::selection { background: transparent; color: inherit; }
 
+/* First screen: single tap to unlock audio, then the astra gate appears */
+#tap-primer-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1002;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+#tap-primer-icon {
+  font-size: clamp(88px, 26vw, 200px);
+  line-height: 1;
+  filter: drop-shadow(0 0 32px rgba(255, 255, 255, 0.4));
+  animation: tap-primer-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tap-primer-pulse {
+  0%, 100% { transform: scale(1) translateY(0); opacity: 0.88; }
+  50% { transform: scale(1.08) translateY(10px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #tap-primer-icon { animation: none; opacity: 1; }
+}
+
 /* Pre-splash start gate (Astra + tap / key to continue) */
 #start-screen {
   position: fixed; inset: 0; z-index: 1000;
@@ -83,6 +111,10 @@ body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
 @media (pointer: coarse) {
   #start-screen { cursor: pointer; }
 }
+#start-screen.gate-behind-primer {
+  visibility: hidden;
+  pointer-events: none;
+}
 #start-title {
   position: relative;
   z-index: 2;
@@ -97,14 +129,19 @@ body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
     0 0 80px rgba(255, 255, 255, 0.45),
     0 0 28px rgba(180, 230, 255, 0.35);
   opacity: 0;
+}
+#start-screen:not(.gate-behind-primer) #start-title {
   animation: start-title-fadein 1.15s ease 0.12s forwards;
+}
+#start-screen.gate-behind-primer #start-title {
+  animation: none;
 }
 @keyframes start-title-fadein {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #start-title {
+  #start-screen:not(.gate-behind-primer) #start-title {
     opacity: 1;
     animation: none;
   }
@@ -1379,7 +1416,10 @@ input[type=range]::-moz-range-thumb {
   <div id="galaxy-list"></div>
 </div>
 
-<div id="start-screen" role="dialog" aria-modal="true" aria-labelledby="start-title" aria-describedby="start-hint">
+<div id="tap-primer-screen" role="button" tabindex="0" aria-label="Tap to enable sound and continue">
+  <div id="tap-primer-icon" aria-hidden="true">👆</div>
+</div>
+<div id="start-screen" class="gate-behind-primer" role="dialog" aria-modal="true" aria-labelledby="start-title" aria-describedby="start-hint">
   <canvas id="start-starfield" width="300" height="150" aria-hidden="true"></canvas>
   <div id="start-title">astra</div>
   <p id="start-hint"></p>
@@ -5682,6 +5722,61 @@ const _origAnimate = animate;
     ? 'Tap anywhere to start'
     : 'Click or press any key to start';
 
+  // ── Start screen only: loop until user continues (before splash) ──
+  const START_SCREEN_MUSIC_SRC = '/audio/outertaming.mp3';
+  const START_SCREEN_MUSIC_GAIN = 0.72;
+  const startScreenOuterEl = new Audio(START_SCREEN_MUSIC_SRC);
+  startScreenOuterEl.loop = true;
+  startScreenOuterEl.preload = 'auto';
+  try {
+    startScreenOuterEl.playsInline = true;
+  } catch (_) {}
+  startScreenOuterEl.setAttribute('playsinline', '');
+  startScreenOuterEl.setAttribute('webkit-playsinline', '');
+  // In-document audio is more reliable on iOS/Safari than a detached Audio node.
+  startScreenOuterEl.style.cssText =
+    'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;';
+  document.body.appendChild(startScreenOuterEl);
+  startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
+
+  function tryPlayStartScreenMusic() {
+    // After fade/stop we set volume to 0 — without this, pageshow / primers replay silent.
+    startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
+    const pr = startScreenOuterEl.play();
+    if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+  }
+
+  const tapPrimerScreen = document.getElementById('tap-primer-screen');
+  await new Promise((resolve) => {
+    if (!tapPrimerScreen) {
+      startScreen.classList.remove('gate-behind-primer');
+      resolve();
+      return;
+    }
+    let settled = false;
+    function dismissPrimer() {
+      if (settled) return;
+      settled = true;
+      tryPlayStartScreenMusic();
+      tapPrimerScreen.style.display = 'none';
+      tapPrimerScreen.setAttribute('aria-hidden', 'true');
+      startScreen.classList.remove('gate-behind-primer');
+      tapPrimerScreen.removeEventListener('pointerdown', dismissPrimer);
+      window.removeEventListener('keydown', onPrimerKey, true);
+      resolve();
+    }
+    function onPrimerKey(e) {
+      if (e.repeat) return;
+      if (e.key === ' ' || e.key === 'Spacebar') e.preventDefault();
+      dismissPrimer();
+    }
+    tapPrimerScreen.addEventListener('pointerdown', dismissPrimer, { passive: true });
+    window.addEventListener('keydown', onPrimerKey, { capture: true, passive: true });
+    try {
+      tapPrimerScreen.focus({ preventScroll: true });
+    } catch (_) {}
+  });
+
   const gateMotionOk = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (gateMotionOk) {
     startHint.style.opacity = '0';
@@ -5708,47 +5803,9 @@ const _origAnimate = animate;
     startHint.classList.add('start-hint-visible');
   }
 
-  // ── Start screen only: loop until user continues (before splash) ──
-  const START_SCREEN_MUSIC_SRC = '/audio/outertaming.mp3';
-  const START_SCREEN_MUSIC_GAIN = 0.72;
-  const startScreenOuterEl = new Audio(START_SCREEN_MUSIC_SRC);
-  startScreenOuterEl.loop = true;
-  startScreenOuterEl.preload = 'auto';
-  try {
-    startScreenOuterEl.playsInline = true;
-  } catch (_) {}
-  startScreenOuterEl.setAttribute('playsinline', '');
-  startScreenOuterEl.setAttribute('webkit-playsinline', '');
-  // In-document audio is more reliable on iOS/Safari than a detached Audio node.
-  startScreenOuterEl.style.cssText =
-    'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;';
-  document.body.appendChild(startScreenOuterEl);
-  startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
-
-  function tryPlayStartScreenMusic() {
-    // After fade/stop we set volume to 0 — without this, pageshow / primers replay silent.
-    startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
-    const pr = startScreenOuterEl.play();
-    if (pr && typeof pr.catch === 'function') pr.catch(() => {});
-  }
-
-  let gateAudioPrimed = false;
-  const gatePrimeCapture = { capture: true, passive: true };
-  function primeGateAudioOnFirstDocumentGesture(ev) {
-    if (gateAudioPrimed) return;
-    if (ev.type === 'keydown' && ev.repeat) return;
-    gateAudioPrimed = true;
-    document.removeEventListener('pointerdown', primeGateAudioOnFirstDocumentGesture, gatePrimeCapture);
-    document.removeEventListener('keydown', primeGateAudioOnFirstDocumentGesture, gatePrimeCapture);
-    tryPlayStartScreenMusic();
-  }
-  document.addEventListener('pointerdown', primeGateAudioOnFirstDocumentGesture, gatePrimeCapture);
-  document.addEventListener('keydown', primeGateAudioOnFirstDocumentGesture, gatePrimeCapture);
-
   // Begin title music as soon as the parser runs; retry on load/pageshow for
   // environments that allow autoplay after navigation (still blocked until a
-  // gesture on strict browsers — primers below cover that).
-  tryPlayStartScreenMusic();
+  // gesture on strict browsers — tap primer / gate primers cover that).
   window.addEventListener('load', () => { tryPlayStartScreenMusic(); }, { once: true });
   window.addEventListener('pageshow', () => { tryPlayStartScreenMusic(); });
 
