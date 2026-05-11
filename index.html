@@ -1699,6 +1699,55 @@ function pickSolarSystemFromScreen(clientX, clientY) {
   _pickNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   _pickRay.setFromCamera(_pickNdc, camera);
 
+  // After closing the planet halo, a tap on the canvas still raycasts all bodies; the
+  // binary pair is often closest and would steal selection. Keep the current planet until
+  // the user taps that same body again (re-opens halo) or picks another from the list/menu.
+  if (cameraMode === 'planet' && selectedPlanetIdx !== null && planetRadialDismissed) {
+    const sel = managedPlanets[selectedPlanetIdx];
+    const selPick = [];
+    if (sel?.obj?.getPickables) {
+      sel.obj.getPickables().forEach(obj => {
+        if (obj && obj.visible) selPick.push(obj);
+      });
+    }
+    if (selPick.length) {
+      const selHits = _pickRay.intersectObjects(selPick, false);
+      if (selHits.length) {
+        planetRadialDismissed = false;
+        updatePlanetSelectionEditor();
+        return;
+      }
+    }
+    if (currentDestIndex === 0) {
+      const sunPick = [];
+      const sunMeta = new Map();
+      sunGroup.updateMatrixWorld(true);
+      sunGroup.traverse(child => {
+        if (child.isMesh && child.visible) {
+          sunPick.push(child);
+          sunMeta.set(child.uuid, { kind: 'sun' });
+        }
+      });
+      if (sunPick.length) {
+        const sunHits = _pickRay.intersectObjects(sunPick, false);
+        for (let hi = 0; hi < sunHits.length; hi++) {
+          let obj = sunHits[hi].object;
+          let tag = null;
+          while (obj) {
+            tag = sunMeta.get(obj.uuid);
+            if (tag) break;
+            obj = obj.parent;
+          }
+          if (tag?.kind === 'sun') {
+            onSunTapped();
+            return;
+          }
+        }
+      }
+    }
+    return;
+  }
+
   const pickObjects = [];
   const metaByUuid = new Map();
 
