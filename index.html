@@ -3445,6 +3445,11 @@ let currentDestIndex = 0;
 let isNavigating     = false;
 const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
 const BASE_DT = 1 / 60;
+const TIME_WARP_BASE_SCALE = 0.12; // New baseline: 1x is much slower than legacy behavior.
+
+function getSimulationWarp(uiWarp) {
+  return Math.max(0, uiWarp) * TIME_WARP_BASE_SCALE;
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -3473,9 +3478,10 @@ function animate() {
   // Camera orbits the sun (world origin), pulls back as curScale grows
   updateCamera(curScale);
 
-  if (timeWarp > 0) {
-    const dt    = BASE_DT * timeWarp;
-    const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(timeWarp) * 6)));
+  const simWarp = getSimulationWarp(timeWarp);
+  if (simWarp > 0) {
+    const dt    = BASE_DT * simWarp;
+    const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(simWarp) * 6)));
     const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
     const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
     const massesChanged =
@@ -3493,7 +3499,7 @@ function animate() {
     // Binary heliocentric orbit remains fixed regardless of size edits.
     comAngle += COM_OMEGA * dt;
 
-    sunSpin += 0.0004 * timeWarp;
+    sunSpin += 0.0004 * simWarp;
 
     // Sun-orbiting planets: sun-only gravity (no inter-planet gravity between independent planets).
     // Twin/moon behavior remains in their dedicated parent-orbit logic below.
@@ -3554,7 +3560,7 @@ function animate() {
         const dist = Math.max(mp.orbitR, 4);
         spinRate *= 1 / (1 + 0.0045 * getPlanetMass(mp) / (dist * dist));
       }
-      mp.spinAngle += spinRate * timeWarp;
+      mp.spinAngle += spinRate * simWarp;
     });
   }
 
