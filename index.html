@@ -2690,7 +2690,7 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
   const LAVA_RED_HOT = [0.96, 0.14, 0.05];
   const LAVA_RED_MID = [0.78, 0.09, 0.04];
   const LAVA_RED_DEEP = [0.42, 0.05, 0.03];
-  const LAVA_CRUST_DARK = [0.075, 0.058, 0.056];
+  const LAVA_CRUST_DARK = [0.048, 0.038, 0.037];
   const LAVA_YELLOW = [1.00, 0.88, 0.18];
   const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
   const landShoreBand = shoreBand * 1.55;
@@ -2698,7 +2698,7 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
   // Lava crust patches: angular scale from radius; strength grows with slider (bigger lava seas).
   const lavaCrustSeed = planetSeed * 0.314 + 7.11;
   const lavaPatchFreq = 3.9 / Math.max(baseR, 0.11);
-  const lavaSpotStrength = 0.40 + Math.min(liquidStrength / 0.32, 1) * 0.62;
+  const lavaSpotStrength = 0.50 + Math.min(liquidStrength / 0.28, 1) * 0.75;
 
   function mix3(a, b, t) {
     const k = Math.max(0, Math.min(1, t));
@@ -2802,10 +2802,10 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
         fnz * fTight + lavaCrustSeed + 0.55
       );
       const nBlend = nWide * 0.68 + nTight * 0.32;
-      const spotMask = Math.max(0, Math.min(1, (-0.20 - nBlend) / 0.58));
-      const spotShape = Math.pow(spotMask, 1.38);
+      const spotMask = Math.max(0, Math.min(1, (-0.12 - nBlend) / 0.50));
+      const spotShape = Math.pow(spotMask, 1.22);
       const inDeepLava = Math.pow(1 - avgShoreT, 0.72 + liquidStrength * 0.28);
-      const spotAmtFace = Math.min(1, spotShape * inDeepLava * lavaSpotStrength * 0.62);
+      const spotAmtFace = Math.min(1, spotShape * inDeepLava * lavaSpotStrength * 0.82);
 
       // Lava: yellow core -> hot red -> deep red -> dark crust (extra red in the mid bands).
       for (let v = 0; v < 3; v++) {
@@ -2822,7 +2822,7 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
         }
 
         c = mix3(c, LAVA_CRUST_DARK, spotAmtFace);
-        c = mix3(c, LAVA_RED_DEEP, spotAmtFace * 0.26);
+        c = mix3(c, LAVA_RED_DEEP, spotAmtFace * 0.36);
 
         col[i*3] = c[0];
         col[i*3+1] = c[1];
@@ -2830,7 +2830,7 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
 
         const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
         // Double additive red polygon shells: inner crimson sheet + outer hot rim.
-        const glowDim = 1 - spotAmtFace * 0.68;
+        const glowDim = 1 - spotAmtFace * 0.78;
         const innerGlow = mix3(
           [0.30, 0.03, 0.02],
           [0.98, 0.16, 0.07],
