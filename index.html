@@ -3855,12 +3855,28 @@ const _origAnimate = animate;
   function dualTypeFrame(leftPart, rightPart, step) {
     return `A${leftPart.slice(0, step)}B${rightPart.slice(0, step)}`;
   }
-  async function typeFromAB(leftPart, rightPart, stepDelay = 85) {
+  function getBrandMainTransition() {
+    return 'opacity 0.35s ease, letter-spacing 1.1s cubic-bezier(0.21, 0.94, 0.35, 1), transform 1.1s cubic-bezier(0.21, 0.94, 0.35, 1)';
+  }
+  async function typeFromAB(leftPart, rightPart, stepDelay = 60) {
+    const finalWord = `A${leftPart}B${rightPart}`;
+    // Fit once for the full word so each typing frame stays centered.
+    setBrandText(finalWord, 0.13, 0.9);
+    const lockedFontSize = brandEl.style.fontSize;
+    const lockedSpacing = brandEl.style.letterSpacing;
+    brandEl.style.transition = 'opacity 0.35s ease';
+    brandEl.textContent = 'AB';
+    brandEl.style.fontSize = lockedFontSize;
+    brandEl.style.letterSpacing = lockedSpacing;
     const maxSteps = Math.max(leftPart.length, rightPart.length);
     for (let step = 1; step <= maxSteps; step++) {
-      setBrandText(dualTypeFrame(leftPart, rightPart, step), 0.13, 0.9);
+      brandEl.textContent = dualTypeFrame(leftPart, rightPart, step);
+      brandEl.style.fontSize = lockedFontSize;
+      brandEl.style.letterSpacing = lockedSpacing;
       await wait(stepDelay);
     }
+    brandEl.textContent = finalWord;
+    brandEl.style.transition = getBrandMainTransition();
   }
   async function showSmileyBeforeZoom() {
     setBrandText(':)', 0.16, 0.34);
@@ -3869,7 +3885,7 @@ const _origAnimate = animate;
     await wait(90);
     brandEl.style.transform = 'translate(-50%, -50%) rotate(90deg) scale(1.06)';
     await wait(620);
-    brandEl.style.transition = 'opacity 0.35s ease, letter-spacing 1.1s cubic-bezier(0.21, 0.94, 0.35, 1), transform 1.1s cubic-bezier(0.21, 0.94, 0.35, 1)';
+    brandEl.style.transition = getBrandMainTransition();
   }
 
   // Start camera very far out; the animate loop will log-lerp it to 3.0
@@ -3886,11 +3902,9 @@ const _origAnimate = animate;
     setBrandText('AB', 0.34, 0.56);
     brandEl.style.opacity = '1';
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
-    await wait(900);
 
-    // ── Phase 3: Type out from both letters: A>stra and B>ound ─────
+    // ── Phase 3: Start typing immediately from both letters ─────────
     await typeFromAB('stra', 'ound');
-    setBrandText('AstraBound', 0.13, 0.9);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1.02)';
     await wait(980);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
