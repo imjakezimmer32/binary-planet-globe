@@ -88,6 +88,7 @@ body.scene-visible canvas { opacity: 1; }
 #cam-settings,
 #planet-panel,
 #planet-radial-editor,
+#sun-radial-editor,
 #galaxy-menu,
 #walk-controls,
 #walk-cam-badge {
@@ -98,6 +99,7 @@ body.hud-hidden #cam-buttons,
 body.hud-hidden #cam-settings,
 body.hud-hidden #planet-panel,
 body.hud-hidden #planet-radial-editor,
+body.hud-hidden #sun-radial-editor,
 body.hud-hidden #galaxy-menu,
 body.hud-hidden #walk-controls,
 body.hud-hidden #walk-cam-badge {
@@ -114,7 +116,8 @@ body.hud-hidden #walk-cam-badge {
 /* Planet radial editor — shared across viewports (JS sets left/top on the root).
    Must not live only inside the desktop media query, or narrow screens never get
    position:fixed and knob offsets anchor incorrectly. */
-#planet-radial-editor {
+#planet-radial-editor,
+#sun-radial-editor {
   position: fixed;
   left: 0;
   top: 0;
@@ -123,7 +126,8 @@ body.hud-hidden #walk-cam-badge {
   pointer-events: none;
   --pre-size: 220px;
 }
-#planet-radial-ring {
+#planet-radial-ring,
+#sun-radial-ring {
   position: absolute;
   left: 0;
   top: 0;
@@ -137,7 +141,8 @@ body.hud-hidden #walk-cam-badge {
   background:
     radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
 }
-#planet-radial-guide {
+#planet-radial-guide,
+#sun-radial-guide {
   position: absolute;
   left: 0;
   top: 0;
@@ -157,7 +162,8 @@ body.hud-hidden #walk-cam-badge {
   -webkit-mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
   mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
 }
-#planet-radial-guide.visible { opacity: 1; }
+#planet-radial-guide.visible,
+#sun-radial-guide.visible { opacity: 1; }
 .planet-radial-close {
   position: absolute;
   left: 0;
@@ -238,6 +244,11 @@ body.hud-hidden #walk-cam-badge {
 }
 body.radial-edit-active #planet-panel {
   display: none !important;
+}
+body.sun-radial-edit-active #ui {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1219,6 +1230,20 @@ input[type=range]::-moz-range-thumb {
   </button>
 </div>
 
+<div id="sun-radial-editor" aria-label="Solar scale and time warp">
+  <div id="sun-radial-ring"></div>
+  <div id="sun-radial-guide"></div>
+  <button type="button" id="sun-radial-close" class="planet-radial-close" aria-label="Close solar controls">×</button>
+  <button type="button" class="planet-radial-knob" data-sun-setting="scale">
+    <span class="prk-name">Scale</span>
+    <span class="prk-value" id="srk-val-scale">1.00×</span>
+  </button>
+  <button type="button" class="planet-radial-knob" data-sun-setting="warp">
+    <span class="prk-name">Warp</span>
+    <span class="prk-value" id="srk-val-warp">1.0×</span>
+  </button>
+</div>
+
 <div id="galaxy-menu">
   <button id="galaxy-btn">⬡ Sol System</button>
   <div id="galaxy-list"></div>
@@ -1386,6 +1411,7 @@ const _planetEditorEdgeNdc = new THREE.Vector3();
 const _planetEditorCamRight = new THREE.Vector3();
 const _planetEditorCamUp = new THREE.Vector3();
 const _planetEditorCamForward = new THREE.Vector3();
+const _sunEditorCenterWorld = new THREE.Vector3();
 
 // ── Walk mode (physics walker on spherical surfaces) ────────────────
 const walkMode = { active: false, spawnPlanetIdx: null };
@@ -1589,6 +1615,33 @@ const planetSelectionRing = new THREE.Mesh(
 );
 planetSelectionRing.visible = false;
 scene.add(planetSelectionRing);
+
+const sunSelectionHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 36, 24),
+  new THREE.MeshBasicMaterial({
+    color: 0x58dfff,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.BackSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+sunSelectionHalo.visible = false;
+scene.add(sunSelectionHalo);
+
+const sunSelectionRing = new THREE.Mesh(
+  new THREE.TorusGeometry(1, 0.028, 14, 96),
+  new THREE.MeshBasicMaterial({
+    color: 0x9ceeff,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+sunSelectionRing.visible = false;
+scene.add(sunSelectionRing);
 
 // ── Camera input: separate paths (do not mix) ─────────────────────
 // Desktop: mouse / pen — left = orbit, right = pan on plane, wheel = zoom.
@@ -2962,12 +3015,25 @@ dialScale.addEventListener('input', () => {
   targetScale = sliderToScale(parseFloat(dialScale.value));
   lblScale.textContent = scaleLabelText(targetScale);
   applyDetailForCurrentView(targetScale);
+  syncSunRadialReadouts();
 });
 lblScale.textContent = scaleLabelText(targetScale);
 dialWarp.addEventListener('input', () => {
   timeWarp = parseFloat(dialWarp.value);
   lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+  syncSunRadialReadouts();
 });
+
+let sunRadialDismissed = false;
+function scaleWorldToSliderValue(worldScale) {
+  const ui = scaleWorldToUi(worldScale);
+  const u = Math.max(SCALE_MIN, Math.min(SCALE_MAX, ui));
+  return Math.log(u / SCALE_MIN) / SCALE_LOG;
+}
+const SUN_EDIT_CONFIG = {
+  scale: { min: sliderToScale(0), max: sliderToScale(1), arcStart: 146, arcEnd: 266 },
+  warp: { min: 0, max: 100, step: 0.1, arcStart: 302, arcEnd: 58 },
+};
 
 // ── Planet management ─────────────────────────────────────────────
 // managedPlanets mirrors the actual planet objects + metadata.
@@ -3476,6 +3542,28 @@ const planetRadialState = {
   /** Arc angle (deg) that matches the planet value when the drag began */
   dragValueStartDeg: null,
 };
+const sunRadialEditorEl = $('sun-radial-editor');
+const sunRadialRingEl = $('sun-radial-ring');
+const sunRadialGuideEl = $('sun-radial-guide');
+const sunRadialCloseBtn = $('sun-radial-close');
+const sunRadialKnobEls = sunRadialEditorEl ? {
+  scale: sunRadialEditorEl.querySelector('button[data-sun-setting="scale"]'),
+  warp: sunRadialEditorEl.querySelector('button[data-sun-setting="warp"]'),
+} : {};
+const sunRadialValueEls = {
+  scale: $('srk-val-scale'),
+  warp: $('srk-val-warp'),
+};
+const sunRadialState = {
+  visible: false,
+  centerX: 0,
+  centerY: 0,
+  knobRadius: 95,
+  dragSetting: null,
+  dragPointerId: null,
+  dragPointerStartDeg: null,
+  dragValueStartDeg: null,
+};
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
 const planetPanelHeader = $('planet-panel-header');
@@ -3769,6 +3857,213 @@ function updatePlanetSettingFromPointer(clientX, clientY, setting) {
   applyPlanetEditSetting(setting, value);
 }
 
+function sunArcSpan(cfg) {
+  const raw = cfg.arcEnd - cfg.arcStart;
+  return raw >= 0 ? raw : raw + 360;
+}
+function sunEditTToAngle(setting, t) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = sunArcSpan(cfg);
+  return (cfg.arcStart + Math.max(0, Math.min(1, t)) * span + 360) % 360;
+}
+function sunEditAngleToT(setting, deg) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = sunArcSpan(cfg);
+  let start = cfg.arcStart;
+  let angle = ((deg % 360) + 360) % 360;
+  if (cfg.arcEnd < cfg.arcStart && angle < start) angle += 360;
+  return Math.max(0, Math.min(1, (angle - start) / Math.max(1e-5, span)));
+}
+function valueFromSunSetting(setting) {
+  if (setting === 'scale') return targetScale;
+  if (setting === 'warp') return timeWarp;
+  return 0;
+}
+function clampSunEditValue(setting, value) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return value;
+  return Math.max(cfg.min, Math.min(cfg.max, value));
+}
+function quantizeSunEditValue(setting, value) {
+  if (setting === 'scale') {
+    const s = scaleWorldToSliderValue(value);
+    const q = Math.round(Math.max(0, Math.min(1, s)) / 0.001) * 0.001;
+    return sliderToScale(q);
+  }
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg || !cfg.step) return value;
+  return Math.round(value / cfg.step) * cfg.step;
+}
+function syncSunRadialReadouts() {
+  if (sunRadialValueEls.scale) sunRadialValueEls.scale.textContent = `${scaleWorldToUi(targetScale).toFixed(2)}×`;
+  if (sunRadialValueEls.warp) {
+    sunRadialValueEls.warp.textContent = timeWarp === 0 ? 'PAUSE' : `${timeWarp.toFixed(1)}×`;
+  }
+}
+function setSunRadialGuide(setting) {
+  if (!sunRadialGuideEl) return;
+  if (!setting || !SUN_EDIT_CONFIG[setting]) {
+    sunRadialGuideEl.classList.remove('visible');
+    return;
+  }
+  const cfg = SUN_EDIT_CONFIG[setting];
+  const span = sunArcSpan(cfg);
+  const start = ((cfg.arcStart % 360) + 360) % 360;
+  sunRadialGuideEl.style.setProperty('--guide-start', `${start.toFixed(2)}deg`);
+  sunRadialGuideEl.style.setProperty('--guide-span', `${span.toFixed(2)}deg`);
+  sunRadialGuideEl.classList.add('visible');
+}
+function updateSunRadialFocusVisuals() {
+  const active = sunRadialState.dragSetting;
+  if (sunRadialRingEl) {
+    sunRadialRingEl.style.opacity = active ? '0.92' : '0.78';
+  }
+  Object.entries(sunRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.classList.toggle('active', active === setting);
+    knob.classList.toggle('dim', !!active && active !== setting);
+  });
+  if (sunRadialCloseBtn) {
+    sunRadialCloseBtn.classList.toggle('dim', !!active);
+  }
+  setSunRadialGuide(active);
+}
+function applySunEditSetting(setting, rawValue) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return;
+  const next = quantizeSunEditValue(setting, clampSunEditValue(setting, rawValue));
+  if (setting === 'scale') {
+    targetScale = next;
+    if (dialScale) dialScale.value = String(scaleWorldToSliderValue(targetScale));
+    if (lblScale) lblScale.textContent = scaleLabelText(targetScale);
+    applyDetailForCurrentView(targetScale);
+    setPlanetsRenderable(cameraMode === 'planet' || curScale < PLANET_HIDE_SCALE);
+  } else if (setting === 'warp') {
+    timeWarp = next;
+    if (dialWarp) dialWarp.value = String(timeWarp);
+    if (lblWarp) lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+  }
+  syncSunRadialReadouts();
+}
+function hideSunRadialEditor() {
+  if (sunRadialEditorEl) sunRadialEditorEl.style.display = 'none';
+  sunRadialState.visible = false;
+  sunRadialState.dragSetting = null;
+  sunRadialState.dragPointerId = null;
+  sunRadialState.dragPointerStartDeg = null;
+  sunRadialState.dragValueStartDeg = null;
+  document.body.classList.remove('sun-radial-edit-active');
+  sunSelectionHalo.visible = false;
+  sunSelectionRing.visible = false;
+  updateSunRadialFocusVisuals();
+}
+function updateSunRadialKnobPositions() {
+  if (!sunRadialEditorEl) return;
+  const r = sunRadialState.knobRadius;
+  ['scale', 'warp'].forEach(setting => {
+    const knob = sunRadialKnobEls[setting];
+    const cfg = SUN_EDIT_CONFIG[setting];
+    if (!knob || !cfg) return;
+    const value = valueFromSunSetting(setting);
+    const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+    const deg = sunEditTToAngle(setting, t);
+    const rad = deg * Math.PI / 180;
+    knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
+    knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
+  });
+  updateSunRadialFocusVisuals();
+}
+function updateSunSelectionEditor() {
+  const shouldShow =
+    cameraMode === 'sun' &&
+    !walkMode.active &&
+    !sunRadialDismissed &&
+    currentDestIndex === 0 &&
+    !isNavigating;
+  if (!shouldShow) {
+    sunSelectionHalo.visible = false;
+    sunSelectionRing.visible = false;
+    hideSunRadialEditor();
+    return;
+  }
+  document.body.classList.add('sun-radial-edit-active');
+  sunGroup.getWorldPosition(_sunEditorCenterWorld);
+  const radiusWorld = SUN_R * 5.5;
+  sunSelectionHalo.visible = true;
+  sunSelectionHalo.position.copy(_sunEditorCenterWorld);
+  sunSelectionHalo.scale.setScalar(radiusWorld * 1.12);
+
+  sunSelectionRing.visible = true;
+  sunSelectionRing.position.copy(_sunEditorCenterWorld);
+  sunSelectionRing.quaternion.copy(camera.quaternion);
+  const ringRadius = radiusWorld * 1.32;
+  sunSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
+
+  _planetEditorNdc.copy(_sunEditorCenterWorld).project(camera);
+  const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
+  if (depthOutOfRange) {
+    hideSunRadialEditor();
+    return;
+  }
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
+  const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+  if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
+    hideSunRadialEditor();
+    return;
+  }
+  const cx = projectedCx;
+  const cy = projectedCy;
+
+  camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
+  _planetEditorEdgeWorld.copy(_sunEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
+  _planetEditorEdgeNdc.copy(_planetEditorEdgeWorld).project(camera);
+  const ex = (_planetEditorEdgeNdc.x * 0.5 + 0.5) * vw;
+  const ey = (-_planetEditorEdgeNdc.y * 0.5 + 0.5) * vh;
+  const projectedRadius = Number.isFinite(ex) && Number.isFinite(ey)
+    ? Math.max(26, Math.hypot(ex - cx, ey - cy))
+    : 64;
+  const narrow = isNarrowPlanetUI();
+  const shortSide = Math.min(vw, vh);
+  const ringMinPx = narrow ? 132 : 156;
+  const ringMaxPx = narrow
+    ? Math.min(292, shortSide * 0.54)
+    : Math.min(560, shortSide * 0.74);
+  const ringFromProjection = projectedRadius * 2.85;
+  const ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
+
+  if (sunRadialEditorEl) {
+    sunRadialEditorEl.style.display = 'block';
+    sunRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
+    sunRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
+    sunRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+  }
+  sunRadialState.visible = true;
+  sunRadialState.centerX = cx;
+  sunRadialState.centerY = cy;
+  sunRadialState.knobRadius = ringSize * 0.5;
+  syncSunRadialReadouts();
+  updateSunRadialKnobPositions();
+}
+function updateSunSettingFromPointer(clientX, clientY, setting) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return;
+  const dx = clientX - sunRadialState.centerX;
+  const dy = clientY - sunRadialState.centerY;
+  if (dx * dx + dy * dy < 25) return;
+  const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  let deg = pointerDeg;
+  if (sunRadialState.dragPointerStartDeg !== null && sunRadialState.dragValueStartDeg !== null) {
+    deg = (pointerDeg - sunRadialState.dragPointerStartDeg + sunRadialState.dragValueStartDeg + 360) % 360;
+  }
+  const t = sunEditAngleToT(setting, deg);
+  const value = cfg.min + t * (cfg.max - cfg.min);
+  applySunEditSetting(setting, value);
+}
+
 function syncPlanetCount() {
   if (planetCountEl) planetCountEl.textContent = String(managedPlanets.length);
 }
@@ -4020,6 +4315,65 @@ if (planetRadialEditorEl) {
     });
   }
 }
+if (sunRadialEditorEl) {
+  const onSunKnobDown = (e, setting) => {
+    if (!sunRadialState.visible) return;
+    e.preventDefault();
+    e.stopPropagation();
+    sunRadialState.dragSetting = setting;
+    sunRadialState.dragPointerId = e.pointerId;
+    const cfg = SUN_EDIT_CONFIG[setting];
+    if (cfg) {
+      const v = valueFromSunSetting(setting);
+      const startT = (v - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      sunRadialState.dragValueStartDeg = sunEditTToAngle(setting, startT);
+      const dx = e.clientX - sunRadialState.centerX;
+      const dy = e.clientY - sunRadialState.centerY;
+      sunRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    } else {
+      sunRadialState.dragPointerStartDeg = null;
+      sunRadialState.dragValueStartDeg = null;
+    }
+    updateSunRadialFocusVisuals();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    updateSunSelectionEditor();
+  };
+  const onSunKnobMove = e => {
+    if (sunRadialState.dragPointerId !== e.pointerId || !sunRadialState.dragSetting) return;
+    e.preventDefault();
+    updateSunSettingFromPointer(e.clientX, e.clientY, sunRadialState.dragSetting);
+    updateSunSelectionEditor();
+  };
+  const onSunKnobUp = e => {
+    if (sunRadialState.dragPointerId !== e.pointerId) return;
+    e.preventDefault();
+    sunRadialState.dragSetting = null;
+    sunRadialState.dragPointerId = null;
+    sunRadialState.dragPointerStartDeg = null;
+    sunRadialState.dragValueStartDeg = null;
+    Object.values(sunRadialKnobEls).forEach(knob => {
+      try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
+    });
+    updateSunRadialFocusVisuals();
+  };
+  Object.entries(sunRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.addEventListener('pointerdown', e => onSunKnobDown(e, setting));
+    knob.addEventListener('pointermove', onSunKnobMove);
+    knob.addEventListener('pointerup', onSunKnobUp);
+    knob.addEventListener('pointercancel', onSunKnobUp);
+  });
+  window.addEventListener('pointerup', onSunKnobUp);
+  window.addEventListener('pointercancel', onSunKnobUp);
+  if (sunRadialCloseBtn) {
+    sunRadialCloseBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      sunRadialDismissed = true;
+      hideSunRadialEditor();
+    });
+  }
+}
 updateWalkJoystickThumb();
 
 window.addEventListener('keydown', e => {
@@ -4059,6 +4413,11 @@ const btnPlanet = document.getElementById('btn-planet');
 function setCamMode(mode) {
   if (mode !== 'planet' && walkMode.active) stopWalkMode();
   cameraMode = mode;
+  if (mode === 'sun') {
+    sunRadialDismissed = false;
+  } else {
+    hideSunRadialEditor();
+  }
   applyDetailForCurrentView(targetScale);
   setPlanetsRenderable(mode === 'planet' || curScale < PLANET_HIDE_SCALE);
   btnSun.classList.toggle('active', mode === 'sun');
@@ -4341,6 +4700,7 @@ function animate() {
   sunGroup.scale.setScalar(SUN_R);
   sunGroup.rotation.y = sunSpin;
   updatePlanetSelectionEditor();
+  updateSunSelectionEditor();
 
   renderer.render(scene, camera);
 }
