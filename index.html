@@ -1430,7 +1430,7 @@ input[type=range]::-moz-range-thumb {
     }
     const dt = Math.min(48, now - last) / 16.67;
     last = now;
-    const speed = (prefersReduced ? 0.012 : 0.028) * dt;
+    const speed = (prefersReduced ? 0.0045 : 0.0095) * dt;
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
@@ -1438,7 +1438,7 @@ input[type=range]::-moz-range-thumb {
     const scale = Math.min(w, h) * focal;
     for (let i = 0; i < stars.length; i++) {
       const s = stars[i];
-      s.z -= speed * (0.18 + s.z * 0.42);
+      s.z -= speed * (0.1 + s.z * 0.26);
       if (s.z <= minZ) recycle(s);
       const inv = 1 / s.z;
       const px = cx + s.x * scale * inv;
