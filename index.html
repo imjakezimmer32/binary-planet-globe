@@ -111,6 +111,98 @@ body.hud-hidden #walk-cam-badge {
   display: none !important;
 }
 
+/* Planet radial editor — shared across viewports (JS sets left/top on the root).
+   Must not live only inside the desktop media query, or narrow screens never get
+   position:fixed and knob offsets anchor incorrectly. */
+#planet-radial-editor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 88;
+  display: none;
+  pointer-events: none;
+  --pre-size: 220px;
+}
+#planet-radial-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pre-size);
+  height: var(--pre-size);
+  margin-left: calc(var(--pre-size) * -0.5);
+  margin-top: calc(var(--pre-size) * -0.5);
+  border-radius: 50%;
+  border: 1px solid rgba(122, 233, 255, 0.35);
+  box-shadow: 0 0 22px rgba(56, 201, 255, 0.32), inset 0 0 32px rgba(16, 140, 205, 0.2);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
+}
+#planet-radial-guide {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pre-size);
+  height: var(--pre-size);
+  margin-left: calc(var(--pre-size) * -0.5);
+  margin-top: calc(var(--pre-size) * -0.5);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  background: conic-gradient(
+    from var(--guide-start, 0deg),
+    rgba(129, 235, 255, 0.92) 0deg var(--guide-span, 90deg),
+    rgba(129, 235, 255, 0) var(--guide-span, 90deg) 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
+  mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
+}
+#planet-radial-guide.visible { opacity: 1; }
+.planet-radial-knob {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 72px;
+  padding: 6px 8px;
+  border-radius: 11px;
+  border: 1px solid rgba(162, 236, 255, 0.38);
+  background: rgba(1, 15, 28, 0.72);
+  box-shadow: 0 0 14px rgba(44, 184, 255, 0.28);
+  color: rgba(219, 247, 255, 0.95);
+  font-family: monospace;
+  text-transform: uppercase;
+  text-align: center;
+  pointer-events: auto;
+  cursor: grab;
+  opacity: 0.98;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.planet-radial-knob:active { cursor: grabbing; }
+.planet-radial-knob.active {
+  border-color: rgba(210, 247, 255, 0.9);
+  box-shadow: 0 0 22px rgba(84, 206, 255, 0.55);
+  transform: translate(-50%, -50%) scale(1.05);
+}
+.planet-radial-knob.dim {
+  opacity: 0.18;
+  transform: translate(-50%, -50%) scale(0.94);
+}
+.planet-radial-knob .prk-name {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(181, 238, 255, 0.85);
+}
+.planet-radial-knob .prk-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.92);
+}
+body.radial-edit-active #planet-panel {
+  display: none !important;
+}
+
 /* ══════════════════════════════════════════════════════════════════
    PC / DESKTOP — wide layouts, original spacing (769px and wider)
    ══════════════════════════════════════════════════════════════════ */
@@ -302,94 +394,6 @@ input[type=range]::-webkit-slider-thumb {
   pointer-events: none;
 }
 #planet-edit-panel input[type=range] { width: 100%; }
-#planet-radial-editor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 88;
-  display: none;
-  pointer-events: none;
-  --pre-size: 220px;
-}
-#planet-radial-ring {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--pre-size);
-  height: var(--pre-size);
-  margin-left: calc(var(--pre-size) * -0.5);
-  margin-top: calc(var(--pre-size) * -0.5);
-  border-radius: 50%;
-  border: 1px solid rgba(122, 233, 255, 0.35);
-  box-shadow: 0 0 22px rgba(56, 201, 255, 0.32), inset 0 0 32px rgba(16, 140, 205, 0.2);
-  background:
-    radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
-}
-#planet-radial-guide {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--pre-size);
-  height: var(--pre-size);
-  margin-left: calc(var(--pre-size) * -0.5);
-  margin-top: calc(var(--pre-size) * -0.5);
-  border-radius: 50%;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.16s ease;
-  background: conic-gradient(
-    from var(--guide-start, 0deg),
-    rgba(129, 235, 255, 0.92) 0deg var(--guide-span, 90deg),
-    rgba(129, 235, 255, 0) var(--guide-span, 90deg) 360deg
-  );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
-  mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
-}
-#planet-radial-guide.visible { opacity: 1; }
-.planet-radial-knob {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  min-width: 72px;
-  padding: 6px 8px;
-  border-radius: 11px;
-  border: 1px solid rgba(162, 236, 255, 0.38);
-  background: rgba(1, 15, 28, 0.72);
-  box-shadow: 0 0 14px rgba(44, 184, 255, 0.28);
-  color: rgba(219, 247, 255, 0.95);
-  font-family: monospace;
-  text-transform: uppercase;
-  text-align: center;
-  pointer-events: auto;
-  cursor: grab;
-  opacity: 0.98;
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-.planet-radial-knob:active { cursor: grabbing; }
-.planet-radial-knob.active {
-  border-color: rgba(210, 247, 255, 0.9);
-  box-shadow: 0 0 22px rgba(84, 206, 255, 0.55);
-  transform: translate(-50%, -50%) scale(1.05);
-}
-.planet-radial-knob.dim {
-  opacity: 0.18;
-  transform: translate(-50%, -50%) scale(0.94);
-}
-.planet-radial-knob .prk-name {
-  display: block;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  color: rgba(181, 238, 255, 0.85);
-}
-.planet-radial-knob .prk-value {
-  display: block;
-  margin-top: 2px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.92);
-}
-body.radial-edit-active #planet-panel {
-  display: none !important;
-}
 
 /* ── Galaxy navigation menu ─────────────────────────────────────── */
 #galaxy-menu {
