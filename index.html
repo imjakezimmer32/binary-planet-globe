@@ -49,6 +49,47 @@ canvas {
 body.scene-visible canvas { opacity: 1; }
 ::selection { background: transparent; color: inherit; }
 
+/* Pre-splash start gate (Astra + tap / key to continue) */
+#start-screen {
+  position: fixed; inset: 0; z-index: 1000;
+  background: #000;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: clamp(1rem, 4vh, 2.5rem);
+  pointer-events: auto;
+  cursor: default;
+  transition: opacity 0.5s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (pointer: coarse) {
+  #start-screen { cursor: pointer; }
+}
+#start-title {
+  font-family: monospace;
+  font-size: clamp(40px, 11vw, 160px);
+  color: #fff;
+  letter-spacing: 0.28em;
+  text-transform: lowercase;
+  text-shadow: 0 0 60px rgba(255,255,255,0.35);
+}
+#start-hint {
+  font-family: monospace;
+  font-size: clamp(14px, 3.2vw, 22px);
+  color: rgba(255,255,255,0.62);
+  letter-spacing: 0.12em;
+  text-align: center;
+  padding: 0 1.5rem;
+  max-width: 90vw;
+  line-height: 1.45;
+  margin: 0;
+  animation: start-hint-pulse 2.2s ease-in-out infinite;
+}
+@keyframes start-hint-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* Splash: same structure on all viewports; font sizes tuned per breakpoint */
 #splash {
   position: fixed; inset: 0; z-index: 999;
@@ -1277,6 +1318,11 @@ input[type=range]::-moz-range-thumb {
 <div id="galaxy-menu">
   <button id="galaxy-btn">⬡ Sol System</button>
   <div id="galaxy-list"></div>
+</div>
+
+<div id="start-screen" role="dialog" aria-modal="true" aria-labelledby="start-title" aria-describedby="start-hint">
+  <div id="start-title">astra</div>
+  <p id="start-hint"></p>
 </div>
 
 <div id="splash">
@@ -5336,16 +5382,59 @@ const _origAnimate = animate;
 })();
 
 // ── Splash intro sequence ─────────────────────────────────────────
-(function() {
+(async function() {
   const splash  = document.getElementById('splash');
   const helloEl = document.getElementById('s-hello');
   const faceEl  = document.getElementById('s-face');
+  const startScreen = document.getElementById('start-screen');
+  const startHint = document.getElementById('start-hint');
   const INTRO_ZOOM_EPSILON = 0.02;
   const INTRO_ZOOM_TIMEOUT_MS = 9000;
   const INTRO_ZOOM_OVERLAP_MS = 70;
   const SPLASH_FADE_MS = 1450;
 
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  const touchPrimary = window.matchMedia('(pointer: coarse)').matches;
+  startHint.textContent = touchPrimary
+    ? 'Tap anywhere to start'
+    : 'Press any key to start';
+
+  function waitForStart() {
+    return new Promise((resolve) => {
+      let done = false;
+      const cleanup = () => {
+        window.removeEventListener('keydown', onKey);
+        startScreen.removeEventListener('pointerdown', onPointer);
+      };
+      const finish = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolve();
+      };
+      const onKey = (e) => {
+        if (touchPrimary) return;
+        if (e.repeat) return;
+        finish();
+      };
+      const onPointer = () => {
+        if (!touchPrimary) return;
+        finish();
+      };
+      window.addEventListener('keydown', onKey);
+      startScreen.addEventListener('pointerdown', onPointer);
+    });
+  }
+
+  async function dismissStartScreen() {
+    startScreen.style.pointerEvents = 'none';
+    startScreen.style.transition = 'opacity 0.5s ease';
+    startScreen.style.opacity = '0';
+    await wait(500);
+    startScreen.style.display = 'none';
+  }
+
   async function waitForIntroZoom() {
     const start = performance.now();
     while (performance.now() - start < INTRO_ZOOM_TIMEOUT_MS) {
@@ -5414,7 +5503,9 @@ const _origAnimate = animate;
     // zoom continues past the fade, settling gently near orbitZoom 3
   }
 
-  run();
+  await waitForStart();
+  await dismissStartScreen();
+  await run();
 })();
 
 window.addEventListener('resize', () => {
