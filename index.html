@@ -76,6 +76,17 @@ canvas { display: block; touch-action: none; }
 }
 
 /* Hide gameplay HUD until intro zoom settles */
+/* Keep a transition so reveal fades in instead of popping */
+#ui,
+#cam-buttons,
+#cam-settings,
+#planet-panel,
+#planet-radial-editor,
+#galaxy-menu,
+#walk-controls,
+#walk-cam-badge {
+  transition: opacity 0.55s ease;
+}
 body.hud-hidden #ui,
 body.hud-hidden #cam-buttons,
 body.hud-hidden #cam-settings,
@@ -87,6 +98,11 @@ body.hud-hidden #walk-cam-badge {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
+}
+
+/* Legacy panel retired: top-left picker now handles planets/moons */
+#planet-panel {
+  display: none !important;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -413,6 +429,63 @@ body.radial-edit-active #planet-panel {
 }
 .gx-item.navigating { opacity: 0.4; pointer-events: none; }
 .gx-dist { color: rgba(255,255,255,0.25); font-size: 9px; align-self: center; }
+.gx-item.planet-picker-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.gx-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gx-item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gx-item-title .planet-dot {
+  width: 8px;
+  height: 8px;
+}
+.gx-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gx-item-meta {
+  color: rgba(255,255,255,0.28);
+  font-size: 9px;
+}
+.gx-inline-actions {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gx-list-footer {
+  padding: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.gx-action-btn {
+  width: 100%;
+  min-height: 34px;
+  border-radius: 9px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.92);
+  font-family: monospace;
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.gx-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 #cam-settings {
   position: fixed; top: 60px; right: 24px;
@@ -553,6 +626,16 @@ body.radial-edit-active #planet-panel {
 }
 .gx-item.navigating { opacity: 0.4; pointer-events: none; }
 .gx-dist { font-size: clamp(8px, 2.2vw, 10px); color: rgba(255,255,255,0.28); }
+.gx-item-meta { font-size: clamp(8px, 2.2vw, 10px); }
+.gx-inline-actions { padding: 0 8px 10px; }
+.gx-list-footer {
+  padding: 10px 8px;
+  border-top: 1px solid rgba(255,255,255,0.12);
+}
+.gx-action-btn {
+  min-height: 44px;
+  font-size: clamp(9px, 2.4vw, 10px);
+}
 
 #cam-buttons {
   position: fixed;
@@ -3571,6 +3654,31 @@ function canCreateMoonFromSelection() {
   return !!managedPlanets[selectedPlanetIdx];
 }
 
+function addPlanetFromSelectionUi() {
+  const baseRadius = 0.5 + Math.random() * 0.6;
+  const slot = reserveSolarOrbitSlot(baseRadius, 1.0);
+  if (!slot) return;
+  const orbitSpeed = (Math.random() < 0.5 ? -1 : 1) * Math.sqrt(SOLAR_MU / Math.pow(slot.radius, 3));
+  const newIdx = createSunOrbitPlanet({
+    baseRadius,
+    orbitR: slot.radius,
+    orbitSpeed,
+    orbitAngle: slot.angle,
+    orbitY: slot.y ?? 0,
+    slotKey: slot.key,
+  });
+  rebuildPlanetList();
+  selectPlanet(newIdx);
+}
+
+function addMoonFromSelectionUi() {
+  if (cameraMode !== 'planet' || !canCreateMoonFromSelection()) return;
+  const newIdx = createPlanetMoonOrbit(selectedPlanetIdx);
+  if (newIdx === null) return;
+  rebuildPlanetList();
+  selectPlanet(newIdx);
+}
+
 function updateTwinButtonVisibility() {
   if (!addTwinBtn) return;
   const inPlanetView = cameraMode === 'planet';
@@ -3640,6 +3748,7 @@ function selectPlanet(idx) {
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
   updatePlanetSelectionEditor();
+  rebuildGalaxyMenu();
 }
 
 dialSizeE.addEventListener('input', () => {
@@ -3657,30 +3766,13 @@ dialWaterE.addEventListener('input', () => {
 // Add planet button (next free sun-orbit slot)
 addPlanetBtn.addEventListener('click', e => {
   e.stopPropagation();
-  const baseRadius = 0.5 + Math.random() * 0.6;
-  const slot = reserveSolarOrbitSlot(baseRadius, 1.0);
-  if (!slot) return;
-  const orbitSpeed = (Math.random()<0.5 ? -1 : 1) * Math.sqrt(SOLAR_MU / Math.pow(slot.radius, 3));
-  const newIdx = createSunOrbitPlanet({
-    baseRadius,
-    orbitR: slot.radius,
-    orbitSpeed,
-    orbitAngle: slot.angle,
-    orbitY: slot.y ?? 0,
-    slotKey: slot.key,
-  });
-  rebuildPlanetList();
-  selectPlanet(newIdx);
+  addPlanetFromSelectionUi();
 });
 
 // Add moon button (planetary orbit around selected planet)
 addTwinBtn.addEventListener('click', e => {
   e.stopPropagation();
-  if (cameraMode !== 'planet' || !canCreateMoonFromSelection()) return;
-  const newIdx = createPlanetMoonOrbit(selectedPlanetIdx);
-  if (newIdx === null) return;
-  rebuildPlanetList();
-  selectPlanet(newIdx);
+  addMoonFromSelectionUi();
 });
 
 btnWalk.addEventListener('click', e => {
@@ -3827,6 +3919,9 @@ function setCamMode(mode) {
   btnPlanet.classList.toggle('active', mode === 'planet');
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
+  galaxyList.classList.remove('open');
+  galaxyBtn.classList.remove('open');
+  rebuildGalaxyMenu();
 }
 btnSun.addEventListener('click',    () => setCamMode('sun'));
 btnPlanet.addEventListener('click', () => setCamMode('planet'));
@@ -4196,11 +4291,103 @@ function navigateTo(idx) {
 }
 
 // ── Galaxy menu UI ────────────────────────────────────────────────
+const galaxyMenu = document.getElementById('galaxy-menu');
 const galaxyBtn  = document.getElementById('galaxy-btn');
 const galaxyList = document.getElementById('galaxy-list');
 
 function rebuildGalaxyMenu() {
+  const inPlanetView = cameraMode === 'planet';
+  if (galaxyMenu) galaxyMenu.classList.toggle('mode-planet', inPlanetView);
   galaxyList.innerHTML = '';
+  if (inPlanetView) {
+    const moonCounts = new Map();
+    managedPlanets.forEach(mp => {
+      if (mp.orbitCenter === 'planet' && mp.orbitParentId !== null) {
+        moonCounts.set(mp.orbitParentId, (moonCounts.get(mp.orbitParentId) || 0) + 1);
+      }
+    });
+    const childrenByParent = new Map();
+    managedPlanets.forEach((mp, idx) => {
+      if (mp.orbitCenter === 'planet' && mp.orbitParentId !== null && managedPlanets[mp.orbitParentId]) {
+        if (!childrenByParent.has(mp.orbitParentId)) childrenByParent.set(mp.orbitParentId, []);
+        childrenByParent.get(mp.orbitParentId).push(idx);
+      }
+    });
+    const ordered = [];
+    const visited = new Set();
+    const pushBranch = (idx, depth) => {
+      if (!managedPlanets[idx] || visited.has(idx)) return;
+      visited.add(idx);
+      ordered.push({ idx, depth });
+      const kids = childrenByParent.get(idx) || [];
+      kids.forEach(childIdx => pushBranch(childIdx, Math.min(depth + 1, 2)));
+    };
+    managedPlanets.forEach((mp, idx) => {
+      const hasParent = mp.orbitCenter === 'planet' && mp.orbitParentId !== null && managedPlanets[mp.orbitParentId];
+      if (!hasParent) pushBranch(idx, 0);
+    });
+    managedPlanets.forEach((_, idx) => pushBranch(idx, 0));
+
+    ordered.forEach(({ idx, depth }) => {
+      const mp = managedPlanets[idx];
+      if (!mp) return;
+      const isSelected = idx === selectedPlanetIdx;
+      const el = document.createElement('div');
+      el.className = 'gx-item planet-picker-item' + (isSelected ? ' current' : '');
+      const indent = '&nbsp;'.repeat(depth * 3);
+      const orbitTag = depth > 0 ? 'Moon' : 'Planet';
+      const moonCount = moonCounts.get(mp.id) || 0;
+      const moonText = moonCount ? `${moonCount} moon${moonCount === 1 ? '' : 's'}` : orbitTag;
+      el.innerHTML = `<div class="gx-item-main">
+        <span class="gx-item-title">
+          <span class="planet-dot" style="background:${mp.color}"></span>
+          <span class="gx-item-name">${indent}${mp.name}</span>
+        </span>
+        <span class="gx-item-meta">${moonText}</span>
+      </div>`;
+      el.addEventListener('click', () => {
+        selectPlanet(idx);
+      });
+      galaxyList.appendChild(el);
+
+      if (isSelected) {
+        const actions = document.createElement('div');
+        actions.className = 'gx-inline-actions';
+        const moonBtn = document.createElement('button');
+        moonBtn.type = 'button';
+        moonBtn.className = 'gx-action-btn';
+        moonBtn.textContent = '+ Moon';
+        moonBtn.disabled = !canCreateMoonFromSelection();
+        moonBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          addMoonFromSelectionUi();
+        });
+        actions.appendChild(moonBtn);
+        galaxyList.appendChild(actions);
+      }
+    });
+
+    const footer = document.createElement('div');
+    footer.className = 'gx-list-footer';
+    const addPlanetInlineBtn = document.createElement('button');
+    addPlanetInlineBtn.type = 'button';
+    addPlanetInlineBtn.className = 'gx-action-btn';
+    addPlanetInlineBtn.textContent = '+ Add Planet';
+    addPlanetInlineBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      addPlanetFromSelectionUi();
+    });
+    footer.appendChild(addPlanetInlineBtn);
+    galaxyList.appendChild(footer);
+
+    const selectedName =
+      selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]
+        ? managedPlanets[selectedPlanetIdx].name
+        : 'Pick Planet';
+    galaxyBtn.textContent = '◉ ' + selectedName;
+    return;
+  }
+
   GALAXY_DESTINATIONS.forEach((dest, i) => {
     const el = document.createElement('div');
     el.className = 'gx-item' + (i === currentDestIndex ? ' current' : '');
