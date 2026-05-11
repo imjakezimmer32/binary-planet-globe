@@ -70,13 +70,13 @@ body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
   touch-action: manipulation;
 }
 #tap-primer-icon {
-  width: clamp(88px, 22vw, 180px);
-  height: clamp(110px, 28vw, 220px);
+  width: clamp(100px, 28vw, 200px);
+  height: clamp(100px, 28vw, 200px);
   display: flex;
   align-items: center;
   justify-content: center;
   filter: drop-shadow(0 0 28px rgba(94, 232, 255, 0.45)) drop-shadow(0 0 48px rgba(255, 255, 255, 0.2));
-  animation: tap-primer-pulse 1.2s ease-in-out infinite;
+  animation: tap-primer-pulse 1.15s ease-in-out infinite;
 }
 #tap-primer-icon svg {
   width: 100%;
@@ -84,8 +84,8 @@ body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
   display: block;
 }
 @keyframes tap-primer-pulse {
-  0%, 100% { transform: scale(1) translateY(0); opacity: 0.88; }
-  50% { transform: scale(1.08) translateY(10px); opacity: 1; }
+  0%, 100% { transform: scale(1) translateY(0); opacity: 0.9; }
+  50% { transform: scale(1.04) translateY(5px); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   #tap-primer-icon { animation: none; opacity: 1; }
@@ -1427,12 +1427,21 @@ input[type=range]::-moz-range-thumb {
 
 <div id="tap-primer-screen" role="button" tabindex="0" aria-label="Tap to enable sound and continue">
   <div id="tap-primer-icon" aria-hidden="true">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64" aria-hidden="true">
-      <g fill="#f0f9ff" stroke="#7ee8ff" stroke-width="1.35" stroke-linejoin="round" stroke-linecap="round">
-        <path d="M 24 3 C 19.5 3 16.5 6.5 16.5 11 V 28.5 C 15.8 28.1 14.9 28 14 28.2 C 11.3 28.8 9.5 31.2 9.5 34 V 48 C 9.5 53.5 13.8 58 19.2 58 H 28.8 C 34.2 58 38.5 53.5 38.5 48 V 34 C 38.5 31.2 36.7 28.8 34 28.2 C 33.1 28 32.2 28.1 31.5 28.5 V 11 C 31.5 6.5 28.5 3 24 3 Z"/>
-        <path d="M 9.5 34 C 7 35 5 37.5 5 40.5 V 46 C 5 48.5 6.8 50.5 9.2 50.8 L 11 51" fill="none" stroke-width="1.2" opacity="0.92"/>
-        <path d="M 31.5 40 H 38" fill="none" stroke="#4cc8e8" stroke-width="1" opacity="0.65"/>
-        <path d="M 16.5 40 H 9.5" fill="none" stroke="#4cc8e8" stroke-width="1" opacity="0.65"/>
+    <!-- Curved index + touch ripples = reads as “tap” (not an upright hand silhouette) -->
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+      <g stroke-linecap="round" stroke-linejoin="round">
+        <!-- Surface ripples (drawn under finger) -->
+        <circle cx="48" cy="78" r="22" stroke="#3eb8dc" stroke-width="1.1" opacity="0.22"/>
+        <circle cx="48" cy="78" r="14" stroke="#5fd8f0" stroke-width="1.2" opacity="0.4"/>
+        <circle cx="48" cy="78" r="7" stroke="#8aefff" stroke-width="1.35" opacity="0.65"/>
+        <circle cx="48" cy="78" r="3" fill="#e8fbff" stroke="#b8f6ff" stroke-width="0.85"/>
+        <!-- Index finger: thick curved stroke (outline + fill) -->
+        <path d="M 64 10 Q 52 42 48 76" stroke="#5ecfff" stroke-width="14" fill="none"/>
+        <path d="M 64 10 Q 52 42 48 76" stroke="#f4fbff" stroke-width="8" fill="none"/>
+        <!-- Nail / pad at tip -->
+        <ellipse cx="48" cy="74" rx="5" ry="4.2" fill="#dff8ff" stroke="#7ee8ff" stroke-width="1.05" transform="rotate(-18 48 74)"/>
+        <!-- Contact sparks -->
+        <path stroke="#c8f8ff" stroke-width="1.1" opacity="0.9" d="M 48 66 v-6 M 39 69 l4 -5 M 57 69 l-4 -5"/>
       </g>
     </svg>
   </div>
