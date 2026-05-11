@@ -1430,7 +1430,7 @@ input[type=range]::-moz-range-thumb {
     }
     const dt = Math.min(48, now - last) / 16.67;
     last = now;
-    const speed = (prefersReduced ? 0.045 : 0.12) * dt;
+    const speed = (prefersReduced ? 0.012 : 0.028) * dt;
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
@@ -1438,7 +1438,7 @@ input[type=range]::-moz-range-thumb {
     const scale = Math.min(w, h) * focal;
     for (let i = 0; i < stars.length; i++) {
       const s = stars[i];
-      s.z -= speed * (0.35 + s.z * 0.95);
+      s.z -= speed * (0.18 + s.z * 0.42);
       if (s.z <= minZ) recycle(s);
       const inv = 1 / s.z;
       const px = cx + s.x * scale * inv;
@@ -5276,14 +5276,10 @@ const GALAXY_DESTINATIONS = [
   { name: "Gliese 667C",     dist: '23.6 ly',   color: 0xff6644, pos: new THREE.Vector3(-1500, 600,-2300)  },
 ];
 
-/** Fade duration when entering/leaving a system's music (linear gain ramp). */
+/** Fade duration when entering/leaving a system's music (linear volume ramp). */
 const SOLAR_AUDIO_FADE_MS = 5000;
 
-/** Web Audio context for fades — HTMLAudioElement.volume is ignored on iOS Safari; GainNode still works. */
-const SolarAudioContext = window.AudioContext || window.webkitAudioContext;
-const solarAudioCtx = SolarAudioContext ? new SolarAudioContext() : null;
-
-/** One player per destination index (null = no music). Preloads immediately; play() after user unlock. */
+/** One player per destination (null = no track). Uses HTMLAudioElement.volume only — no Web Audio / MediaElementSource (that path often outputs silence when the context never runs). */
 const solarSystemAudio = (function createSolarSystemAudio(destinations) {
   const peakVolumes = new Array(destinations.length).fill(0);
   const players = destinations.map((d, i) => {
@@ -5295,34 +5291,18 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     const el = new Audio(d.audioSrc);
     el.preload = 'auto';
     el.loop = d.audioLoop !== false;
-    el.volume = 1; // attenuate only via GainNode so fades work on iOS
+    el.volume = 0;
 
-    let gain = null;
-    if (solarAudioCtx) {
-      try {
-        const src = solarAudioCtx.createMediaElementSource(el);
-        gain = solarAudioCtx.createGain();
-        gain.gain.value = 0;
-        src.connect(gain).connect(solarAudioCtx.destination);
-      } catch (e) {
-        gain = null;
-        el.volume = peak;
-      }
-    } else {
-      el.volume = 0;
-    }
-
-    return { el, gain };
+    return { el, gain: null };
   });
 
   function getGain(p) {
     if (!p) return 0;
-    return p.gain ? p.gain.gain.value : p.el.volume;
+    return p.el.volume;
   }
   function setGain(p, v) {
     const x = Math.min(1, Math.max(0, v));
-    if (p.gain) p.gain.gain.value = x;
-    else p.el.volume = x;
+    p.el.volume = x;
   }
 
   const prevWantOn = destinations.map(() => false);
@@ -5378,7 +5358,6 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
       prevWantOn[i] = wantOn;
       const now = performance.now();
       if (wantOn) {
-        if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
         const pr = p.el.play();
         if (pr && typeof pr.catch === 'function') pr.catch(() => {});
         fadeState[i] = { kind: 'in', t0: now, v0: Math.min(getGain(p), peakVolumes[i]) };
@@ -5394,7 +5373,6 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     /** Call after first user gesture so autoplay policy allows music. */
     unlock() {
       unlocked = true;
-      if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
       sync();
     },
   };
@@ -5689,24 +5667,9 @@ const _origAnimate = animate;
   const startScreenOuterEl = new Audio(START_SCREEN_MUSIC_SRC);
   startScreenOuterEl.loop = true;
   startScreenOuterEl.preload = 'auto';
-  startScreenOuterEl.volume = 1;
-
-  let startScreenOuterGain = null;
-  if (solarAudioCtx) {
-    try {
-      const src = solarAudioCtx.createMediaElementSource(startScreenOuterEl);
-      startScreenOuterGain = solarAudioCtx.createGain();
-      startScreenOuterGain.gain.value = START_SCREEN_MUSIC_GAIN;
-      src.connect(startScreenOuterGain).connect(solarAudioCtx.destination);
-    } catch (e) {
-      startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
-    }
-  } else {
-    startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
-  }
+  startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
 
   function tryPlayStartScreenMusic() {
-    if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
     const pr = startScreenOuterEl.play();
     if (pr && typeof pr.catch === 'function') pr.catch(() => {});
   }
@@ -5720,15 +5683,11 @@ const _origAnimate = animate;
 
   function fadeOutAndStopStartScreenMusic(ms) {
     const t0 = performance.now();
-    const v0 = startScreenOuterGain
-      ? startScreenOuterGain.gain.value
-      : startScreenOuterEl.volume;
-    const peak = Math.max(0, v0);
+    const peak = Math.max(0, startScreenOuterEl.volume);
     function tick() {
       const t = Math.min(1, (performance.now() - t0) / ms);
       const v = peak * (1 - t);
-      if (startScreenOuterGain) startScreenOuterGain.gain.value = v;
-      else startScreenOuterEl.volume = v;
+      startScreenOuterEl.volume = v;
       if (t < 1) requestAnimationFrame(tick);
       else stopStartScreenMusic();
     }
@@ -5738,8 +5697,7 @@ const _origAnimate = animate;
   function stopStartScreenMusic() {
     startScreenOuterEl.pause();
     startScreenOuterEl.currentTime = 0;
-    if (startScreenOuterGain) startScreenOuterGain.gain.value = 0;
-    else startScreenOuterEl.volume = 0;
+    startScreenOuterEl.volume = 0;
   }
 
   /**
@@ -5764,7 +5722,7 @@ const _origAnimate = animate;
 
   /**
    * Runs the supplied callback synchronously inside the tap/key handler so
-   * Chrome keeps transient user activation for AudioContext.resume / play().
+   * Chrome still treats the following play() calls as user-initiated.
    */
   function waitForStart(onUserGestureSync) {
     return new Promise((resolve) => {
