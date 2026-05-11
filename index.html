@@ -432,6 +432,16 @@ input[type=range]::-webkit-slider-thumb {
 }
 #planet-edit-panel input[type=range] { width: 100%; }
 
+#sun-orbit-sliders {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.18);
+}
+#sun-orbit-sliders input[type=range] { width: 100%; }
+
 /* ── Galaxy navigation menu ─────────────────────────────────────── */
 #galaxy-menu {
   position: fixed; top: 24px; left: 24px;
@@ -1185,6 +1195,16 @@ input[type=range]::-moz-range-thumb {
   </div>
   <div id="planet-panel-body">
     <div id="planet-list"></div>
+    <div id="sun-orbit-sliders" aria-label="Sun orbit distance and tilt">
+      <div class="pe-row">
+        <span class="pe-lbl" id="lbl-sun-orbit-r">Distance from sun 12</span>
+        <input type="range" id="dial-sun-orbit-r" min="6" max="46" step="0.5" value="12">
+      </div>
+      <div class="pe-row">
+        <span class="pe-lbl" id="lbl-sun-orbit-tilt">Orbit tilt 0°</span>
+        <input type="range" id="dial-sun-orbit-tilt-deg" min="-35" max="35" step="1" value="0">
+      </div>
+    </div>
     <div id="planet-edit-panel" style="display:none">
       <div class="pe-row">
         <span class="pe-lbl" id="lbl-size-edit">Size 1.00×</span>
@@ -2976,7 +2996,11 @@ const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0f
 const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30, 34, 38, 42, 46];
 const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
 // Inclination (rad) of the orbital plane about +X: 0 = ecliptic (XZ); orbit always passes through the sun.
-const SOLAR_ORBIT_INCLINATIONS = [0, 0.12, -0.12, 0.22, -0.22, 0.32, -0.32, 0.45, -0.45];
+const SOLAR_ORBIT_INCLINATIONS = [0, 0.12, -0.12, 0.22, -0.22, 0.32, -0.32, 0.45, -0.45, 0.55, -0.55];
+const SUN_ORBIT_SLIDER_R_MIN = 6;
+const SUN_ORBIT_SLIDER_R_MAX = 46;
+const SUN_ORBIT_TILT_DEG_MAX = 35;
+const SUN_ORBIT_TILT_RAD_MAX = (SUN_ORBIT_TILT_DEG_MAX * Math.PI) / 180;
 let managedPlanets = []; // { … orbitPos, orbitVel, orbitInclination, orbitPlaneNormal, orbitParentId, trail }
 let selectedPlanetIdx = null;
 
@@ -3193,6 +3217,28 @@ function initializeSunOrbiterState(mp) {
     sunInclinedHelioTanUnit(tu, th, inc);
     mp.orbitVel = tu.multiplyScalar(speed * sign);
   }
+}
+
+/** Re-seat a sun orbiter on a circular path: radius r (heliocentric), plane tilt inc (rad about +X). */
+function reapplySunOrbiterCircularOrbit(mp, r, inc) {
+  if (!mp?.obj?.pivot || mp.isBinary || mp.orbitCenter !== 'sun') return;
+  const rClamped = Math.max(SUN_ORBIT_MIN_R, Math.min(SUN_ORBIT_MAX_R - 0.05, r));
+  const incClamped = Math.max(-SUN_ORBIT_TILT_RAD_MAX, Math.min(SUN_ORBIT_TILT_RAD_MAX, inc));
+  if (!mp.orbitPos) mp.orbitPos = new THREE.Vector3();
+  if (!mp.orbitVel) mp.orbitVel = new THREE.Vector3();
+  mp.orbitBaseR = rClamped;
+  mp.orbitR = rClamped;
+  mp.orbitInclination = incClamped;
+  mp.orbitPlaneNormal = null;
+  ensureSunOrbiterPlaneNormal(mp);
+  const th = mp.angle;
+  sunInclinedHelioPos(mp.orbitPos, rClamped, th, incClamped);
+  const sign = mp.orbitSpeed < 0 ? -1 : 1;
+  const tu = new THREE.Vector3();
+  sunInclinedHelioTanUnit(tu, th, incClamped);
+  const speed = Math.sqrt(SOLAR_MU / rClamped);
+  mp.orbitVel.copy(tu).multiplyScalar(speed * sign);
+  mp.obj.pivot.position.copy(mp.orbitPos);
 }
 
 function ensureSunTrail(mp) {
@@ -3482,6 +3528,11 @@ const planetPanelHeader = $('planet-panel-header');
 const planetCountEl = $('planet-count');
 const addPlanetBtn = $('add-planet-btn');
 const addTwinBtn = $('add-twin-btn');
+const sunOrbitSlidersEl = $('sun-orbit-sliders');
+const dialSunOrbitREl = $('dial-sun-orbit-r');
+const dialSunOrbitTiltDegEl = $('dial-sun-orbit-tilt-deg');
+const lblSunOrbitREl = $('lbl-sun-orbit-r');
+const lblSunOrbitTiltEl = $('lbl-sun-orbit-tilt');
 const btnWalk = $('btn-walk');
 const walkControlsEl = $('walk-controls');
 const walkJoystickEl = $('walk-joystick');
@@ -3618,6 +3669,46 @@ function syncPlanetDialValues(mp) {
   if (dialSizeE) dialSizeE.value = mp.obj.state.size;
   if (dialPeakE) dialPeakE.value = mp.obj.state.peakScale;
   if (dialWaterE) dialWaterE.value = mp.obj.state.waterLevel;
+}
+
+function updateSunOrbitSliderLabels() {
+  if (lblSunOrbitREl && dialSunOrbitREl) {
+    const rv = parseFloat(dialSunOrbitREl.value);
+    lblSunOrbitREl.textContent = `Distance from sun ${Number.isFinite(rv) ? rv.toFixed(1) : '—'}`;
+  }
+  if (lblSunOrbitTiltEl && dialSunOrbitTiltDegEl) {
+    lblSunOrbitTiltEl.textContent = `Orbit tilt ${dialSunOrbitTiltDegEl.value}°`;
+  }
+}
+
+function syncSunOrbitEditorUi(mp) {
+  if (!sunOrbitSlidersEl) return;
+  const ok = mp && !mp.isBinary && mp.orbitCenter === 'sun';
+  sunOrbitSlidersEl.style.display = ok ? 'flex' : 'none';
+  if (!ok || !dialSunOrbitREl || !dialSunOrbitTiltDegEl) return;
+  initializeSunOrbiterState(mp);
+  const rNow = getSunOrbitRadius(mp);
+  const rDial = Math.max(SUN_ORBIT_SLIDER_R_MIN, Math.min(SUN_ORBIT_SLIDER_R_MAX, rNow));
+  dialSunOrbitREl.value = String(rDial);
+  const deg = Math.round((getSunOrbitInclination(mp) * 180) / Math.PI);
+  dialSunOrbitTiltDegEl.value = String(Math.max(-SUN_ORBIT_TILT_DEG_MAX, Math.min(SUN_ORBIT_TILT_DEG_MAX, deg)));
+  updateSunOrbitSliderLabels();
+}
+
+function applySunOrbitFromSliders() {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
+  if (!dialSunOrbitREl || !dialSunOrbitTiltDegEl) return;
+  let r = parseFloat(dialSunOrbitREl.value);
+  let tiltDeg = parseFloat(dialSunOrbitTiltDegEl.value);
+  if (!Number.isFinite(r)) return;
+  if (!Number.isFinite(tiltDeg)) tiltDeg = 0;
+  r = Math.max(SUN_ORBIT_SLIDER_R_MIN, Math.min(SUN_ORBIT_SLIDER_R_MAX, r));
+  const tiltClamped = Math.max(-SUN_ORBIT_TILT_DEG_MAX, Math.min(SUN_ORBIT_TILT_DEG_MAX, tiltDeg));
+  const inc = (tiltClamped * Math.PI) / 180;
+  reapplySunOrbiterCircularOrbit(mp, r, inc);
+  updateSunOrbitSliderLabels();
 }
 
 function applyPlanetEditSetting(setting, rawValue) {
@@ -3869,6 +3960,8 @@ function selectPlanet(idx) {
     syncPlanetDialValues(mp);
     syncPlanetEditReadouts(mp);
   }
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') syncSunOrbitEditorUi(null);
+  else syncSunOrbitEditorUi(mp);
   setPlanetPanelOpen(false);
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
@@ -3887,6 +3980,9 @@ dialPeakE.addEventListener('input', () => {
 dialWaterE.addEventListener('input', () => {
   applyPlanetEditSetting('water', parseFloat(dialWaterE.value));
 });
+
+if (dialSunOrbitREl) dialSunOrbitREl.addEventListener('input', () => { applySunOrbitFromSliders(); });
+if (dialSunOrbitTiltDegEl) dialSunOrbitTiltDegEl.addEventListener('input', () => { applySunOrbitFromSliders(); });
 
 // Add planet button (next free sun-orbit slot)
 addPlanetBtn.addEventListener('click', e => {
