@@ -21,6 +21,7 @@
 <link rel="icon" type="image/png" sizes="512x512" href="/app-icon-512.png">
 <link rel="apple-touch-icon" href="/app-icon-192.png">
 <link rel="manifest" href="/site.webmanifest">
+<link rel="preload" href="/audio/astra.mp3" as="audio" type="audio/mpeg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,800;0,900;1,700&display=swap" rel="stylesheet">
@@ -5129,14 +5130,62 @@ function animate() {
 animate();
 
 // ── Galaxy destinations ───────────────────────────────────────────
+// Per-system optional fields (forward-compatible):
+//   audioSrc     — URL to loopable music (e.g. '/audio/foo.mp3'); omit or null = no track
+//   audioVolume  — 0..1 (default 0.78)
+//   audioLoop    — default true
 const GALAXY_DESTINATIONS = [
-  { name: 'Sol System',      dist: 'Home',      color: 0xffffd0, pos: new THREE.Vector3(0,    0,    0)    },
+  {
+    name: 'Sol System',
+    dist: 'Home',
+    color: 0xffffd0,
+    pos: new THREE.Vector3(0, 0, 0),
+    audioSrc: '/audio/astra.mp3',
+    audioVolume: 0.78,
+    audioLoop: true,
+  },
   { name: 'Alpha Centauri',  dist: '4.37 ly',   color: 0xffcc88, pos: new THREE.Vector3( 1800, 220, -1300) },
   { name: 'Sirius',          dist: '8.6 ly',    color: 0xaaddff, pos: new THREE.Vector3(-2100,-180,  900)  },
   { name: 'Tau Ceti',        dist: '11.9 ly',   color: 0xffee99, pos: new THREE.Vector3(-700,  450, 2600)  },
   { name: 'Kepler-442',      dist: '1,206 ly',  color: 0xff9966, pos: new THREE.Vector3( 3100,-700, 1500)  },
   { name: "Gliese 667C",     dist: '23.6 ly',   color: 0xff6644, pos: new THREE.Vector3(-1500, 600,-2300)  },
 ];
+
+/** One HTMLAudioElement per destination index (null = no music). Preloads immediately; play() after user unlock. */
+const solarSystemAudio = (function createSolarSystemAudio(destinations) {
+  const players = destinations.map((d) => {
+    if (!d.audioSrc) return null;
+    const el = new Audio(d.audioSrc);
+    el.preload = 'auto';
+    el.loop = d.audioLoop !== false;
+    el.volume = typeof d.audioVolume === 'number'
+      ? Math.min(1, Math.max(0, d.audioVolume))
+      : 0.78;
+    return el;
+  });
+  let unlocked = false;
+  function sync() {
+    for (let i = 0; i < players.length; i++) {
+      const a = players[i];
+      if (!a) continue;
+      const shouldPlay = unlocked && !isNavigating && currentDestIndex === i;
+      if (shouldPlay) {
+        const pr = a.play();
+        if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+      } else {
+        a.pause();
+      }
+    }
+  }
+  return {
+    sync,
+    /** Call after first user gesture so autoplay policy allows music. */
+    unlock() {
+      unlocked = true;
+      sync();
+    },
+  };
+})(GALAXY_DESTINATIONS);
 
 function syncTrailVisibility() {
   const activeDest = isNavigating ? -1 : currentDestIndex;
@@ -5199,6 +5248,7 @@ function navigateTo(idx) {
   if (isNavigating || idx === currentDestIndex) return;
   if (walkMode.active) stopWalkMode();
   isNavigating = true;
+  solarSystemAudio.sync();
   document.body.classList.add('hud-hidden');
   syncTrailVisibility();
   zoomTarget = null; // cancel any splash zoom in progress
@@ -5240,6 +5290,7 @@ function navigateTo(idx) {
       syncTrailVisibility();
       rebuildGalaxyMenu();
       document.body.classList.remove('hud-hidden');
+      solarSystemAudio.sync();
     }
   }
   requestAnimationFrame(step);
@@ -5523,6 +5574,7 @@ const _origAnimate = animate;
   }
 
   await waitForStart();
+  solarSystemAudio.unlock();
   await dismissStartScreen();
   await run();
 })();
