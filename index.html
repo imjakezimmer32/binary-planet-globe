@@ -22,6 +22,7 @@
 <link rel="apple-touch-icon" href="/app-icon-192.png">
 <link rel="manifest" href="/site.webmanifest">
 <link rel="preload" href="/audio/astra.mp3" as="audio" type="audio/mpeg">
+<link rel="preload" href="/audio/outertaming.mp3" as="audio" type="audio/mpeg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,800;0,900;1,700&display=swap" rel="stylesheet">
@@ -5557,6 +5558,52 @@ const _origAnimate = animate;
     ? 'Tap anywhere to start'
     : 'Press any key to start';
 
+  // ── Start screen only: loop until user continues (before splash) ──
+  const START_SCREEN_MUSIC_SRC = '/audio/outertaming.mp3';
+  const START_SCREEN_MUSIC_GAIN = 0.72;
+  const startScreenOuterEl = new Audio(START_SCREEN_MUSIC_SRC);
+  startScreenOuterEl.loop = true;
+  startScreenOuterEl.preload = 'auto';
+  startScreenOuterEl.volume = 1;
+
+  let startScreenOuterGain = null;
+  if (solarAudioCtx) {
+    try {
+      const src = solarAudioCtx.createMediaElementSource(startScreenOuterEl);
+      startScreenOuterGain = solarAudioCtx.createGain();
+      startScreenOuterGain.gain.value = START_SCREEN_MUSIC_GAIN;
+      src.connect(startScreenOuterGain).connect(solarAudioCtx.destination);
+    } catch (e) {
+      startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
+    }
+  } else {
+    startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
+  }
+
+  function tryPlayStartScreenMusic() {
+    if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
+    const pr = startScreenOuterEl.play();
+    if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+  }
+
+  function stopStartScreenMusic() {
+    startScreenOuterEl.pause();
+    startScreenOuterEl.currentTime = 0;
+    if (startScreenOuterGain) startScreenOuterGain.gain.value = 0;
+    else startScreenOuterEl.volume = 0;
+  }
+
+  /** First real gesture must start audio on strict browsers; capture runs before dismiss handlers. */
+  function attachStartScreenMusicPrimers() {
+    const prime = () => tryPlayStartScreenMusic();
+    startScreen.addEventListener('pointerdown', prime, { capture: true, passive: true });
+    window.addEventListener('keydown', prime, { capture: true, passive: true });
+    return () => {
+      startScreen.removeEventListener('pointerdown', prime, { capture: true });
+      window.removeEventListener('keydown', prime, { capture: true });
+    };
+  }
+
   function waitForStart() {
     return new Promise((resolve) => {
       let done = false;
@@ -5660,7 +5707,11 @@ const _origAnimate = animate;
     // zoom continues past the fade, settling gently near orbitZoom 3
   }
 
+  tryPlayStartScreenMusic();
+  const detachStartScreenMusicPrimers = attachStartScreenMusicPrimers();
   await waitForStart();
+  detachStartScreenMusicPrimers();
+  stopStartScreenMusic();
   solarSystemAudio.unlock();
   await dismissStartScreen();
   await run();
