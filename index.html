@@ -1315,7 +1315,7 @@ input[type=range]::-moz-range-thumb {
   <input type="range" id="dial-scale" min="0" max="1" step="0.001" value="0">
   <div class="gap"></div>
   <div class="row-label" id="lbl-warp">TIME WARP &nbsp;1.00×</div>
-  <input type="range" id="dial-warp" min="0" max="100" step="0.1" value="1">
+  <input type="range" id="dial-warp" min="0" max="200" step="0.1" value="1">
 </div>
 <div id="walk-controls">
   <div id="walk-joystick" aria-label="Movement joystick">
@@ -3047,8 +3047,10 @@ let sunSpin = 0;
 let planetsRenderable = true;
 
 const $ = id => document.getElementById(id);
+const TIME_WARP_UI_MAX = 200;
 const dialScale = $('dial-scale'), lblScale = $('lbl-scale');
 const dialWarp  = $('dial-warp'),  lblWarp  = $('lbl-warp');
+if (dialWarp) dialWarp.max = String(TIME_WARP_UI_MAX);
 
 function scaleLabelText(s) {
   return `SCALE  ${scaleWorldToUi(s).toFixed(2)}×`;
@@ -3105,7 +3107,7 @@ function scaleWorldToSliderValue(worldScale) {
 }
 const SUN_EDIT_CONFIG = {
   scale: { min: sliderToScale(0), max: sliderToScale(1), arcStart: 146, arcEnd: 266 },
-  warp: { min: 0, max: 100, step: 0.1, arcStart: 302, arcEnd: 58 },
+  warp: { min: 0, max: TIME_WARP_UI_MAX, step: 0.1, arcStart: 302, arcEnd: 58 },
 };
 
 // ── Planet management ─────────────────────────────────────────────
