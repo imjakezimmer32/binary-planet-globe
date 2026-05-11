@@ -5338,6 +5338,7 @@ animate();
 //   audioVolume  — 0..1 peak gain after fade-in (default 0.78)
 //   audioLoop    — default true
 // Music ramps in/out over SOLAR_AUDIO_FADE_MS (5s) when entering/leaving a system or during hyperspace.
+// After the start gate dismisses, gate music fades out first; Sol (astra.mp3) then ramps in over the same duration (splash sequence).
 const GALAXY_DESTINATIONS = [
   {
     name: 'Sol System',
@@ -5453,6 +5454,37 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     unlock() {
       unlocked = true;
       sync();
+    },
+    /**
+     * During the start-gate user gesture: allow in-system music but keep it silent
+     * and do not start the volume ramp yet (used so gate music can finish fading first).
+     */
+    primeActiveDestinationAudioAfterGesture() {
+      unlocked = true;
+      const activeIdx = unlocked && !isNavigating ? currentDestIndex : -1;
+      for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        if (!p) continue;
+        const wantOn = activeIdx === i;
+        if (!wantOn) continue;
+        const pr = p.el.play();
+        if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+        setGain(p, 0);
+        fadeState[i] = null;
+        prevWantOn[i] = true;
+      }
+    },
+    /** Start (or restart) the linear fade-in for whichever system is active (e.g. Sol / astra.mp3). */
+    beginActiveDestinationFadeIn() {
+      const activeIdx = unlocked && !isNavigating ? currentDestIndex : -1;
+      const now = performance.now();
+      for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        if (!p) continue;
+        if (activeIdx !== i) continue;
+        fadeState[i] = { kind: 'in', t0: now, v0: Math.min(getGain(p), peakVolumes[i]) };
+        ensureTick();
+      }
     },
   };
 })(GALAXY_DESTINATIONS);
@@ -5827,17 +5859,24 @@ const _origAnimate = animate;
   window.addEventListener('load', () => { tryPlayStartScreenMusic(); }, { once: true });
   window.addEventListener('pageshow', () => { tryPlayStartScreenMusic(); });
 
+  const START_SCREEN_MUSIC_FADE_OUT_MS = 2000;
+
   function fadeOutAndStopStartScreenMusic(ms) {
-    const t0 = performance.now();
-    const peak = Math.max(0, startScreenOuterEl.volume);
-    function tick() {
-      const t = Math.min(1, (performance.now() - t0) / ms);
-      const v = peak * (1 - t);
-      startScreenOuterEl.volume = v;
-      if (t < 1) requestAnimationFrame(tick);
-      else stopStartScreenMusic();
-    }
-    requestAnimationFrame(tick);
+    return new Promise((resolve) => {
+      const t0 = performance.now();
+      const peak = Math.max(0, startScreenOuterEl.volume);
+      function tick() {
+        const t = Math.min(1, (performance.now() - t0) / ms);
+        const v = peak * (1 - t);
+        startScreenOuterEl.volume = v;
+        if (t < 1) requestAnimationFrame(tick);
+        else {
+          stopStartScreenMusic();
+          resolve();
+        }
+      }
+      requestAnimationFrame(tick);
+    });
   }
 
   function stopStartScreenMusic() {
@@ -5847,12 +5886,12 @@ const _origAnimate = animate;
   }
 
   /**
-   * Begin in-game music in the same user-activation turn as the start click.
-   * Title music keeps playing through the start-screen dismiss; we fade it out
-   * afterward so the first track is not cut off the instant the user continues.
+   * Same user-activation turn as the start click: start the solar track at 0 volume
+   * so autoplay policy is satisfied. The audible 5s ramp begins only after gate
+   * music finishes its 2s fade-out (see fadeOutAndStopStartScreenMusic below).
    */
   function handoffFromStartScreenToGameMusic() {
-    solarSystemAudio.unlock();
+    solarSystemAudio.primeActiveDestinationAudioAfterGesture();
   }
 
   /** First real gesture must start audio on strict browsers; capture runs before dismiss handlers. */
@@ -5979,7 +6018,8 @@ const _origAnimate = animate;
     handoffFromStartScreenToGameMusic();
   });
   await dismissStartScreen();
-  fadeOutAndStopStartScreenMusic(3200);
+  await fadeOutAndStopStartScreenMusic(START_SCREEN_MUSIC_FADE_OUT_MS);
+  solarSystemAudio.beginActiveDestinationFadeIn();
   await run();
 })();
 
