@@ -255,6 +255,11 @@ body.sun-radial-edit-active #ui {
   visibility: hidden !important;
   pointer-events: none !important;
 }
+body.mode-planet-view #ui {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 
 /* ══════════════════════════════════════════════════════════════════
    PC / DESKTOP — wide layouts, original spacing (769px and wider)
@@ -4662,6 +4667,7 @@ function setCamMode(mode) {
     solGalaxyMenuRevealed = true;
   }
   cameraMode = mode;
+  document.body.classList.toggle('mode-planet-view', mode === 'planet');
   if (mode === 'sun') {
     sunRadialDismissed = false;
   }
