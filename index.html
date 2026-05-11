@@ -40,7 +40,13 @@ body {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
-canvas { display: block; touch-action: none; }
+canvas {
+  display: block;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 1.05s cubic-bezier(0.22, 1, 0.36, 1) 120ms;
+}
+body.scene-visible canvas { opacity: 1; }
 ::selection { background: transparent; color: inherit; }
 
 /* Splash: same structure on all viewports; font sizes tuned per breakpoint */
@@ -1308,6 +1314,7 @@ const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 // Sun-view orbit state
 let orbitTheta = -0.3, orbitPhi = 0.92, orbitZoom = 3.0;
 let zoomTarget = null; // when set, animate loop log-lerps orbitZoom toward it
+let introZoomProfile = null; // custom speed curve used only for splash intro zoom
 let dTheta = 0, dPhi = 0;
 
 // Planet-view orbit state (separate angles so each view remembers its position)
@@ -4010,9 +4017,24 @@ function animate() {
     if (Math.abs(logCur - logTgt) < 0.005) {
       orbitZoom = zoomTarget;
       zoomTarget = null;
+      introZoomProfile = null;
     } else {
-      orbitZoom = Math.exp(logCur + (logTgt - logCur) * 0.008);
+      let zoomLerp = 0.008;
+      if (introZoomProfile) {
+        if (Math.abs(logTgt - introZoomProfile.targetLog) < 1e-6) {
+          // Intro request: ease in slower, stay calm mid-way, then finish faster.
+          const span = Math.max(1e-5, introZoomProfile.startLog - introZoomProfile.targetLog);
+          const progress = Math.max(0, Math.min(1, (introZoomProfile.startLog - logCur) / span));
+          const accel = Math.pow(progress, 3.2);
+          zoomLerp = 0.0048 + accel * 0.023;
+        } else {
+          introZoomProfile = null;
+        }
+      }
+      orbitZoom = Math.exp(logCur + (logTgt - logCur) * zoomLerp);
     }
+  } else if (introZoomProfile) {
+    introZoomProfile = null;
   }
 
   // Smooth scale lerp (camera/universe view only; objects keep real size)
@@ -4450,6 +4472,8 @@ const _origAnimate = animate;
   const faceEl  = document.getElementById('s-face');
   const INTRO_ZOOM_EPSILON = 0.02;
   const INTRO_ZOOM_TIMEOUT_MS = 9000;
+  const INTRO_ZOOM_OVERLAP_MS = 260;
+  const SPLASH_FADE_MS = 1250;
 
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
   async function waitForIntroZoom() {
@@ -4498,12 +4522,19 @@ const _origAnimate = animate;
     faceEl.style.filter     = 'blur(18px) brightness(8)';
     await wait(900);
 
-    // ── Phase 5: Fade splash — zoom starts HERE so the user's first view
-    //    of the 3D scene is from 4000× and they watch it zoom in. ────────
-    zoomTarget = SYSTEM_FIT_ZOOM;   // log-lerp fires from this exact frame onward
-    splash.style.transition = 'opacity 0.9s ease';
+    // ── Phase 5: Start zoom slightly before splash fade so motion overlaps fade.
+    introZoomProfile = {
+      startLog: Math.log(Math.max(orbitZoom, 1e-6)),
+      targetLog: Math.log(SYSTEM_FIT_ZOOM),
+    };
+    zoomTarget = SYSTEM_FIT_ZOOM;
+    await wait(INTRO_ZOOM_OVERLAP_MS);
+
+    // Reveal 3D scene with a soft fade while splash fades out.
+    document.body.classList.add('scene-visible');
+    splash.style.transition = `opacity ${SPLASH_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
     splash.style.opacity    = '0';
-    await wait(900);
+    await wait(SPLASH_FADE_MS);
     splash.style.display = 'none';
     await waitForIntroZoom();
     document.body.classList.remove('hud-hidden');
