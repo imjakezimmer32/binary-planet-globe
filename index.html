@@ -3893,14 +3893,34 @@ function applySunOrbitFromSliders() {
   updateSunOrbitSliderLabels();
 }
 
+function finalizePlanetSizeAfterRadialDrag() {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp) return;
+  const snapped = quantizePlanetEditValue('size', clampPlanetEditValue('size', mp.obj.state.size));
+  mp.obj.state.size = snapped;
+  if (mp.isBinary) {
+    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    refreshBinaryPairForMassChange(mass1Now, mass2Now);
+    binaryPrevMass1 = mass1Now;
+    binaryPrevMass2 = mass2Now;
+  }
+  syncPlanetDialValues(mp);
+  syncPlanetEditReadouts(mp);
+}
+
 function applyPlanetEditSetting(setting, rawValue) {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   if (!mp) return;
-  const nextValue = quantizePlanetEditValue(setting, clampPlanetEditValue(setting, rawValue));
+  const inRadialSizeDrag = setting === 'size' && planetRadialState.dragSetting === 'size';
+  const nextValue = inRadialSizeDrag
+    ? clampPlanetEditValue(setting, rawValue)
+    : quantizePlanetEditValue(setting, clampPlanetEditValue(setting, rawValue));
   if (setting === 'size') {
     mp.obj.state.size = nextValue;
-    if (mp.isBinary) {
+    if (mp.isBinary && !inRadialSizeDrag) {
       const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
       const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
       refreshBinaryPairForMassChange(mass1Now, mass2Now);
@@ -3919,6 +3939,7 @@ function applyPlanetEditSetting(setting, rawValue) {
 }
 
 function hidePlanetRadialEditor() {
+  const wasSizeRadialDrag = planetRadialState.dragSetting === 'size';
   if (planetRadialEditorEl) planetRadialEditorEl.style.display = 'none';
   planetRadialState.visible = false;
   planetRadialState.dragSetting = null;
@@ -3931,6 +3952,7 @@ function hidePlanetRadialEditor() {
   planetRadialState.ringLockSelectionIdx = null;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
+  if (wasSizeRadialDrag) finalizePlanetSizeAfterRadialDrag();
 }
 
 function updatePlanetRadialKnobPositions(mp) {
@@ -4501,11 +4523,11 @@ if (planetRadialEditorEl) {
     if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
     e.preventDefault();
     updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
-    updatePlanetSelectionEditor();
   };
   const onKnobUp = e => {
     if (planetRadialState.dragPointerId !== e.pointerId) return;
     e.preventDefault();
+    const endedSetting = planetRadialState.dragSetting;
     planetRadialState.dragSetting = null;
     planetRadialState.dragPointerId = null;
     planetRadialState.dragPointerStartDeg = null;
@@ -4516,6 +4538,7 @@ if (planetRadialEditorEl) {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
     updatePlanetRadialFocusVisuals();
+    if (endedSetting === 'size') finalizePlanetSizeAfterRadialDrag();
   };
   Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
     if (!knob) return;
@@ -4565,7 +4588,6 @@ if (sunRadialEditorEl) {
     if (sunRadialState.dragPointerId !== e.pointerId || !sunRadialState.dragSetting) return;
     e.preventDefault();
     updateSunSettingFromPointer(e.clientX, e.clientY, sunRadialState.dragSetting);
-    updateSunSelectionEditor();
   };
   const onSunKnobUp = e => {
     if (sunRadialState.dragPointerId !== e.pointerId) return;
@@ -4775,10 +4797,14 @@ function animate() {
     const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(simWarp) * 6)));
     const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
     const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const deferBinarySizeRadial =
+      planetRadialState.dragSetting === 'size' &&
+      selectedPlanetIdx !== null &&
+      !!managedPlanets[selectedPlanetIdx]?.isBinary;
     const massesChanged =
       Math.abs(mass1 - binaryPrevMass1) > 1e-8 ||
       Math.abs(mass2 - binaryPrevMass2) > 1e-8;
-    if (massesChanged) {
+    if (massesChanged && !deferBinarySizeRadial) {
       refreshBinaryPairForMassChange(mass1, mass2);
       binaryPrevMass1 = mass1;
       binaryPrevMass2 = mass2;
