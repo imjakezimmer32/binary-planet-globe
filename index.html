@@ -2639,8 +2639,9 @@ function blendPalette(wet) {
   ]);
 }
 
-function colorizeGlobe(geo, baseR, ps, wl) {
+function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
   // ps = peakScale, wl = waterLevel — explicit per-planet, not global
+  planetSeed = planetSeed == null ? 0 : planetSeed;
   ps = Math.max(ps, 0.001);
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
@@ -2664,10 +2665,15 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const LAVA_RED_HOT = [0.96, 0.14, 0.05];
   const LAVA_RED_MID = [0.78, 0.09, 0.04];
   const LAVA_RED_DEEP = [0.42, 0.05, 0.03];
+  const LAVA_CRUST_DARK = [0.075, 0.058, 0.056];
   const LAVA_YELLOW = [1.00, 0.88, 0.18];
   const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
   const landShoreBand = shoreBand * 1.55;
   const lavaBand = shoreBand * 1.08;
+  // Lava crust patches: angular scale from radius; strength grows with slider (bigger lava seas).
+  const lavaCrustSeed = planetSeed * 0.314 + 7.11;
+  const lavaPatchFreq = 3.9 / Math.max(baseR, 0.11);
+  const lavaSpotStrength = 0.40 + Math.min(liquidStrength / 0.32, 1) * 0.62;
 
   function mix3(a, b, t) {
     const k = Math.max(0, Math.min(1, t));
@@ -2752,12 +2758,36 @@ function colorizeGlobe(geo, baseR, ps, wl) {
         } else {
           c = mix3(LAVA_RED_MID, LAVA_BLACK, (shoreT - 0.70) / 0.30);
         }
+
+        const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+        const invR = rr > 1e-8 ? 1 / rr : 1;
+        const nx = px * invR, ny = py * invR, nz = pz * invR;
+        const fWide = lavaPatchFreq * (0.78 + liquidStrength * 0.28);
+        const fTight = fWide * 2.9;
+        const nWide = noise3(
+          nx * fWide + lavaCrustSeed,
+          ny * fWide + lavaCrustSeed * 1.07,
+          nz * fWide + lavaCrustSeed * 0.93
+        );
+        const nTight = noise3(
+          nx * fTight + lavaCrustSeed + 2.1,
+          ny * fTight + lavaCrustSeed - 1.4,
+          nz * fTight + lavaCrustSeed + 0.55
+        );
+        const nBlend = nWide * 0.68 + nTight * 0.32;
+        const spotMask = Math.max(0, Math.min(1, (-0.20 - nBlend) / 0.58));
+        const spotShape = Math.pow(spotMask, 1.38);
+        const inDeepLava = Math.pow(1 - shoreT, 0.72 + liquidStrength * 0.28);
+        const spotAmt = Math.min(1, spotShape * inDeepLava * lavaSpotStrength * 0.62);
+        c = mix3(c, LAVA_CRUST_DARK, spotAmt);
+        c = mix3(c, LAVA_RED_DEEP, spotAmt * 0.26);
+
         col[i*3] = c[0];
         col[i*3+1] = c[1];
         col[i*3+2] = c[2];
 
-        const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
         // Double additive red polygon shells: inner crimson sheet + outer hot rim.
+        const glowDim = 1 - spotAmt * 0.68;
         const innerGlow = mix3(
           [0.30, 0.03, 0.02],
           [0.98, 0.16, 0.07],
@@ -2769,9 +2799,9 @@ function colorizeGlobe(geo, baseR, ps, wl) {
           Math.pow(1 - shoreT, 0.88)
         );
         lavaGlowInnerPos.push(px, py, pz);
-        lavaGlowInnerCol.push(innerGlow[0], innerGlow[1], innerGlow[2]);
+        lavaGlowInnerCol.push(innerGlow[0] * glowDim, innerGlow[1] * glowDim, innerGlow[2] * glowDim);
         lavaGlowOuterPos.push(px, py, pz);
-        lavaGlowOuterCol.push(outerGlow[0], outerGlow[1], outerGlow[2]);
+        lavaGlowOuterCol.push(outerGlow[0] * glowDim, outerGlow[1] * glowDim, outerGlow[2] * glowDim);
       }
       continue;
     } else {
@@ -2830,7 +2860,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 
     const idxGeo  = buildGlobe(baseR, buildDetail, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
-    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl);
+    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, seed);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
