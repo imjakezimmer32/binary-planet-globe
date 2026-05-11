@@ -13,9 +13,9 @@ You only need **one** of these. If you turn on both, Cloudflare may run **two** 
 
 1. In GitHub: **Settings → Secrets and variables → Actions**
 2. Add secret **`CLOUDFLARE_API_TOKEN`** (Cloudflare API token with permission to edit Pages).
-3. Push to **`main`**. The workflow in `.github/workflows/deploy-cloudflare-pages.yml` runs `wrangler pages deploy` using `wrangler.jsonc` (project `astrabound`, static files from the repo root).
+3. Push to **`main`**. The workflow in `.github/workflows/deploy-cloudflare-pages.yml` runs `wrangler pages deploy --project-name astrabound --branch main` (static files from the repo root).
 
-Production URL (example): `https://astrabound-4ov.pages.dev/`.
+Production URL: **https://astrabound-4ov.pages.dev/** — this is the `*.pages.dev` host for the Cloudflare Pages project named **`astrabound`**. Keep that project name in Wrangler and CI so deploys always hit this URL.
 
 ### Option B — Cloudflare “connect Git” (builds on Cloudflare)
 
