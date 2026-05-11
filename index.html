@@ -246,10 +246,11 @@ input[type=range]::-webkit-slider-thumb {
 #planet-edit-panel {
   padding: 8px 10px 11px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  display: flex;
+  display: none !important;
   flex-direction: column;
   gap: 8px;
   background: rgba(0, 0, 0, 0.22);
+  pointer-events: none !important;
 }
 .pe-row {
   display: flex;
@@ -837,10 +838,11 @@ input[type=range]::-moz-range-thumb {
   padding: 10px 12px 12px;
   border-top: 1px solid rgba(120, 214, 255, 0.18);
   gap: 8px;
-  display: flex;
+  display: none !important;
   flex-direction: column;
   flex-shrink: 0;
   background: rgba(8, 14, 24, 0.66);
+  pointer-events: none !important;
 }
 .pe-lbl {
   font-size: 9px;
@@ -3249,7 +3251,7 @@ const planetRadialState = {
   knobRadius: 95,
   dragSetting: null,
   dragPointerId: null,
-  sideMountGap: 32,
+  sideMountGap: 22,
 };
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
@@ -3364,6 +3366,9 @@ function setPlanetRadialGuide(setting) {
 
 function updatePlanetRadialFocusVisuals() {
   const active = planetRadialState.dragSetting;
+  if (planetRadialRingEl) {
+    planetRadialRingEl.style.opacity = active ? '0.92' : '0.78';
+  }
   Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
     if (!knob) return;
     knob.classList.toggle('active', active === setting);
@@ -3426,11 +3431,11 @@ function updatePlanetRadialKnobPositions(mp) {
   if (!planetRadialEditorEl || !mp) return;
   const r = planetRadialState.knobRadius;
   const active = planetRadialState.dragSetting;
-  const sideX = r + planetRadialState.sideMountGap;
+  const sideX = Math.max(r + planetRadialState.sideMountGap, planetRadialState.knobRadius + 16);
   const sideYOffset = {
-    size: -r * 0.48,
+    size: -r * 0.52,
     peak: 0,
-    water: r * 0.48,
+    water: r * 0.52,
   };
   ['size', 'peak', 'water'].forEach(setting => {
     const knob = planetRadialKnobEls[setting];
@@ -3496,6 +3501,10 @@ function updatePlanetSelectionEditor() {
   const vh = window.innerHeight;
   const cx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const cy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+    hidePlanetRadialEditor();
+    return;
+  }
 
   camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
   _planetEditorEdgeWorld.copy(_planetEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
@@ -3514,7 +3523,8 @@ function updatePlanetSelectionEditor() {
   planetRadialState.visible = true;
   planetRadialState.centerX = cx;
   planetRadialState.centerY = cy;
-  planetRadialState.knobRadius = ringSize * 0.56;
+  planetRadialState.knobRadius = ringSize * 0.5;
+  planetRadialState.sideMountGap = Math.max(16, ringSize * 0.1);
   syncPlanetEditReadouts(mp);
   updatePlanetRadialKnobPositions(mp);
 }
