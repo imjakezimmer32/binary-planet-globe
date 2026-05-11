@@ -2489,14 +2489,18 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const liquidStrength = liquid.strength;
   const liquidR = liquid.liquidR;
   const liquidEps = hasLiquid ? liquidR * 0.0018 : 0;
-  const lavaGlowPos = [];
-  const lavaGlowCol = [];
+  const lavaGlowInnerPos = [];
+  const lavaGlowInnerCol = [];
+  const lavaGlowOuterPos = [];
+  const lavaGlowOuterCol = [];
   const WATER_DEEP = [0.06, 0.46, 0.56];
   const WATER_AQUA = [0.20, 0.78, 0.76];
   const WATER_SAND = [0.84, 0.75, 0.50];
   const LAND_SAND = [0.87, 0.78, 0.55];
   const LAVA_BLACK = [0.08, 0.08, 0.09];
-  const LAVA_RED = [0.82, 0.10, 0.04];
+  const LAVA_RED_HOT = [0.96, 0.14, 0.05];
+  const LAVA_RED_MID = [0.78, 0.09, 0.04];
+  const LAVA_RED_DEEP = [0.42, 0.05, 0.03];
   const LAVA_YELLOW = [1.00, 0.88, 0.18];
   const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
   const landShoreBand = shoreBand * 1.55;
@@ -2572,21 +2576,39 @@ function colorizeGlobe(geo, baseR, ps, wl) {
       }
       continue;
     } else if (isLiquidFace && hasLava) {
-      // Lava gradient: yellow core -> red ring -> dark shoreline crust.
+      // Lava: yellow core -> hot red -> deep red -> dark crust (extra red in the mid bands).
       for (let v = 0; v < 3; v++) {
         const i = faceIdx[v];
         const rr = faceR[v];
         const shoreT = Math.max(0, Math.min(1, (rr - liquidR) / lavaBand));
-        const c = shoreT < 0.52
-          ? mix3(LAVA_YELLOW, LAVA_RED, shoreT / 0.52)
-          : mix3(LAVA_RED, LAVA_BLACK, (shoreT - 0.52) / 0.48);
+        let c;
+        if (shoreT < 0.36) {
+          c = mix3(LAVA_YELLOW, LAVA_RED_HOT, shoreT / 0.36);
+        } else if (shoreT < 0.70) {
+          c = mix3(LAVA_RED_HOT, LAVA_RED_MID, (shoreT - 0.36) / 0.34);
+        } else {
+          c = mix3(LAVA_RED_MID, LAVA_BLACK, (shoreT - 0.70) / 0.30);
+        }
         col[i*3] = c[0];
         col[i*3+1] = c[1];
         col[i*3+2] = c[2];
 
-        const glow = mix3([0.44, 0.08, 0.04], [0.92, 0.74, 0.22], Math.pow(1 - shoreT, 0.72));
-        lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-        lavaGlowCol.push(glow[0], glow[1], glow[2]);
+        const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+        // Double additive red polygon shells: inner crimson sheet + outer hot rim.
+        const innerGlow = mix3(
+          [0.30, 0.03, 0.02],
+          [0.98, 0.16, 0.07],
+          Math.pow(1 - shoreT, 0.62)
+        );
+        const outerGlow = mix3(
+          [0.48, 0.05, 0.03],
+          [1.0, 0.42, 0.12],
+          Math.pow(1 - shoreT, 0.88)
+        );
+        lavaGlowInnerPos.push(px, py, pz);
+        lavaGlowInnerCol.push(innerGlow[0], innerGlow[1], innerGlow[2]);
+        lavaGlowOuterPos.push(px, py, pz);
+        lavaGlowOuterCol.push(outerGlow[0], outerGlow[1], outerGlow[2]);
       }
       continue;
     } else {
@@ -2612,7 +2634,10 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return {
-    lavaGlow: lavaGlowPos.length > 0 ? { positions: lavaGlowPos, colors: lavaGlowCol } : null
+    lavaGlow: lavaGlowInnerPos.length > 0 ? [
+      { positions: lavaGlowInnerPos, colors: lavaGlowInnerCol, scale: 1.0025, opacity: 0.46 },
+      { positions: lavaGlowOuterPos, colors: lavaGlowOuterCol, scale: 1.0049, opacity: 0.34 }
+    ] : null
   };
 }
 
@@ -2655,27 +2680,29 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
     terrain.renderOrder = 0;
-    const lavaGlow = (() => {
+    const lavaGlowMeshes = (() => {
       if (!colorMeta?.lavaGlow) return null;
-      const glowGeo = new THREE.BufferGeometry();
-      glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(colorMeta.lavaGlow.positions, 3));
-      glowGeo.setAttribute('color', new THREE.Float32BufferAttribute(colorMeta.lavaGlow.colors, 3));
-      const glowMat = new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.42,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        depthTest: true,
-        side: THREE.DoubleSide
+      const layers = Array.isArray(colorMeta.lavaGlow) ? colorMeta.lavaGlow : [colorMeta.lavaGlow];
+      return layers.map((layer, li) => {
+        const glowGeo = new THREE.BufferGeometry();
+        glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(layer.positions, 3));
+        glowGeo.setAttribute('color', new THREE.Float32BufferAttribute(layer.colors, 3));
+        const glowMat = new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: layer.opacity != null ? layer.opacity : 0.42,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: true,
+          side: THREE.DoubleSide
+        });
+        const glowMesh = new THREE.Mesh(glowGeo, glowMat);
+        glowGeo.computeBoundingSphere();
+        glowMesh.scale.setScalar(layer.scale != null ? layer.scale : 1.0032);
+        glowMesh.frustumCulled = false;
+        glowMesh.renderOrder = 1 + li * 0.02;
+        return glowMesh;
       });
-      const glowMesh = new THREE.Mesh(glowGeo, glowMat);
-      glowGeo.computeBoundingSphere();
-      glowMesh.scale.setScalar(1.0032);
-      // Avoid long-range culling glitches on thin additive geometry.
-      glowMesh.frustumCulled = false;
-      glowMesh.renderOrder = 1;
-      return glowMesh;
     })();
 
     const wire = new THREE.LineSegments(
@@ -2697,7 +2724,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     atmo.renderOrder = 3;
 
     built = [depthBack, terrain];
-    if (lavaGlow) built.push(lavaGlow);
+    if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
     built.push(wire, atmo);
     pickables = [terrain];
     spin.add(...built);
