@@ -17,7 +17,7 @@ In `index.html`, each entry in `GALAXY_DESTINATIONS` can include:
 | `audioVolume` | Optional, `0`–`1` (default in code if omitted). |
 | `audioLoop` | Optional; default `true` for ambient music. |
 
-Tracks are **preloaded** when the page loads. Playback follows autoplay rules: music starts after the first tap/key on the start screen, and **ramps in** over 5s when you arrive at a system with a track, **ramps out** over 5s when you leave or while in transit. (Constants: `SOLAR_AUDIO_FADE_MS` in `index.html`.)
+Volume is controlled with the **Web Audio API** (`GainNode`), not `HTMLAudioElement.volume`, so **5s fade in/out work on iOS Safari** (which ignores element volume).
 
 ## Suggested formats
 

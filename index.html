@@ -5154,7 +5154,11 @@ const GALAXY_DESTINATIONS = [
 /** Fade duration when entering/leaving a system's music (linear gain ramp). */
 const SOLAR_AUDIO_FADE_MS = 5000;
 
-/** One HTMLAudioElement per destination index (null = no music). Preloads immediately; play() after user unlock. */
+/** Web Audio context for fades — HTMLAudioElement.volume is ignored on iOS Safari; GainNode still works. */
+const SolarAudioContext = window.AudioContext || window.webkitAudioContext;
+const solarAudioCtx = SolarAudioContext ? new SolarAudioContext() : null;
+
+/** One player per destination index (null = no music). Preloads immediately; play() after user unlock. */
 const solarSystemAudio = (function createSolarSystemAudio(destinations) {
   const peakVolumes = new Array(destinations.length).fill(0);
   const players = destinations.map((d, i) => {
@@ -5166,9 +5170,35 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     const el = new Audio(d.audioSrc);
     el.preload = 'auto';
     el.loop = d.audioLoop !== false;
-    el.volume = 0;
-    return el;
+    el.volume = 1; // attenuate only via GainNode so fades work on iOS
+
+    let gain = null;
+    if (solarAudioCtx) {
+      try {
+        const src = solarAudioCtx.createMediaElementSource(el);
+        gain = solarAudioCtx.createGain();
+        gain.gain.value = 0;
+        src.connect(gain).connect(solarAudioCtx.destination);
+      } catch (e) {
+        el.volume = 0;
+      }
+    } else {
+      el.volume = 0;
+    }
+
+    return { el, gain };
   });
+
+  function getGain(p) {
+    if (!p) return 0;
+    return p.gain ? p.gain.gain.value : p.el.volume;
+  }
+  function setGain(p, v) {
+    const x = Math.min(1, Math.max(0, v));
+    if (p.gain) p.gain.gain.value = x;
+    else p.el.volume = x;
+  }
+
   const prevWantOn = destinations.map(() => false);
   /** @type {({ kind: 'in', t0: number, v0: number } | { kind: 'out', t0: number, v0: number } | null)[]} */
   const fadeState = destinations.map(() => null);
@@ -5179,25 +5209,25 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     const now = performance.now();
     let needsNext = false;
     for (let i = 0; i < players.length; i++) {
-      const a = players[i];
+      const p = players[i];
       const st = fadeState[i];
-      if (!a || !st) continue;
+      if (!p || !st) continue;
       const peak = peakVolumes[i];
       const elapsed = now - st.t0;
-      const p = Math.min(1, elapsed / SOLAR_AUDIO_FADE_MS);
+      const t = Math.min(1, elapsed / SOLAR_AUDIO_FADE_MS);
       if (st.kind === 'in') {
-        a.volume = st.v0 + (peak - st.v0) * p;
-        if (p < 1) needsNext = true;
+        setGain(p, st.v0 + (peak - st.v0) * t);
+        if (t < 1) needsNext = true;
         else {
-          a.volume = peak;
+          setGain(p, peak);
           fadeState[i] = null;
         }
       } else {
-        a.volume = st.v0 * (1 - p);
-        if (p < 1) needsNext = true;
+        setGain(p, st.v0 * (1 - t));
+        if (t < 1) needsNext = true;
         else {
-          a.volume = 0;
-          a.pause();
+          setGain(p, 0);
+          p.el.pause();
           fadeState[i] = null;
         }
       }
@@ -5212,8 +5242,8 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
   function sync() {
     const activeIdx = unlocked && !isNavigating ? currentDestIndex : -1;
     for (let i = 0; i < players.length; i++) {
-      const a = players[i];
-      if (!a) continue;
+      const p = players[i];
+      if (!p) continue;
       const wantOn = activeIdx === i;
       if (wantOn === prevWantOn[i]) {
         if (fadeState[i]) ensureTick();
@@ -5222,12 +5252,13 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
       prevWantOn[i] = wantOn;
       const now = performance.now();
       if (wantOn) {
-        const pr = a.play();
+        if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
+        const pr = p.el.play();
         if (pr && typeof pr.catch === 'function') pr.catch(() => {});
-        fadeState[i] = { kind: 'in', t0: now, v0: Math.min(a.volume, peakVolumes[i]) };
+        fadeState[i] = { kind: 'in', t0: now, v0: Math.min(getGain(p), peakVolumes[i]) };
         ensureTick();
       } else {
-        fadeState[i] = { kind: 'out', t0: now, v0: a.volume };
+        fadeState[i] = { kind: 'out', t0: now, v0: getGain(p) };
         ensureTick();
       }
     }
@@ -5237,6 +5268,7 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     /** Call after first user gesture so autoplay policy allows music. */
     unlock() {
       unlocked = true;
+      if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
       sync();
     },
   };
