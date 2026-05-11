@@ -1,0 +1,8 @@
+# Ask browsers and intermediaries to always revalidate the shell document
+# so a deploy is visible consistently across browsers (avoids “stale tab”
+# behavior where one browser still shows an old cached copy).
+/
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
