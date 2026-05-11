@@ -3635,6 +3635,8 @@ const planetRadialState = {
   dragPointerStartDeg: null,
   /** Arc angle (deg) that matches the planet value when the drag began */
   dragValueStartDeg: null,
+  dragLastPointerDeg: null,
+  dragAngleAccum: 0,
   /** Frozen HTML ring diameter (px) while editing this selection so size edits do not resize the UI */
   ringSizePxLock: null,
   ringLockSelectionIdx: null,
@@ -3660,6 +3662,8 @@ const sunRadialState = {
   dragPointerId: null,
   dragPointerStartDeg: null,
   dragValueStartDeg: null,
+  dragLastPointerDeg: null,
+  dragAngleAccum: 0,
 };
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
@@ -3731,6 +3735,47 @@ function planetEditAngleSpan(cfg) {
   return raw >= 0 ? raw : raw + 360;
 }
 
+function radialCircDist(a, b) {
+  const d = Math.abs(a - b);
+  return Math.min(d, 360 - d);
+}
+
+/** Widen min/max plateaus so slight overshoot at arc ends does not snap to the opposite value */
+function softenRadialT(t) {
+  const m = 0.085;
+  if (t <= m) return 0;
+  if (t >= 1 - m) return 1;
+  return (t - m) / (1 - 2 * m);
+}
+
+/** Fold an unwrapped screen angle (deg) onto the configured arc for stable t mapping */
+function foldAngleIntoCfgArc(cfg, deg, getSpan) {
+  const span = getSpan(cfg);
+  const s = cfg.arcStart;
+  const e = cfg.arcEnd;
+  if (e >= s) {
+    let a = deg;
+    for (let i = 0; i < 48; i++) {
+      if (a >= s && a <= e) return a;
+      if (a < s) a += 360;
+      else a -= 360;
+    }
+    const raw = ((deg % 360) + 360) % 360;
+    return Math.max(s, Math.min(e, raw));
+  }
+  const hi = s + span;
+  let a = deg;
+  for (let i = 0; i < 48; i++) {
+    if (a >= s && a <= hi) return a;
+    if (a < s) a += 360;
+    else a -= 360;
+  }
+  const raw = ((deg % 360) + 360) % 360;
+  if (raw >= s) return raw;
+  if (raw <= e) return raw + 360;
+  return radialCircDist(raw, s) <= radialCircDist(raw, e) ? s : e + 360;
+}
+
 function planetEditTToAngle(setting, t) {
   const cfg = PLANET_EDIT_CONFIG[setting];
   if (!cfg) return 0;
@@ -3742,10 +3787,8 @@ function planetEditAngleToT(setting, deg) {
   const cfg = PLANET_EDIT_CONFIG[setting];
   if (!cfg) return 0;
   const span = planetEditAngleSpan(cfg);
-  let start = cfg.arcStart;
-  let angle = ((deg % 360) + 360) % 360;
-  if (cfg.arcEnd < cfg.arcStart && angle < start) angle += 360;
-  return Math.max(0, Math.min(1, (angle - start) / Math.max(1e-5, span)));
+  const angle = foldAngleIntoCfgArc(cfg, deg, planetEditAngleSpan);
+  return Math.max(0, Math.min(1, (angle - cfg.arcStart) / Math.max(1e-5, span)));
 }
 
 function valueFromPlanetSetting(mp, setting) {
@@ -3882,6 +3925,8 @@ function hidePlanetRadialEditor() {
   planetRadialState.dragPointerId = null;
   planetRadialState.dragPointerStartDeg = null;
   planetRadialState.dragValueStartDeg = null;
+  planetRadialState.dragLastPointerDeg = null;
+  planetRadialState.dragAngleAccum = 0;
   planetRadialState.ringSizePxLock = null;
   planetRadialState.ringLockSelectionIdx = null;
   document.body.classList.remove('radial-edit-active');
@@ -4001,11 +4046,16 @@ function updatePlanetSettingFromPointer(clientX, clientY, setting) {
   const dy = clientY - planetRadialState.centerY;
   if (dx * dx + dy * dy < 25) return;
   const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
-  let deg = pointerDeg;
+  let deg;
   if (planetRadialState.dragPointerStartDeg !== null && planetRadialState.dragValueStartDeg !== null) {
-    deg = (pointerDeg - planetRadialState.dragPointerStartDeg + planetRadialState.dragValueStartDeg + 360) % 360;
+    const step = ((pointerDeg - planetRadialState.dragLastPointerDeg + 540) % 360) - 180;
+    planetRadialState.dragLastPointerDeg = pointerDeg;
+    planetRadialState.dragAngleAccum += step;
+    deg = planetRadialState.dragValueStartDeg + planetRadialState.dragAngleAccum;
+  } else {
+    deg = pointerDeg;
   }
-  const t = planetEditAngleToT(setting, deg);
+  const t = softenRadialT(planetEditAngleToT(setting, deg));
   const value = cfg.min + t * (cfg.max - cfg.min);
   applyPlanetEditSetting(setting, value);
 }
@@ -4024,10 +4074,8 @@ function sunEditAngleToT(setting, deg) {
   const cfg = SUN_EDIT_CONFIG[setting];
   if (!cfg) return 0;
   const span = sunArcSpan(cfg);
-  let start = cfg.arcStart;
-  let angle = ((deg % 360) + 360) % 360;
-  if (cfg.arcEnd < cfg.arcStart && angle < start) angle += 360;
-  return Math.max(0, Math.min(1, (angle - start) / Math.max(1e-5, span)));
+  const angle = foldAngleIntoCfgArc(cfg, deg, sunArcSpan);
+  return Math.max(0, Math.min(1, (angle - cfg.arcStart) / Math.max(1e-5, span)));
 }
 function valueFromSunSetting(setting) {
   if (setting === 'scale') return targetScale;
@@ -4107,6 +4155,8 @@ function hideSunRadialEditor() {
   sunRadialState.dragPointerId = null;
   sunRadialState.dragPointerStartDeg = null;
   sunRadialState.dragValueStartDeg = null;
+  sunRadialState.dragLastPointerDeg = null;
+  sunRadialState.dragAngleAccum = 0;
   document.body.classList.remove('sun-radial-edit-active');
   sunSelectionHalo.visible = false;
   sunSelectionRing.visible = false;
@@ -4208,11 +4258,16 @@ function updateSunSettingFromPointer(clientX, clientY, setting) {
   const dy = clientY - sunRadialState.centerY;
   if (dx * dx + dy * dy < 25) return;
   const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
-  let deg = pointerDeg;
+  let deg;
   if (sunRadialState.dragPointerStartDeg !== null && sunRadialState.dragValueStartDeg !== null) {
-    deg = (pointerDeg - sunRadialState.dragPointerStartDeg + sunRadialState.dragValueStartDeg + 360) % 360;
+    const step = ((pointerDeg - sunRadialState.dragLastPointerDeg + 540) % 360) - 180;
+    sunRadialState.dragLastPointerDeg = pointerDeg;
+    sunRadialState.dragAngleAccum += step;
+    deg = sunRadialState.dragValueStartDeg + sunRadialState.dragAngleAccum;
+  } else {
+    deg = pointerDeg;
   }
-  const t = sunEditAngleToT(setting, deg);
+  const t = softenRadialT(sunEditAngleToT(setting, deg));
   const value = cfg.min + t * (cfg.max - cfg.min);
   applySunEditSetting(setting, value);
 }
@@ -4430,9 +4485,13 @@ if (planetRadialEditorEl) {
       const dx = e.clientX - planetRadialState.centerX;
       const dy = e.clientY - planetRadialState.centerY;
       planetRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      planetRadialState.dragLastPointerDeg = planetRadialState.dragPointerStartDeg;
+      planetRadialState.dragAngleAccum = 0;
     } else {
       planetRadialState.dragPointerStartDeg = null;
       planetRadialState.dragValueStartDeg = null;
+      planetRadialState.dragLastPointerDeg = null;
+      planetRadialState.dragAngleAccum = 0;
     }
     updatePlanetRadialFocusVisuals();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
@@ -4451,6 +4510,8 @@ if (planetRadialEditorEl) {
     planetRadialState.dragPointerId = null;
     planetRadialState.dragPointerStartDeg = null;
     planetRadialState.dragValueStartDeg = null;
+    planetRadialState.dragLastPointerDeg = null;
+    planetRadialState.dragAngleAccum = 0;
     Object.values(planetRadialKnobEls).forEach(knob => {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
@@ -4488,9 +4549,13 @@ if (sunRadialEditorEl) {
       const dx = e.clientX - sunRadialState.centerX;
       const dy = e.clientY - sunRadialState.centerY;
       sunRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      sunRadialState.dragLastPointerDeg = sunRadialState.dragPointerStartDeg;
+      sunRadialState.dragAngleAccum = 0;
     } else {
       sunRadialState.dragPointerStartDeg = null;
       sunRadialState.dragValueStartDeg = null;
+      sunRadialState.dragLastPointerDeg = null;
+      sunRadialState.dragAngleAccum = 0;
     }
     updateSunRadialFocusVisuals();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
@@ -4509,6 +4574,8 @@ if (sunRadialEditorEl) {
     sunRadialState.dragPointerId = null;
     sunRadialState.dragPointerStartDeg = null;
     sunRadialState.dragValueStartDeg = null;
+    sunRadialState.dragLastPointerDeg = null;
+    sunRadialState.dragAngleAccum = 0;
     Object.values(sunRadialKnobEls).forEach(knob => {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
