@@ -351,6 +351,9 @@ input[type=range]::-webkit-slider-thumb {
   letter-spacing: 0.04em;
   color: rgba(255, 255, 255, 0.92);
 }
+body.radial-edit-active #planet-panel {
+  display: none !important;
+}
 
 /* ── Galaxy navigation menu ─────────────────────────────────────── */
 #galaxy-menu {
@@ -3424,6 +3427,7 @@ function hidePlanetRadialEditor() {
   planetRadialState.visible = false;
   planetRadialState.dragSetting = null;
   planetRadialState.dragPointerId = null;
+  document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
 }
 
@@ -3481,6 +3485,7 @@ function updatePlanetSelectionEditor() {
     hidePlanetRadialEditor();
     return;
   }
+  document.body.classList.toggle('radial-edit-active', isNarrowPlanetUI());
   const radiusWorld = getPlanetCenterRadius(mp, _planetEditorCenterWorld);
   planetSelectionHalo.visible = true;
   planetSelectionHalo.position.copy(_planetEditorCenterWorld);
