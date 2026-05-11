@@ -3455,6 +3455,14 @@ function ensureSunTrail(mp) {
   mp.trail = makeTrail({ len: 280, color, opacity: 0.42 });
 }
 
+function ensureMoonTrail(mp) {
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'planet' || mp.trail) return;
+  const color = typeof mp.color === 'string' && mp.color.startsWith('#')
+    ? parseInt(mp.color.slice(1), 16)
+    : 0xffffff;
+  mp.trail = makeTrail({ len: 240, color, opacity: 0.38 });
+}
+
 function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
   const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
   const binaryBodies = managedPlanets.filter(mp => mp.isBinary);
@@ -3676,7 +3684,10 @@ function createPlanetMoonOrbit(parentIdx) {
     orbitAngle,
     parent.id
   );
-  return managedPlanets.length - 1;
+  const moonIdx = managedPlanets.length - 1;
+  ensureMoonTrail(managedPlanets[moonIdx]);
+  syncTrailVisibility();
+  return moonIdx;
 }
 
 function rebuildPlanetList() {
@@ -5019,11 +5030,18 @@ function animate() {
       cy + body[1].pos.y,
       cz + body[1].pos.z);
     managedPlanets.forEach(mp => {
-      if (mp.isBinary || mp.orbitCenter !== 'sun') return;
-      if (!mp.trail) ensureSunTrail(mp);
-      if (!mp.trail) return;
-      const p = mp.obj.pivot.position;
-      pushTrail(mp.trail, p.x, p.y, p.z);
+      if (mp.isBinary) return;
+      if (mp.orbitCenter === 'sun') {
+        if (!mp.trail) ensureSunTrail(mp);
+        if (!mp.trail) return;
+        const p = mp.obj.pivot.position;
+        pushTrail(mp.trail, p.x, p.y, p.z);
+      } else if (mp.orbitCenter === 'planet') {
+        if (!mp.trail) ensureMoonTrail(mp);
+        if (!mp.trail) return;
+        const p = mp.obj.pivot.position;
+        pushTrail(mp.trail, p.x, p.y, p.z);
+      }
     });
   }
 
@@ -5063,7 +5081,8 @@ function syncTrailVisibility() {
   linkLine.visible = showSolTrails;
   managedPlanets.forEach(mp => {
     if (!mp.trail) return;
-    mp.trail.line.visible = showSolTrails && !mp.isBinary && mp.orbitCenter === 'sun';
+    mp.trail.line.visible = showSolTrails && !mp.isBinary &&
+      (mp.orbitCenter === 'sun' || mp.orbitCenter === 'planet');
   });
   GALAXY_DESTINATIONS.forEach((dest, i) => {
     if (!dest._trail) return;
