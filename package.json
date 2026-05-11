@@ -5,7 +5,7 @@
   "description": "AstraBound — polygon space and planet simulation (Cloudflare Pages)",
   "scripts": {
     "dev": "npx serve -l 5500 .",
-    "deploy": "wrangler pages deploy . --project-name astrabound --branch main"
+    "deploy": "npx wrangler pages deploy --project-name astrabound --branch main"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
