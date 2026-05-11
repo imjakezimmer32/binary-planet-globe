@@ -53,9 +53,6 @@ canvas { display: block; touch-action: none; }
 }
 #s-hello {
   position: absolute;
-  left: 50%;
-  top: calc(50% + clamp(44px, 8vh, 92px));
-  transform: translateX(-50%);
   font-family: monospace;
   font-size: clamp(32px, 9vw, 130px);
   color: #fff;
@@ -66,22 +63,16 @@ canvas { display: block; touch-action: none; }
   white-space: nowrap;
   text-shadow: 0 0 60px rgba(255,255,255,0.4);
 }
-#s-brand {
+#s-face {
   position: absolute;
-  left: 50%;
-  top: calc(50% - clamp(14px, 2.5vh, 30px));
-  transform: translate(-50%, -50%) scale(0.9);
   font-family: monospace;
-  font-size: clamp(64px, 16vw, 190px);
+  font-size: clamp(72px, 18vw, 220px);
   color: #fff;
-  letter-spacing: 0.34em;
-  text-transform: uppercase;
-  opacity: 0;
-  transform-origin: 50% 50%;
-  will-change: transform, letter-spacing, opacity;
-  transition: opacity 0.35s ease, letter-spacing 1.1s cubic-bezier(0.21, 0.94, 0.35, 1), transform 1.1s cubic-bezier(0.21, 0.94, 0.35, 1);
-  white-space: nowrap;
-  text-shadow: 0 0 42px rgba(255,255,255,0.46);
+  letter-spacing: -0.05em;
+  opacity: 1;
+  transform-origin: 50% 42%;
+  will-change: transform, filter;
+  text-shadow: 0 0 40px rgba(255,255,255,0.5);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -789,11 +780,8 @@ input[type=range]::-moz-range-thumb {
   text-align: center;
   max-width: 92vw;
 }
-#splash #s-brand {
-  font-size: clamp(34px, 14vw, 112px);
-  max-width: 94vw;
-  text-align: center;
-  white-space: nowrap;
+#splash #s-face {
+  font-size: clamp(48px, 20vw, 160px);
 }
 
 } /* end mobile */
@@ -988,7 +976,7 @@ input[type=range]::-moz-range-thumb {
 
 <div id="splash">
   <div id="s-hello">Hello Universe</div>
-  <div id="s-brand"></div>
+  <div id="s-face"></div>
 </div>
 <div id="hint">
   <span class="hint-desktop">drag to orbit &nbsp;·&nbsp; scroll to zoom &nbsp;·&nbsp; right-drag to pan</span>
@@ -3822,71 +3810,9 @@ const _origAnimate = animate;
 (function() {
   const splash  = document.getElementById('splash');
   const helloEl = document.getElementById('s-hello');
-  const brandEl = document.getElementById('s-brand');
+  const faceEl  = document.getElementById('s-face');
 
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
-  function fitSplashBrand(maxWidthRatio = null) {
-    if (!brandEl || splash.style.display === 'none') return;
-    const ratio = maxWidthRatio ?? Number.parseFloat(brandEl.dataset.maxRatio || '0.9');
-    const maxWidthPx = Math.max(220, window.innerWidth * ratio);
-    const minPx = Math.max(24, window.innerWidth * 0.07);
-    let sizePx = Math.min(190, Math.max(minPx, window.innerWidth * 0.22));
-    let spacingEm = Number.parseFloat(brandEl.dataset.baseSpacing || '0.13');
-    brandEl.style.fontSize = `${sizePx.toFixed(1)}px`;
-    brandEl.style.letterSpacing = `${spacingEm.toFixed(3)}em`;
-    let width = brandEl.getBoundingClientRect().width;
-    let guard = 0;
-    while (width > maxWidthPx && guard < 160) {
-      if (spacingEm > 0.04) spacingEm -= 0.01;
-      else sizePx -= 1;
-      if (sizePx <= minPx) break;
-      brandEl.style.fontSize = `${sizePx.toFixed(1)}px`;
-      brandEl.style.letterSpacing = `${Math.max(0.04, spacingEm).toFixed(3)}em`;
-      width = brandEl.getBoundingClientRect().width;
-      guard += 1;
-    }
-  }
-  function setBrandText(text, baseSpacing, maxWidthRatio) {
-    brandEl.textContent = text;
-    brandEl.dataset.baseSpacing = String(baseSpacing);
-    brandEl.dataset.maxRatio = String(maxWidthRatio);
-    fitSplashBrand(maxWidthRatio);
-  }
-  function dualTypeFrame(leftPart, rightPart, step) {
-    return `A${leftPart.slice(0, step)}B${rightPart.slice(0, step)}`;
-  }
-  function getBrandMainTransition() {
-    return 'opacity 0.35s ease, letter-spacing 1.1s cubic-bezier(0.21, 0.94, 0.35, 1), transform 1.1s cubic-bezier(0.21, 0.94, 0.35, 1)';
-  }
-  async function typeFromAB(leftPart, rightPart, stepDelay = 60) {
-    const finalWord = `A${leftPart}B${rightPart}`;
-    // Fit once for the full word so each typing frame stays centered.
-    setBrandText(finalWord, 0.13, 0.9);
-    const lockedFontSize = brandEl.style.fontSize;
-    const lockedSpacing = brandEl.style.letterSpacing;
-    brandEl.style.transition = 'opacity 0.35s ease';
-    brandEl.textContent = 'AB';
-    brandEl.style.fontSize = lockedFontSize;
-    brandEl.style.letterSpacing = lockedSpacing;
-    const maxSteps = Math.max(leftPart.length, rightPart.length);
-    for (let step = 1; step <= maxSteps; step++) {
-      brandEl.textContent = dualTypeFrame(leftPart, rightPart, step);
-      brandEl.style.fontSize = lockedFontSize;
-      brandEl.style.letterSpacing = lockedSpacing;
-      await wait(stepDelay);
-    }
-    brandEl.textContent = finalWord;
-    brandEl.style.transition = getBrandMainTransition();
-  }
-  async function showSmileyBeforeZoom() {
-    setBrandText(':)', 0.16, 0.34);
-    brandEl.style.transition = 'opacity 0.35s ease, letter-spacing 0.35s ease, transform 0.62s cubic-bezier(0.34, 1.2, 0.64, 1)';
-    brandEl.style.transform = 'translate(-50%, -50%) rotate(0deg) scale(1)';
-    await wait(90);
-    brandEl.style.transform = 'translate(-50%, -50%) rotate(90deg) scale(1.06)';
-    await wait(620);
-    brandEl.style.transition = getBrandMainTransition();
-  }
 
   // Start camera very far out; the animate loop will log-lerp it to 3.0
   orbitZoom = 4000;
@@ -3894,38 +3820,47 @@ const _origAnimate = animate;
   async function run() {
     await wait(200);
 
-    // ── Phase 1: Bring in baseline title line ──────────────────────
+    // ── Phase 1: HELLO WORLD ───────────────────────────────────────
     helloEl.style.opacity = '1';
-    await wait(280);
+    await wait(1600);
+    helloEl.style.opacity = '0';
+    await wait(750);
 
-    // ── Phase 2: AB appears above Hello Universe ───────────────────
-    setBrandText('AB', 0.34, 0.56);
-    brandEl.style.opacity = '1';
-    brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
+    // ── Phase 2: Type ":)" ─────────────────────────────────────────
+    faceEl.style.transition = 'none';
+    faceEl.style.transform  = 'rotate(0deg)';
+    faceEl.style.filter     = 'none';
+    faceEl.textContent = '';
+    await wait(100);
+    faceEl.textContent = ':';
+    await wait(380);
+    faceEl.textContent = ':)';
+    await wait(900);
 
-    // ── Phase 3: Start typing immediately from both letters ─────────
-    await typeFromAB('stra', 'ound');
-    brandEl.style.transform = 'translate(-50%, -50%) scale(1.02)';
-    await wait(980);
-    brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
-    await wait(220);
+    // ── Phase 3: Rotate 90° → proper smiley face ──────────────────
+    faceEl.style.transition = 'transform 1.1s cubic-bezier(0.34, 1.26, 0.64, 1)';
+    faceEl.style.transform  = 'rotate(90deg)';
+    await wait(1300);
 
-    // ── Phase 4: Bring back the smiley right before zoom ──────────────────
-    await showSmileyBeforeZoom();
-    await wait(120);
+    // ── Phase 4: zoom into the eye ────────────────────────────────────
+    await wait(500);
+    faceEl.style.transition = 'transform 1.4s cubic-bezier(0.4, 0, 1, 1), filter 1.4s ease';
+    faceEl.style.filter     = 'blur(0px) brightness(1)';
+    faceEl.style.transform  = 'rotate(90deg) scale(120)';
+    faceEl.style.filter     = 'blur(18px) brightness(8)';
+    await wait(900);
 
-    // ── Phase 5: Start zoom first, then fade (intentional overlap) ───────
-    zoomTarget = SYSTEM_FIT_ZOOM;
-    await wait(220);
-    splash.style.transition = 'opacity 0.62s ease';
+    // ── Phase 5: Fade splash — zoom starts HERE so the user's first view
+    //    of the 3D scene is from 4000× and they watch it zoom in. ────────
+    zoomTarget = SYSTEM_FIT_ZOOM;   // log-lerp fires from this exact frame onward
+    splash.style.transition = 'opacity 0.9s ease';
     splash.style.opacity    = '0';
-    await wait(620);
+    await wait(900);
     splash.style.display = 'none';
     rebuildGalaxyMenu();
     // zoom continues past the fade, settling gently near orbitZoom 3
   }
 
-  window.addEventListener('resize', () => fitSplashBrand());
   run();
 })();
 
