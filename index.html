@@ -3843,14 +3843,14 @@ const _origAnimate = animate;
     brandEl.style.transform = 'translate(-50%, -50%) scale(1.02)';
     await wait(1450);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
-    await wait(420);
+    await wait(220);
 
-    // ── Phase 4: Fade splash — zoom starts HERE so the user's first view
-    //    of the 3D scene is from 4000× and they watch it zoom in. ────────
-    zoomTarget = SYSTEM_FIT_ZOOM;   // log-lerp fires from this exact frame onward
-    splash.style.transition = 'opacity 0.9s ease';
+    // ── Phase 4: Start zoom first, then fade (intentional overlap) ───────
+    zoomTarget = SYSTEM_FIT_ZOOM;
+    await wait(220);
+    splash.style.transition = 'opacity 0.62s ease';
     splash.style.opacity    = '0';
-    await wait(900);
+    await wait(620);
     splash.style.display = 'none';
     rebuildGalaxyMenu();
     // zoom continues past the fade, settling gently near orbitZoom 3
