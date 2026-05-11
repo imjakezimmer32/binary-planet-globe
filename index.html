@@ -5587,6 +5587,30 @@ const _origAnimate = animate;
     if (pr && typeof pr.catch === 'function') pr.catch(() => {});
   }
 
+  // Begin title music as soon as the parser runs; retry on load/pageshow for
+  // environments that allow autoplay after navigation (still blocked until a
+  // gesture on strict browsers — primers below cover that).
+  tryPlayStartScreenMusic();
+  window.addEventListener('load', () => { tryPlayStartScreenMusic(); }, { once: true });
+  window.addEventListener('pageshow', () => { tryPlayStartScreenMusic(); });
+
+  function fadeOutAndStopStartScreenMusic(ms) {
+    const t0 = performance.now();
+    const v0 = startScreenOuterGain
+      ? startScreenOuterGain.gain.value
+      : startScreenOuterEl.volume;
+    const peak = Math.max(0, v0);
+    function tick() {
+      const t = Math.min(1, (performance.now() - t0) / ms);
+      const v = peak * (1 - t);
+      if (startScreenOuterGain) startScreenOuterGain.gain.value = v;
+      else startScreenOuterEl.volume = v;
+      if (t < 1) requestAnimationFrame(tick);
+      else stopStartScreenMusic();
+    }
+    requestAnimationFrame(tick);
+  }
+
   function stopStartScreenMusic() {
     startScreenOuterEl.pause();
     startScreenOuterEl.currentTime = 0;
@@ -5595,13 +5619,12 @@ const _origAnimate = animate;
   }
 
   /**
-   * Stop title music only after Sol music has begun in the same user-activation turn.
-   * Pausing the start-screen MediaElementSource first can prevent the in-game track
-   * from starting on some browsers (shared AudioContext).
+   * Begin in-game music in the same user-activation turn as the start click.
+   * Title music keeps playing through the start-screen dismiss; we fade it out
+   * afterward so the first track is not cut off the instant the user continues.
    */
   function handoffFromStartScreenToGameMusic() {
     solarSystemAudio.unlock();
-    stopStartScreenMusic();
   }
 
   /** First real gesture must start audio on strict browsers; capture runs before dismiss handlers. */
@@ -5722,13 +5745,13 @@ const _origAnimate = animate;
     // zoom continues past the fade, settling gently near orbitZoom 3
   }
 
-  tryPlayStartScreenMusic();
   const detachStartScreenMusicPrimers = attachStartScreenMusicPrimers();
   await waitForStart(() => {
     detachStartScreenMusicPrimers();
     handoffFromStartScreenToGameMusic();
   });
   await dismissStartScreen();
+  fadeOutAndStopStartScreenMusic(3200);
   await run();
 })();
 
