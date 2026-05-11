@@ -4472,7 +4472,7 @@ const _origAnimate = animate;
   const faceEl  = document.getElementById('s-face');
   const INTRO_ZOOM_EPSILON = 0.02;
   const INTRO_ZOOM_TIMEOUT_MS = 9000;
-  const INTRO_ZOOM_OVERLAP_MS = 560;
+  const INTRO_ZOOM_OVERLAP_MS = 70;
   const SPLASH_FADE_MS = 1450;
 
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -4530,7 +4530,7 @@ const _origAnimate = animate;
     zoomTarget = SYSTEM_FIT_ZOOM;
     // Start scene reveal immediately so it has a longer ramp-up.
     document.body.classList.add('scene-visible');
-    // Give zoom + scene fade a head-start before splash fades down.
+    // Keep only a tiny lead so the universe is visible during splash fade.
     await wait(INTRO_ZOOM_OVERLAP_MS);
 
     // Smooth splash fade for a cleaner opacity transfer to the zooming scene.
