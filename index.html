@@ -288,6 +288,27 @@ input[type=range]::-webkit-slider-thumb {
   background:
     radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
 }
+#planet-radial-guide {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pre-size);
+  height: var(--pre-size);
+  margin-left: calc(var(--pre-size) * -0.5);
+  margin-top: calc(var(--pre-size) * -0.5);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  background: conic-gradient(
+    from var(--guide-start, 0deg),
+    rgba(129, 235, 255, 0.92) 0deg var(--guide-span, 90deg),
+    rgba(129, 235, 255, 0) var(--guide-span, 90deg) 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
+  mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
+}
+#planet-radial-guide.visible { opacity: 1; }
 .planet-radial-knob {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -303,11 +324,18 @@ input[type=range]::-webkit-slider-thumb {
   text-align: center;
   pointer-events: auto;
   cursor: grab;
+  opacity: 0.98;
+  transition: opacity 0.16s ease, transform 0.16s ease;
 }
 .planet-radial-knob:active { cursor: grabbing; }
 .planet-radial-knob.active {
   border-color: rgba(210, 247, 255, 0.9);
   box-shadow: 0 0 22px rgba(84, 206, 255, 0.55);
+  transform: translate(-50%, -50%) scale(1.05);
+}
+.planet-radial-knob.dim {
+  opacity: 0.18;
+  transform: translate(-50%, -50%) scale(0.94);
 }
 .planet-radial-knob .prk-name {
   display: block;
@@ -1034,6 +1062,7 @@ input[type=range]::-moz-range-thumb {
 </div>
 <div id="planet-radial-editor" aria-label="Planet editor around selected planet">
   <div id="planet-radial-ring"></div>
+  <div id="planet-radial-guide"></div>
   <button type="button" class="planet-radial-knob" data-setting="size">
     <span class="prk-name">Size</span>
     <span class="prk-value" id="prk-val-size">1.00×</span>
@@ -3197,6 +3226,7 @@ const dialPeakE   = $('dial-peak-edit'),  lblPeakE  = $('lbl-peak-edit');
 const dialWaterE  = $('dial-water-edit'), lblWaterE = $('lbl-water-edit');
 const planetRadialEditorEl = $('planet-radial-editor');
 const planetRadialRingEl = $('planet-radial-ring');
+const planetRadialGuideEl = $('planet-radial-guide');
 const planetRadialKnobEls = planetRadialEditorEl ? {
   size: planetRadialEditorEl.querySelector('button[data-setting="size"]'),
   peak: planetRadialEditorEl.querySelector('button[data-setting="peak"]'),
@@ -3219,6 +3249,7 @@ const planetRadialState = {
   knobRadius: 95,
   dragSetting: null,
   dragPointerId: null,
+  sideMountGap: 32,
 };
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
@@ -3317,6 +3348,30 @@ function formatWaterCompact(wl) {
   return '0%';
 }
 
+function setPlanetRadialGuide(setting) {
+  if (!planetRadialGuideEl) return;
+  if (!setting || !PLANET_EDIT_CONFIG[setting]) {
+    planetRadialGuideEl.classList.remove('visible');
+    return;
+  }
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  const span = planetEditAngleSpan(cfg);
+  const start = ((cfg.arcStart % 360) + 360) % 360;
+  planetRadialGuideEl.style.setProperty('--guide-start', `${start.toFixed(2)}deg`);
+  planetRadialGuideEl.style.setProperty('--guide-span', `${span.toFixed(2)}deg`);
+  planetRadialGuideEl.classList.add('visible');
+}
+
+function updatePlanetRadialFocusVisuals() {
+  const active = planetRadialState.dragSetting;
+  Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.classList.toggle('active', active === setting);
+    knob.classList.toggle('dim', !!active && active !== setting);
+  });
+  setPlanetRadialGuide(active);
+}
+
 function syncPlanetEditReadouts(mp) {
   if (!mp) return;
   if (lblSizeE) lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
@@ -3364,16 +3419,33 @@ function hidePlanetRadialEditor() {
   planetRadialState.visible = false;
   planetRadialState.dragSetting = null;
   planetRadialState.dragPointerId = null;
-  Object.values(planetRadialKnobEls).forEach(knob => knob?.classList.remove('active'));
+  updatePlanetRadialFocusVisuals();
 }
 
 function updatePlanetRadialKnobPositions(mp) {
   if (!planetRadialEditorEl || !mp) return;
   const r = planetRadialState.knobRadius;
+  const active = planetRadialState.dragSetting;
+  const sideX = r + planetRadialState.sideMountGap;
+  const sideYOffset = {
+    size: -r * 0.48,
+    peak: 0,
+    water: r * 0.48,
+  };
   ['size', 'peak', 'water'].forEach(setting => {
     const knob = planetRadialKnobEls[setting];
     const cfg = PLANET_EDIT_CONFIG[setting];
     if (!knob || !cfg) return;
+    if (active && active !== setting) {
+      knob.style.left = `${sideX.toFixed(1)}px`;
+      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
+      return;
+    }
+    if (!active) {
+      knob.style.left = `${sideX.toFixed(1)}px`;
+      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
+      return;
+    }
     const value = valueFromPlanetSetting(mp, setting);
     const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
     const deg = planetEditTToAngle(setting, t);
@@ -3381,6 +3453,7 @@ function updatePlanetRadialKnobPositions(mp) {
     knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
     knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
   });
+  updatePlanetRadialFocusVisuals();
 }
 
 function updatePlanetSelectionEditor() {
@@ -3404,15 +3477,14 @@ function updatePlanetSelectionEditor() {
     return;
   }
   const radiusWorld = getPlanetCenterRadius(mp, _planetEditorCenterWorld);
-  const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.03;
   planetSelectionHalo.visible = true;
   planetSelectionHalo.position.copy(_planetEditorCenterWorld);
-  planetSelectionHalo.scale.setScalar(radiusWorld * 1.22 * pulse);
+  planetSelectionHalo.scale.setScalar(radiusWorld * 1.22);
 
   planetSelectionRing.visible = true;
   planetSelectionRing.position.copy(_planetEditorCenterWorld);
   planetSelectionRing.quaternion.copy(camera.quaternion);
-  const ringRadius = radiusWorld * 1.38 * pulse;
+  const ringRadius = radiusWorld * 1.38;
   planetSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
 
   _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
@@ -3648,15 +3720,16 @@ if (planetRadialEditorEl) {
     e.stopPropagation();
     planetRadialState.dragSetting = setting;
     planetRadialState.dragPointerId = e.pointerId;
-    Object.values(planetRadialKnobEls).forEach(knob => knob?.classList.remove('active'));
-    planetRadialKnobEls[setting]?.classList.add('active');
+    updatePlanetRadialFocusVisuals();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
     updatePlanetSettingFromPointer(e.clientX, e.clientY, setting);
+    updatePlanetSelectionEditor();
   };
   const onKnobMove = e => {
     if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
     e.preventDefault();
     updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
+    updatePlanetSelectionEditor();
   };
   const onKnobUp = e => {
     if (planetRadialState.dragPointerId !== e.pointerId) return;
@@ -3664,9 +3737,9 @@ if (planetRadialEditorEl) {
     planetRadialState.dragSetting = null;
     planetRadialState.dragPointerId = null;
     Object.values(planetRadialKnobEls).forEach(knob => {
-      knob?.classList.remove('active');
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
+    updatePlanetRadialFocusVisuals();
   };
   Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
     if (!knob) return;
