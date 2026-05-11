@@ -3493,8 +3493,12 @@ function updatePlanetSelectionEditor() {
   }
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const cx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
-  const cy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+  const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
+  const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+  // On phones, keep the edit ring locked to screen center so halo+dials stay visually attached.
+  const forceCenteredOverlay = isNarrowPlanetUI();
+  const cx = forceCenteredOverlay ? vw * 0.5 : projectedCx;
+  const cy = forceCenteredOverlay ? vh * 0.5 : projectedCy;
   if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
     hidePlanetRadialEditor();
     return;
