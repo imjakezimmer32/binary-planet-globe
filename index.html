@@ -3589,6 +3589,9 @@ const planetRadialState = {
   dragPointerStartDeg: null,
   /** Arc angle (deg) that matches the planet value when the drag began */
   dragValueStartDeg: null,
+  /** Frozen HTML ring diameter (px) while editing this selection so size edits do not resize the UI */
+  ringSizePxLock: null,
+  ringLockSelectionIdx: null,
 };
 const sunRadialEditorEl = $('sun-radial-editor');
 const sunRadialRingEl = $('sun-radial-ring');
@@ -3788,6 +3791,8 @@ function hidePlanetRadialEditor() {
   planetRadialState.dragPointerId = null;
   planetRadialState.dragPointerStartDeg = null;
   planetRadialState.dragValueStartDeg = null;
+  planetRadialState.ringSizePxLock = null;
+  planetRadialState.ringLockSelectionIdx = null;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
 }
@@ -3873,7 +3878,16 @@ function updatePlanetSelectionEditor() {
     ? Math.min(292, shortSide * 0.54)
     : Math.min(560, shortSide * 0.74);
   const ringFromProjection = projectedRadius * 2.85;
-  const ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
+  let ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
+  if (planetRadialState.ringLockSelectionIdx !== selectedPlanetIdx) {
+    planetRadialState.ringLockSelectionIdx = selectedPlanetIdx;
+    planetRadialState.ringSizePxLock = null;
+  }
+  if (planetRadialState.ringSizePxLock === null) {
+    planetRadialState.ringSizePxLock = ringSize;
+  } else {
+    ringSize = planetRadialState.ringSizePxLock;
+  }
 
   if (planetRadialEditorEl) {
     planetRadialEditorEl.style.display = 'block';
