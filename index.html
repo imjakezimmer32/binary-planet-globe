@@ -3184,6 +3184,8 @@ dialWarp.addEventListener('input', () => {
 });
 
 let sunRadialDismissed = true;
+/** When true, planet halo + radial stay hidden while selection and planet camera view remain (mirrors sun radial dismiss). */
+let planetRadialDismissed = true;
 let solGalaxyMenuRevealed = false;
 function scaleWorldToSliderValue(worldScale) {
   const ui = scaleWorldToUi(worldScale);
@@ -4081,7 +4083,8 @@ function updatePlanetSelectionEditor() {
     !!managedPlanets[selectedPlanetIdx] &&
     cameraMode === 'planet' &&
     !walkMode.active &&
-    planetsRenderable;
+    planetsRenderable &&
+    !planetRadialDismissed;
   if (!shouldShow) {
     planetSelectionHalo.visible = false;
     planetSelectionRing.visible = false;
@@ -4110,6 +4113,7 @@ function updatePlanetSelectionEditor() {
   _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
   const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
   if (depthOutOfRange) {
+    planetRadialDismissed = true;
     hidePlanetRadialEditor();
     return;
   }
@@ -4118,6 +4122,7 @@ function updatePlanetSelectionEditor() {
   const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
   if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
+    planetRadialDismissed = true;
     hidePlanetRadialEditor();
     return;
   }
@@ -4493,6 +4498,8 @@ function selectPlanet(idx) {
   panOffset.set(0, 0, 0);
   rebuildPlanetList();
   const mp = idx !== null && idx !== undefined ? managedPlanets[idx] : null;
+  if (mp) planetRadialDismissed = false;
+  else planetRadialDismissed = true;
   if (editPanel) editPanel.style.display = 'none';
   if (mp) {
     syncPlanetDialValues(mp);
@@ -4657,7 +4664,8 @@ if (planetRadialEditorEl) {
     planetRadialCloseBtn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
-      selectPlanet(null);
+      planetRadialDismissed = true;
+      hidePlanetRadialEditor();
     });
   }
 }
