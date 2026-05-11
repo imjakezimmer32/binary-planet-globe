@@ -790,10 +790,10 @@ input[type=range]::-moz-range-thumb {
   max-width: 92vw;
 }
 #splash #s-brand {
-  font-size: clamp(42px, 18vw, 130px);
-  max-width: 92vw;
+  font-size: clamp(34px, 14vw, 112px);
+  max-width: 94vw;
   text-align: center;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 } /* end mobile */
@@ -3825,6 +3825,33 @@ const _origAnimate = animate;
   const brandEl = document.getElementById('s-brand');
 
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+  function fitSplashBrand(maxWidthRatio = null) {
+    if (!brandEl || splash.style.display === 'none') return;
+    const ratio = maxWidthRatio ?? Number.parseFloat(brandEl.dataset.maxRatio || '0.9');
+    const maxWidthPx = Math.max(220, window.innerWidth * ratio);
+    const minPx = Math.max(24, window.innerWidth * 0.07);
+    let sizePx = Math.min(190, Math.max(minPx, window.innerWidth * 0.22));
+    let spacingEm = Number.parseFloat(brandEl.dataset.baseSpacing || '0.13');
+    brandEl.style.fontSize = `${sizePx.toFixed(1)}px`;
+    brandEl.style.letterSpacing = `${spacingEm.toFixed(3)}em`;
+    let width = brandEl.getBoundingClientRect().width;
+    let guard = 0;
+    while (width > maxWidthPx && guard < 160) {
+      if (spacingEm > 0.04) spacingEm -= 0.01;
+      else sizePx -= 1;
+      if (sizePx <= minPx) break;
+      brandEl.style.fontSize = `${sizePx.toFixed(1)}px`;
+      brandEl.style.letterSpacing = `${Math.max(0.04, spacingEm).toFixed(3)}em`;
+      width = brandEl.getBoundingClientRect().width;
+      guard += 1;
+    }
+  }
+  function setBrandText(text, baseSpacing, maxWidthRatio) {
+    brandEl.textContent = text;
+    brandEl.dataset.baseSpacing = String(baseSpacing);
+    brandEl.dataset.maxRatio = String(maxWidthRatio);
+    fitSplashBrand(maxWidthRatio);
+  }
 
   // Start camera very far out; the animate loop will log-lerp it to 3.0
   orbitZoom = 4000;
@@ -3837,15 +3864,13 @@ const _origAnimate = animate;
     await wait(280);
 
     // ── Phase 2: AB appears above Hello Universe ───────────────────
-    brandEl.textContent = 'AB';
+    setBrandText('AB', 0.34, 0.56);
     brandEl.style.opacity = '1';
-    brandEl.style.letterSpacing = '0.34em';
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
     await wait(900);
 
     // ── Phase 3: Morph AB → AstraBound ─────────────────────────────
-    brandEl.textContent = 'AstraBound';
-    brandEl.style.letterSpacing = '0.13em';
+    setBrandText('AstraBound', 0.13, 0.9);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1.02)';
     await wait(1450);
     brandEl.style.transform = 'translate(-50%, -50%) scale(1)';
@@ -3862,6 +3887,7 @@ const _origAnimate = animate;
     // zoom continues past the fade, settling gently near orbitZoom 3
   }
 
+  window.addEventListener('resize', () => fitSplashBrand());
   run();
 })();
 
