@@ -5181,7 +5181,8 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
         gain.gain.value = 0;
         src.connect(gain).connect(solarAudioCtx.destination);
       } catch (e) {
-        el.volume = 0;
+        gain = null;
+        el.volume = peak;
       }
     } else {
       el.volume = 0;
@@ -5556,7 +5557,7 @@ const _origAnimate = animate;
   const touchPrimary = window.matchMedia('(pointer: coarse)').matches;
   startHint.textContent = touchPrimary
     ? 'Tap anywhere to start'
-    : 'Press any key to start';
+    : 'Click or press any key to start';
 
   // ── Start screen only: loop until user continues (before splash) ──
   const START_SCREEN_MUSIC_SRC = '/audio/outertaming.mp3';
@@ -5614,7 +5615,11 @@ const _origAnimate = animate;
     };
   }
 
-  function waitForStart() {
+  /**
+   * Runs the supplied callback synchronously inside the tap/key handler so
+   * Chrome keeps transient user activation for AudioContext.resume / play().
+   */
+  function waitForStart(onUserGestureSync) {
     return new Promise((resolve) => {
       let done = false;
       const cleanup = () => {
@@ -5624,6 +5629,7 @@ const _origAnimate = animate;
       const finish = () => {
         if (done) return;
         done = true;
+        if (typeof onUserGestureSync === 'function') onUserGestureSync();
         cleanup();
         resolve();
       };
@@ -5633,7 +5639,6 @@ const _origAnimate = animate;
         finish();
       };
       const onPointer = () => {
-        if (!touchPrimary) return;
         finish();
       };
       window.addEventListener('keydown', onKey);
@@ -5719,9 +5724,10 @@ const _origAnimate = animate;
 
   tryPlayStartScreenMusic();
   const detachStartScreenMusicPrimers = attachStartScreenMusicPrimers();
-  await waitForStart();
-  detachStartScreenMusicPrimers();
-  handoffFromStartScreenToGameMusic();
+  await waitForStart(() => {
+    detachStartScreenMusicPrimers();
+    handoffFromStartScreenToGameMusic();
+  });
   await dismissStartScreen();
   await run();
 })();
