@@ -5181,7 +5181,9 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
         gain.gain.value = 0;
         src.connect(gain).connect(solarAudioCtx.destination);
       } catch (e) {
-        el.volume = 0;
+        // Web Audio routing failed; keep audible direct element output (was volume 0 = silent forever).
+        gain = null;
+        el.volume = peak;
       }
     } else {
       el.volume = 0;
@@ -5253,9 +5255,17 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
       prevWantOn[i] = wantOn;
       const now = performance.now();
       if (wantOn) {
-        if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
-        const pr = p.el.play();
-        if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+        const kick = () => {
+          const pr = p.el.play();
+          if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+        };
+        // If the AudioContext is still suspended, play() can report "playing" while the graph outputs silence.
+        if (solarAudioCtx) {
+          if (solarAudioCtx.state === 'running') kick();
+          else void solarAudioCtx.resume().then(kick, kick);
+        } else {
+          kick();
+        }
         fadeState[i] = { kind: 'in', t0: now, v0: Math.min(getGain(p), peakVolumes[i]) };
         ensureTick();
       } else {
@@ -5269,8 +5279,12 @@ const solarSystemAudio = (function createSolarSystemAudio(destinations) {
     /** Call after first user gesture so autoplay policy allows music. */
     unlock() {
       unlocked = true;
-      if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
-      sync();
+      if (!solarAudioCtx) {
+        sync();
+        return;
+      }
+      // Defer sync until the context is running so GainNode + MediaElementSource actually produce samples.
+      void solarAudioCtx.resume().then(() => sync(), () => sync());
     },
   };
 })(GALAXY_DESTINATIONS);
@@ -5581,9 +5595,16 @@ const _origAnimate = animate;
   }
 
   function tryPlayStartScreenMusic() {
-    if (solarAudioCtx) solarAudioCtx.resume().catch(() => {});
-    const pr = startScreenOuterEl.play();
-    if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+    const kick = () => {
+      const pr = startScreenOuterEl.play();
+      if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+    };
+    if (solarAudioCtx) {
+      if (solarAudioCtx.state === 'running') kick();
+      else void solarAudioCtx.resume().then(kick, kick);
+    } else {
+      kick();
+    }
   }
 
   function stopStartScreenMusic() {
