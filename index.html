@@ -2597,13 +2597,18 @@ let comAngle = 0;
 
 // ── Dial wiring ───────────────────────────────────────────────────
 const SCALE_MIN = 1.0, SCALE_MAX = 400;
+const SCALE_BASE_MULT = 3.0; // User request: legacy 3x should read as new 1x.
 const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
-const PLANET_HIDE_SCALE = 15.0;
+const PLANET_HIDE_SCALE_UI = 15.0;
+const PLANET_HIDE_SCALE = PLANET_HIDE_SCALE_UI * SCALE_BASE_MULT;
 const PLANET_VIEW_DETAIL = 20;
-function sliderToScale(v) { return SCALE_MIN * Math.exp(SCALE_LOG * v); }
-function scaleToDetail(s) {
+function scaleUiToWorld(s) { return s * SCALE_BASE_MULT; }
+function scaleWorldToUi(s) { return s / SCALE_BASE_MULT; }
+function sliderToScale(v) { return scaleUiToWorld(SCALE_MIN * Math.exp(SCALE_LOG * v)); }
+function scaleToDetail(worldScale) {
+  const s = scaleWorldToUi(worldScale);
   // User tuning: detail 1 at 10x, and disable planet rendering at 15x+.
-  if (s >= PLANET_HIDE_SCALE) return 0;
+  if (s >= PLANET_HIDE_SCALE_UI) return 0;
   if (s >= 10.0) return 1;
   if (s >= 8.0)  return 2;
   if (s >= 6.0)  return 3;
@@ -2616,7 +2621,7 @@ function scaleToDetail(s) {
   return 10;
 }
 
-let targetScale = 1.0, curScale = 1.0, timeWarp = 1.0, curDetail = scaleToDetail(1.0);
+let targetScale = scaleUiToWorld(1.0), curScale = scaleUiToWorld(1.0), timeWarp = 1.0, curDetail = scaleToDetail(scaleUiToWorld(1.0));
 let sunSpin = 0;
 let planetsRenderable = true;
 
@@ -2625,7 +2630,7 @@ const dialScale = $('dial-scale'), lblScale = $('lbl-scale');
 const dialWarp  = $('dial-warp'),  lblWarp  = $('lbl-warp');
 
 function scaleLabelText(s) {
-  return `SCALE  ${s.toFixed(2)}×`;
+  return `SCALE  ${scaleWorldToUi(s).toFixed(2)}×`;
 }
 
 function desiredDetailForCurrentView(scaleValue) {
@@ -3483,7 +3488,8 @@ function animate() {
   setPlanetsRenderable(cameraMode === 'planet' || curScale < PLANET_HIDE_SCALE);
 
   // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
-  const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScale - 8) / 44);
+  const curScaleUi = scaleWorldToUi(curScale);
+  const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScaleUi - 8) / 44);
   const wireOpacity = 0.25 * wireFade;
   managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
 
