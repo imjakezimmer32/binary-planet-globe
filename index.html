@@ -1125,6 +1125,7 @@ const walkState = {
   jumpLockTimer: 0,
   sprintBobPhase: 0,
   sprintBlend: 0,
+  stepPhase: 0,
   prevFov: null,
 };
 const _walkCenter = new THREE.Vector3();
@@ -1163,17 +1164,62 @@ const _walkSurfaceScratch = {
   gap: Infinity,
 };
 
-const sausage = new THREE.Group();
-const sausageMat = new THREE.MeshLambertMaterial({ color: 0xffcc7a });
-const sausageBody = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.14, 12), sausageMat);
-sausageBody.rotation.z = Math.PI * 0.5;
-const sausageEndA = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 10), sausageMat);
-const sausageEndB = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 10), sausageMat);
-sausageEndA.position.x = 0.07;
-sausageEndB.position.x = -0.07;
-sausage.add(sausageBody, sausageEndA, sausageEndB);
-sausage.visible = false;
-scene.add(sausage);
+const walkAvatar = new THREE.Group();
+const avatarSuitMat = new THREE.MeshLambertMaterial({ color: 0xe8edf9 });
+const avatarTrimMat = new THREE.MeshLambertMaterial({ color: 0x3b7dff });
+const avatarDarkMat = new THREE.MeshLambertMaterial({ color: 0x172235 });
+const avatarAccentMat = new THREE.MeshLambertMaterial({ color: 0xffc25d });
+
+const avatarTorso = new THREE.Mesh(new THREE.CapsuleGeometry(0.028, 0.08, 3, 10), avatarSuitMat);
+avatarTorso.position.y = 0.07;
+const avatarPack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.04), avatarTrimMat);
+avatarPack.position.set(-0.01, 0.07, -0.036);
+const avatarHead = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 10), avatarSuitMat);
+avatarHead.position.y = 0.145;
+const avatarVisor = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 8), avatarDarkMat);
+avatarVisor.position.set(0.018, 0.145, 0);
+const avatarChestLamp = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 8), avatarAccentMat);
+avatarChestLamp.position.set(0.03, 0.084, 0);
+
+const avatarLeftArmPivot = new THREE.Group();
+avatarLeftArmPivot.position.set(0.008, 0.1, -0.034);
+const avatarRightArmPivot = new THREE.Group();
+avatarRightArmPivot.position.set(0.008, 0.1, 0.034);
+const avatarLeftArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.009, 0.045, 2, 8), avatarSuitMat);
+avatarLeftArm.position.y = -0.03;
+const avatarRightArm = avatarLeftArm.clone();
+avatarLeftArmPivot.add(avatarLeftArm);
+avatarRightArmPivot.add(avatarRightArm);
+
+const avatarLeftLegPivot = new THREE.Group();
+avatarLeftLegPivot.position.set(0.004, 0.033, -0.014);
+const avatarRightLegPivot = new THREE.Group();
+avatarRightLegPivot.position.set(0.004, 0.033, 0.014);
+const avatarLeftLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.01, 0.052, 2, 9), avatarSuitMat);
+avatarLeftLeg.position.y = -0.035;
+const avatarRightLeg = avatarLeftLeg.clone();
+avatarLeftLegPivot.add(avatarLeftLeg);
+avatarRightLegPivot.add(avatarRightLeg);
+
+const avatarLeftBoot = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 10, 8), avatarTrimMat);
+avatarLeftBoot.position.set(0.012, -0.06, 0);
+const avatarRightBoot = avatarLeftBoot.clone();
+avatarLeftLeg.add(avatarLeftBoot);
+avatarRightLeg.add(avatarRightBoot);
+
+walkAvatar.add(
+  avatarTorso,
+  avatarPack,
+  avatarHead,
+  avatarVisor,
+  avatarChestLamp,
+  avatarLeftArmPivot,
+  avatarRightArmPivot,
+  avatarLeftLegPivot,
+  avatarRightLegPivot,
+);
+walkAvatar.visible = false;
+scene.add(walkAvatar);
 
 // ── Camera input: separate paths (do not mix) ─────────────────────
 // Desktop: mouse / pen — left = orbit, right = pan on plane, wheel = zoom.
@@ -1614,7 +1660,7 @@ function stopWalkMode() {
     camera.updateProjectionMatrix();
     walkState.prevFov = null;
   }
-  sausage.visible = false;
+  walkAvatar.visible = false;
   clearWalkInputState();
   walkLookInput.x = 0;
   walkLookInput.y = 0;
@@ -1663,8 +1709,9 @@ function startWalkMode(idx) {
   walkState.jumpLockTimer = 0;
   walkState.sprintBobPhase = 0;
   walkState.sprintBlend = 0;
-  sausage.position.copy(walkState.position);
-  sausage.visible = walkCameraMode !== 'fp';
+  walkState.stepPhase = 0;
+  walkAvatar.position.copy(walkState.position);
+  walkAvatar.visible = walkCameraMode !== 'fp';
   refreshWalkUi();
 }
 
@@ -1824,15 +1871,30 @@ function updateWalkMode(dt) {
   }
   const bob = Math.sin(walkState.sprintBobPhase) * WALK_CFG.sprintBobAmp * walkState.sprintBlend;
 
-  sausage.position.copy(walkState.position);
+  const tangentSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
+  const strideBlend = Math.min(1, tangentSpeed / Math.max(0.001, WALK_CFG.maxGroundSpeed * 0.9));
+  const groundedStride = walkState.grounded ? strideBlend : 0;
+  walkState.stepPhase += dt * (2.5 + tangentSpeed * 8.5);
+  const armSwing = Math.sin(walkState.stepPhase) * 0.5 * groundedStride;
+  const legSwing = Math.sin(walkState.stepPhase) * 0.75 * groundedStride;
+  const bodyTilt = Math.sin(walkState.stepPhase) * 0.045 * groundedStride;
+  avatarLeftArmPivot.rotation.z = -armSwing;
+  avatarRightArmPivot.rotation.z = armSwing;
+  avatarLeftLegPivot.rotation.z = legSwing;
+  avatarRightLegPivot.rotation.z = -legSwing;
+  avatarTorso.rotation.z = bodyTilt;
+  avatarHead.rotation.z = -bodyTilt * 0.35;
+  avatarPack.rotation.z = bodyTilt * 0.2;
+
+  walkAvatar.position.copy(walkState.position);
   _walkBasisZ.crossVectors(walkState.forward, walkState.up).normalize();
   if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.copy(_walkRight);
   _walkBasisMat.makeBasis(walkState.forward, walkState.up, _walkBasisZ);
   _walkQ.setFromRotationMatrix(_walkBasisMat);
-  sausage.quaternion.slerp(_walkQ, 0.35);
+  walkAvatar.quaternion.slerp(_walkQ, 0.35);
 
   const fpMode = walkCameraMode === 'fp';
-  sausage.visible = !fpMode;
+  walkAvatar.visible = !fpMode;
   if (fpMode) {
     const fpBob = Math.sin(walkState.sprintBobPhase) * WALK_CFG.fpBobAmp * walkState.sprintBlend;
     _walkCamPos.copy(walkState.position)
