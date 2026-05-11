@@ -274,6 +274,63 @@ input[type=range]::-webkit-slider-thumb {
   pointer-events: none;
 }
 #planet-edit-panel input[type=range] { width: 100%; }
+#planet-radial-editor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 88;
+  display: none;
+  pointer-events: none;
+  --pre-size: 220px;
+}
+#planet-radial-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pre-size);
+  height: var(--pre-size);
+  margin-left: calc(var(--pre-size) * -0.5);
+  margin-top: calc(var(--pre-size) * -0.5);
+  border-radius: 50%;
+  border: 1px solid rgba(122, 233, 255, 0.35);
+  box-shadow: 0 0 22px rgba(56, 201, 255, 0.32), inset 0 0 32px rgba(16, 140, 205, 0.2);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
+}
+.planet-radial-knob {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 72px;
+  padding: 6px 8px;
+  border-radius: 11px;
+  border: 1px solid rgba(162, 236, 255, 0.38);
+  background: rgba(1, 15, 28, 0.72);
+  box-shadow: 0 0 14px rgba(44, 184, 255, 0.28);
+  color: rgba(219, 247, 255, 0.95);
+  font-family: monospace;
+  text-transform: uppercase;
+  text-align: center;
+  pointer-events: auto;
+  cursor: grab;
+}
+.planet-radial-knob:active { cursor: grabbing; }
+.planet-radial-knob.active {
+  border-color: rgba(210, 247, 255, 0.9);
+  box-shadow: 0 0 22px rgba(84, 206, 255, 0.55);
+}
+.planet-radial-knob .prk-name {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(181, 238, 255, 0.85);
+}
+.planet-radial-knob .prk-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.92);
+}
 
 /* ── Galaxy navigation menu ─────────────────────────────────────── */
 #galaxy-menu {
@@ -795,6 +852,13 @@ input[type=range]::-moz-range-thumb {
   text-align: center;
   white-space: nowrap;
 }
+#planet-radial-editor { --pre-size: min(58vw, 228px); }
+.planet-radial-knob {
+  min-width: 62px;
+  padding: 5px 6px;
+}
+.planet-radial-knob .prk-name { font-size: 8px; }
+.planet-radial-knob .prk-value { font-size: 9px; }
 
 } /* end mobile */
 
@@ -980,6 +1044,21 @@ input[type=range]::-moz-range-thumb {
     </div>
   </div>
 </div>
+<div id="planet-radial-editor" aria-label="Planet editor around selected planet">
+  <div id="planet-radial-ring"></div>
+  <button type="button" class="planet-radial-knob" data-setting="size">
+    <span class="prk-name">Size</span>
+    <span class="prk-value" id="prk-val-size">1.00×</span>
+  </button>
+  <button type="button" class="planet-radial-knob" data-setting="peak">
+    <span class="prk-name">Peaks</span>
+    <span class="prk-value" id="prk-val-peak">1.00×</span>
+  </button>
+  <button type="button" class="planet-radial-knob" data-setting="water">
+    <span class="prk-name">Water</span>
+    <span class="prk-value" id="prk-val-water">48%W</span>
+  </button>
+</div>
 
 <div id="galaxy-menu">
   <button id="galaxy-btn">⬡ Sol System</button>
@@ -1144,6 +1223,13 @@ const panOffset = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _up    = new THREE.Vector3();
 const _selectedPlanetWorld = new THREE.Vector3();
+const _planetEditorCenterWorld = new THREE.Vector3();
+const _planetEditorEdgeWorld = new THREE.Vector3();
+const _planetEditorNdc = new THREE.Vector3();
+const _planetEditorEdgeNdc = new THREE.Vector3();
+const _planetEditorCamRight = new THREE.Vector3();
+const _planetEditorCamUp = new THREE.Vector3();
+const _planetEditorCamForward = new THREE.Vector3();
 
 // ── Walk mode (physics walker on spherical surfaces) ────────────────
 const walkMode = { active: false, spawnPlanetIdx: null };
@@ -1320,6 +1406,33 @@ walkAvatar.add(
 );
 walkAvatar.visible = false;
 scene.add(walkAvatar);
+
+const planetSelectionHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 36, 24),
+  new THREE.MeshBasicMaterial({
+    color: 0x58dfff,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.BackSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+planetSelectionHalo.visible = false;
+scene.add(planetSelectionHalo);
+
+const planetSelectionRing = new THREE.Mesh(
+  new THREE.TorusGeometry(1, 0.028, 14, 96),
+  new THREE.MeshBasicMaterial({
+    color: 0x9ceeff,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+planetSelectionRing.visible = false;
+scene.add(planetSelectionRing);
 
 // ── Camera input: separate paths (do not mix) ─────────────────────
 // Desktop: mouse / pen — left = orbit, right = pan on plane, wheel = zoom.
@@ -3094,6 +3207,31 @@ const editPanel   = $('planet-edit-panel');
 const dialSizeE   = $('dial-size-edit'),  lblSizeE  = $('lbl-size-edit');
 const dialPeakE   = $('dial-peak-edit'),  lblPeakE  = $('lbl-peak-edit');
 const dialWaterE  = $('dial-water-edit'), lblWaterE = $('lbl-water-edit');
+const planetRadialEditorEl = $('planet-radial-editor');
+const planetRadialRingEl = $('planet-radial-ring');
+const planetRadialKnobEls = planetRadialEditorEl ? {
+  size: planetRadialEditorEl.querySelector('button[data-setting="size"]'),
+  peak: planetRadialEditorEl.querySelector('button[data-setting="peak"]'),
+  water: planetRadialEditorEl.querySelector('button[data-setting="water"]'),
+} : {};
+const planetRadialValueEls = {
+  size: $('prk-val-size'),
+  peak: $('prk-val-peak'),
+  water: $('prk-val-water'),
+};
+const PLANET_EDIT_CONFIG = {
+  size:  { min: 0.1, max: 5, step: 0.05, arcStart: 140, arcEnd: 260 },
+  peak:  { min: 0, max: 3, step: 0.01, arcStart: 310, arcEnd: 50 },
+  water: { min: -1, max: 1, step: 0.005, arcStart: 40, arcEnd: 140 },
+};
+const planetRadialState = {
+  visible: false,
+  centerX: 0,
+  centerY: 0,
+  knobRadius: 95,
+  dragSetting: null,
+  dragPointerId: null,
+};
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
 const planetPanelHeader = $('planet-panel-header');
@@ -3140,6 +3278,197 @@ function sampleWalkJoystickPointer(clientX, clientY) {
   const nx = (clientX - centerX) / (rect.width * 0.5);
   const ny = (clientY - centerY) / (rect.height * 0.5);
   setWalkAnalogInput(nx, -ny);
+}
+
+function clampPlanetEditValue(setting, value) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return value;
+  return Math.max(cfg.min, Math.min(cfg.max, value));
+}
+
+function quantizePlanetEditValue(setting, value) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg || !cfg.step) return value;
+  return Math.round(value / cfg.step) * cfg.step;
+}
+
+function planetEditAngleSpan(cfg) {
+  const raw = cfg.arcEnd - cfg.arcStart;
+  return raw >= 0 ? raw : raw + 360;
+}
+
+function planetEditTToAngle(setting, t) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = planetEditAngleSpan(cfg);
+  return (cfg.arcStart + Math.max(0, Math.min(1, t)) * span + 360) % 360;
+}
+
+function planetEditAngleToT(setting, deg) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = planetEditAngleSpan(cfg);
+  let start = cfg.arcStart;
+  let angle = ((deg % 360) + 360) % 360;
+  if (cfg.arcEnd < cfg.arcStart && angle < start) angle += 360;
+  return Math.max(0, Math.min(1, (angle - start) / Math.max(1e-5, span)));
+}
+
+function valueFromPlanetSetting(mp, setting) {
+  if (!mp) return 0;
+  if (setting === 'size') return mp.obj.state.size;
+  if (setting === 'peak') return mp.obj.state.peakScale;
+  if (setting === 'water') return mp.obj.state.waterLevel;
+  return 0;
+}
+
+function formatWaterCompact(wl) {
+  const pct = Math.round(Math.abs(Math.max(-1, Math.min(1, wl))) * 100);
+  if (wl > 0.0001) return `${pct}%W`;
+  if (wl < -0.0001) return `${pct}%L`;
+  return '0%';
+}
+
+function syncPlanetEditReadouts(mp) {
+  if (!mp) return;
+  if (lblSizeE) lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
+  if (lblPeakE) lblPeakE.textContent = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
+  if (lblWaterE) lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
+  if (planetRadialValueEls.size) planetRadialValueEls.size.textContent = `${mp.obj.state.size.toFixed(2)}×`;
+  if (planetRadialValueEls.peak) planetRadialValueEls.peak.textContent = `${mp.obj.state.peakScale.toFixed(2)}×`;
+  if (planetRadialValueEls.water) planetRadialValueEls.water.textContent = formatWaterCompact(mp.obj.state.waterLevel);
+}
+
+function syncPlanetDialValues(mp) {
+  if (!mp) return;
+  if (dialSizeE) dialSizeE.value = mp.obj.state.size;
+  if (dialPeakE) dialPeakE.value = mp.obj.state.peakScale;
+  if (dialWaterE) dialWaterE.value = mp.obj.state.waterLevel;
+}
+
+function applyPlanetEditSetting(setting, rawValue) {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp) return;
+  const nextValue = quantizePlanetEditValue(setting, clampPlanetEditValue(setting, rawValue));
+  if (setting === 'size') {
+    mp.obj.state.size = nextValue;
+    if (mp.isBinary) {
+      const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+      const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+      refreshBinaryPairForMassChange(mass1Now, mass2Now);
+      binaryPrevMass1 = mass1Now;
+      binaryPrevMass2 = mass2Now;
+    }
+  } else if (setting === 'peak') {
+    mp.obj.state.peakScale = nextValue;
+    mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+  } else if (setting === 'water') {
+    mp.obj.state.waterLevel = nextValue;
+    mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+  }
+  syncPlanetDialValues(mp);
+  syncPlanetEditReadouts(mp);
+}
+
+function hidePlanetRadialEditor() {
+  if (planetRadialEditorEl) planetRadialEditorEl.style.display = 'none';
+  planetRadialState.visible = false;
+  planetRadialState.dragSetting = null;
+  planetRadialState.dragPointerId = null;
+  Object.values(planetRadialKnobEls).forEach(knob => knob?.classList.remove('active'));
+}
+
+function updatePlanetRadialKnobPositions(mp) {
+  if (!planetRadialEditorEl || !mp) return;
+  const r = planetRadialState.knobRadius;
+  ['size', 'peak', 'water'].forEach(setting => {
+    const knob = planetRadialKnobEls[setting];
+    const cfg = PLANET_EDIT_CONFIG[setting];
+    if (!knob || !cfg) return;
+    const value = valueFromPlanetSetting(mp, setting);
+    const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+    const deg = planetEditTToAngle(setting, t);
+    const rad = deg * Math.PI / 180;
+    knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
+    knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
+  });
+}
+
+function updatePlanetSelectionEditor() {
+  const shouldShow =
+    selectedPlanetIdx !== null &&
+    !!managedPlanets[selectedPlanetIdx] &&
+    cameraMode === 'planet' &&
+    !walkMode.active &&
+    planetsRenderable;
+  if (!shouldShow) {
+    planetSelectionHalo.visible = false;
+    planetSelectionRing.visible = false;
+    hidePlanetRadialEditor();
+    return;
+  }
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp?.obj?.pivot) {
+    planetSelectionHalo.visible = false;
+    planetSelectionRing.visible = false;
+    hidePlanetRadialEditor();
+    return;
+  }
+  const radiusWorld = getPlanetCenterRadius(mp, _planetEditorCenterWorld);
+  const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.03;
+  planetSelectionHalo.visible = true;
+  planetSelectionHalo.position.copy(_planetEditorCenterWorld);
+  planetSelectionHalo.scale.setScalar(radiusWorld * 1.22 * pulse);
+
+  planetSelectionRing.visible = true;
+  planetSelectionRing.position.copy(_planetEditorCenterWorld);
+  planetSelectionRing.quaternion.copy(camera.quaternion);
+  const ringRadius = radiusWorld * 1.38 * pulse;
+  planetSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
+
+  _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
+  if (_planetEditorNdc.z < -1 || _planetEditorNdc.z > 1) {
+    hidePlanetRadialEditor();
+    return;
+  }
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const cx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
+  const cy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+
+  camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
+  _planetEditorEdgeWorld.copy(_planetEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
+  _planetEditorEdgeNdc.copy(_planetEditorEdgeWorld).project(camera);
+  const ex = (_planetEditorEdgeNdc.x * 0.5 + 0.5) * vw;
+  const ey = (-_planetEditorEdgeNdc.y * 0.5 + 0.5) * vh;
+  const projectedRadius = Math.max(26, Math.hypot(ex - cx, ey - cy));
+  const ringSize = Math.max(160, Math.min(Math.min(vw, vh) * 0.72, projectedRadius * 2.85));
+
+  if (planetRadialEditorEl) {
+    planetRadialEditorEl.style.display = 'block';
+    planetRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
+    planetRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
+    planetRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+  }
+  planetRadialState.visible = true;
+  planetRadialState.centerX = cx;
+  planetRadialState.centerY = cy;
+  planetRadialState.knobRadius = ringSize * 0.56;
+  syncPlanetEditReadouts(mp);
+  updatePlanetRadialKnobPositions(mp);
+}
+
+function updatePlanetSettingFromPointer(clientX, clientY, setting) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return;
+  const dx = clientX - planetRadialState.centerX;
+  const dy = clientY - planetRadialState.centerY;
+  if (dx * dx + dy * dy < 25) return;
+  const deg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  const t = planetEditAngleToT(setting, deg);
+  const value = cfg.min + t * (cfg.max - cfg.min);
+  applyPlanetEditSetting(setting, value);
 }
 
 function syncPlanetCount() {
@@ -3213,46 +3542,25 @@ function selectPlanet(idx) {
   panOffset.set(0, 0, 0);
   rebuildPlanetList();
   const mp = managedPlanets[idx];
-  editPanel.style.display = 'flex';
-  dialSizeE.value  = mp.obj.state.size;
-  dialPeakE.value  = mp.obj.state.peakScale;
-  dialWaterE.value = mp.obj.state.waterLevel;
-  lblSizeE.textContent  = `Size ${mp.obj.state.size.toFixed(2)}×`;
-  lblPeakE.textContent  = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
-  lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
-  setPlanetPanelOpen(true);
+  if (editPanel) editPanel.style.display = 'none';
+  syncPlanetDialValues(mp);
+  syncPlanetEditReadouts(mp);
+  setPlanetPanelOpen(false);
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
+  updatePlanetSelectionEditor();
 }
 
 dialSizeE.addEventListener('input', () => {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  mp.obj.state.size = parseFloat(dialSizeE.value);
-  lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
-  if (mp.isBinary) {
-    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
-    refreshBinaryPairForMassChange(mass1Now, mass2Now);
-    binaryPrevMass1 = mass1Now;
-    binaryPrevMass2 = mass2Now;
-  }
+  applyPlanetEditSetting('size', parseFloat(dialSizeE.value));
 });
 
 dialPeakE.addEventListener('input', () => {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  mp.obj.state.peakScale = parseFloat(dialPeakE.value);
-  lblPeakE.textContent = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
-  mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+  applyPlanetEditSetting('peak', parseFloat(dialPeakE.value));
 });
 
 dialWaterE.addEventListener('input', () => {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  mp.obj.state.waterLevel = parseFloat(dialWaterE.value);
-  lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
-  mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+  applyPlanetEditSetting('water', parseFloat(dialWaterE.value));
 });
 
 // Add planet button (next free sun-orbit slot)
@@ -3344,6 +3652,43 @@ if (walkJoystickEl) {
   walkJoystickEl.addEventListener('pointercancel', onJoyUp);
   window.addEventListener('pointerup', onJoyUp);
   window.addEventListener('pointercancel', onJoyUp);
+}
+if (planetRadialEditorEl) {
+  const onKnobDown = (e, setting) => {
+    if (selectedPlanetIdx === null || !planetRadialState.visible) return;
+    e.preventDefault();
+    e.stopPropagation();
+    planetRadialState.dragSetting = setting;
+    planetRadialState.dragPointerId = e.pointerId;
+    Object.values(planetRadialKnobEls).forEach(knob => knob?.classList.remove('active'));
+    planetRadialKnobEls[setting]?.classList.add('active');
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    updatePlanetSettingFromPointer(e.clientX, e.clientY, setting);
+  };
+  const onKnobMove = e => {
+    if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
+    e.preventDefault();
+    updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
+  };
+  const onKnobUp = e => {
+    if (planetRadialState.dragPointerId !== e.pointerId) return;
+    e.preventDefault();
+    planetRadialState.dragSetting = null;
+    planetRadialState.dragPointerId = null;
+    Object.values(planetRadialKnobEls).forEach(knob => {
+      knob?.classList.remove('active');
+      try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
+    });
+  };
+  Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.addEventListener('pointerdown', e => onKnobDown(e, setting));
+    knob.addEventListener('pointermove', onKnobMove);
+    knob.addEventListener('pointerup', onKnobUp);
+    knob.addEventListener('pointercancel', onKnobUp);
+  });
+  window.addEventListener('pointerup', onKnobUp);
+  window.addEventListener('pointercancel', onKnobUp);
 }
 updateWalkJoystickThumb();
 
@@ -3639,6 +3984,7 @@ function animate() {
   // Sun size stays fixed; scale slider no longer changes body size.
   sunGroup.scale.setScalar(SUN_R);
   sunGroup.rotation.y = sunSpin;
+  updatePlanetSelectionEditor();
 
   renderer.render(scene, camera);
 }
