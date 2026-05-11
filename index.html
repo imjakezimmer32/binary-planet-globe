@@ -2975,24 +2975,27 @@ dialWarp.addEventListener('input', () => {
 const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
 const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30, 34, 38, 42, 46];
 const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
-const SOLAR_ORBIT_Y_LANES = [0, 2.5, -2.5, 5, -5, 7.5, -7.5, 10, -10];
-let managedPlanets = []; // { id, name, obj, color, orbitR, orbitSpeed, angle, isBinary, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitPos, orbitVel, orbitY, orbitParentId, trail }
+// Inclination (rad) of the orbital plane about +X: 0 = ecliptic (XZ); orbit always passes through the sun.
+const SOLAR_ORBIT_INCLINATIONS = [0, 0.12, -0.12, 0.22, -0.22, 0.32, -0.32, 0.45, -0.45];
+let managedPlanets = []; // { … orbitPos, orbitVel, orbitInclination, orbitPlaneNormal, orbitParentId, trail }
 let selectedPlanetIdx = null;
 
-function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle, orbitParentId, orbitY) {
+function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle, orbitParentId, orbitInclination) {
   managedPlanets.push({ id: managedPlanets.length, name, obj, color, isBinary,
                          orbitR: orbitR||0, orbitSpeed: orbitSpeed||0,
                          angle: orbitAngle ?? (Math.random() * Math.PI * 2),
                          spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2),
                          orbitCenter: orbitCenter ?? (isBinary ? 'binary' : 'sun'),
                          orbitSlotKey: orbitSlotKey ?? null, orbitBaseR: orbitR || 0,
-                         orbitPos: null, orbitVel: null, orbitY: Number.isFinite(orbitY) ? orbitY : 0,
+                         orbitPos: null, orbitVel: null,
+                         orbitInclination: Number.isFinite(orbitInclination) ? orbitInclination : 0,
+                         orbitPlaneNormal: null,
                          orbitParentId: orbitParentId ?? null });
 }
 
 // Register original binary planets
-registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true, 0, 0, 0.006, 0, 'binary', null, 0);
-registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true, 0, 0, 0.009, 0, 'binary', null, 0);
+registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true, 0, 0, 0.006, 0, 'binary', null, 0, null, 0);
+registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true, 0, 0, 0.009, 0, 'binary', null, 0, null, 0);
 
 function getSpinRateFromSize(mp) {
   const size = Math.max(mp.obj.state.size, 0.1);
@@ -3010,17 +3013,18 @@ function getPlanetMass(mp) {
 
 function getSunOrbitRadius(mp) {
   if (!mp) return 0;
+  if (mp.orbitPos) {
+    const d = mp.orbitPos.length();
+    if (d > 1e-6) return d;
+  }
   if (mp.orbitR > 0) return mp.orbitR;
   if (mp.orbitBaseR > 0) return mp.orbitBaseR;
-  if (mp.orbitPos) return Math.hypot(mp.orbitPos.x, mp.orbitPos.z);
   return 0;
 }
 
-function getSunOrbitY(mp) {
+function getSunOrbitInclination(mp) {
   if (!mp) return 0;
-  if (Number.isFinite(mp.orbitY)) return mp.orbitY;
-  if (mp.orbitPos) return mp.orbitPos.y || 0;
-  return 0;
+  return Number.isFinite(mp.orbitInclination) ? mp.orbitInclination : 0;
 }
 
 function getOrbitalClearance(mp) {
@@ -3030,19 +3034,19 @@ function getOrbitalClearance(mp) {
 }
 
 const _sunBoundRadial = new THREE.Vector3();
+const _sunHelioRxv = new THREE.Vector3();
 const SUN_COLLISION_PASSES = 3;
 
 function applySunOrbiterBounds(mp) {
   if (!mp?.orbitPos || !mp?.orbitVel) return;
-  const targetY = getSunOrbitY(mp);
-  mp.orbitPos.y = targetY;
-  mp.orbitVel.y = 0;
-  const r = Math.max(Math.hypot(mp.orbitPos.x, mp.orbitPos.z), 1e-6);
-  _sunBoundRadial.set(mp.orbitPos.x / r, 0, mp.orbitPos.z / r);
+  let r = mp.orbitPos.length();
+  if (r < 1e-8) return;
+  _sunBoundRadial.copy(mp.orbitPos).multiplyScalar(1 / r);
   if (r < SUN_ORBIT_MIN_R) {
     mp.orbitPos.copy(_sunBoundRadial).multiplyScalar(SUN_ORBIT_MIN_R);
     const vr = mp.orbitVel.dot(_sunBoundRadial);
     if (vr < 0) mp.orbitVel.addScaledVector(_sunBoundRadial, -vr);
+    r = SUN_ORBIT_MIN_R;
   } else if (r > SUN_ORBIT_MAX_R) {
     mp.orbitPos.copy(_sunBoundRadial).multiplyScalar(SUN_ORBIT_MAX_R);
     const vr = mp.orbitVel.dot(_sunBoundRadial);
@@ -3071,82 +3075,124 @@ function enforceSunOrbiterNoOverlap(sunOrbiters) {
         const minSep = Math.max(hardBodySep, laneSep, 1.4);
 
         const dx = b.orbitPos.x - a.orbitPos.x;
-        const dy = getSunOrbitY(b) - getSunOrbitY(a);
+        const dy = b.orbitPos.y - a.orbitPos.y;
         const dz = b.orbitPos.z - a.orbitPos.z;
-        const minSep2 = minSep * minSep;
-        const dy2 = dy * dy;
-        if (dy2 >= minSep2) continue; // vertically separated enough already
-
-        const requiredXZ = Math.sqrt(Math.max(minSep2 - dy2, 0));
-        const d2XZ = dx * dx + dz * dz;
-        if (d2XZ >= requiredXZ * requiredXZ) continue;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        const dist = Math.sqrt(Math.max(d2, 1e-12));
+        if (dist >= minSep) continue;
 
         let nx;
+        let ny;
         let nz;
-        let distXZ = Math.sqrt(Math.max(d2XZ, 1e-10));
-        if (distXZ < 1e-5) {
+        if (dist < 1e-5) {
           const angle = (((i + 1) * 1.61803398875) + ((j + 1) * 2.41421356237) + pass * 0.7) % twoPi;
-          nx = Math.cos(angle);
-          nz = Math.sin(angle);
-          distXZ = 0;
+          const inc = (pass * 0.37 + i * 0.21) % twoPi;
+          nx = Math.cos(angle) * Math.cos(inc);
+          ny = Math.sin(inc);
+          nz = Math.sin(angle) * Math.cos(inc);
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          nx /= nl;
+          ny /= nl;
+          nz /= nl;
         } else {
-          nx = dx / distXZ;
-          nz = dz / distXZ;
+          nx = dx / dist;
+          ny = dy / dist;
+          nz = dz / dist;
         }
 
-        const overlap = requiredXZ - distXZ;
+        const overlap = minSep - dist;
         if (overlap <= 0) continue;
         const split = overlap * 0.5;
         a.orbitPos.x -= nx * split;
+        a.orbitPos.y -= ny * split;
         a.orbitPos.z -= nz * split;
         b.orbitPos.x += nx * split;
+        b.orbitPos.y += ny * split;
         b.orbitPos.z += nz * split;
 
-        // Cancel closing velocity along horizontal separation normal so bodies cannot merge.
         const rvx = b.orbitVel.x - a.orbitVel.x;
+        const rvy = b.orbitVel.y - a.orbitVel.y;
         const rvz = b.orbitVel.z - a.orbitVel.z;
-        const closing = rvx * nx + rvz * nz;
+        const closing = rvx * nx + rvy * ny + rvz * nz;
         if (closing < 0) {
           const impulse = -closing * 0.92;
           a.orbitVel.x -= nx * impulse * 0.5;
+          a.orbitVel.y -= ny * impulse * 0.5;
           a.orbitVel.z -= nz * impulse * 0.5;
           b.orbitVel.x += nx * impulse * 0.5;
+          b.orbitVel.y += ny * impulse * 0.5;
           b.orbitVel.z += nz * impulse * 0.5;
         }
 
-        // Tiny tangent split keeps close packed pairs from re-merging every step.
-        const tx = -nz;
-        const tz = nx;
+        let ax = 0;
+        let ay = 1;
+        let az = 0;
+        if (Math.abs(nx * ax + ny * ay + nz * az) > 0.88) {
+          ax = 1;
+          ay = 0;
+          az = 0;
+        }
+        let tnx = ny * az - nz * ay;
+        let tny = nz * ax - nx * az;
+        let tnz = nx * ay - ny * ax;
+        const tLen = Math.hypot(tnx, tny, tnz) || 1;
+        tnx /= tLen;
+        tny /= tLen;
+        tnz /= tLen;
         const tangentBias = Math.min(0.08, 0.02 + overlap * 0.03);
-        a.orbitVel.x -= tx * tangentBias;
-        a.orbitVel.z -= tz * tangentBias;
-        b.orbitVel.x += tx * tangentBias;
-        b.orbitVel.z += tz * tangentBias;
+        a.orbitVel.x -= tnx * tangentBias;
+        a.orbitVel.y -= tny * tangentBias;
+        a.orbitVel.z -= tnz * tangentBias;
+        b.orbitVel.x += tnx * tangentBias;
+        b.orbitVel.y += tny * tangentBias;
+        b.orbitVel.z += tnz * tangentBias;
       }
     }
     sunOrbiters.forEach(applySunOrbiterBounds);
   }
 }
 
+function ensureSunOrbiterPlaneNormal(mp) {
+  if (!mp || mp.orbitPlaneNormal) return;
+  const inc = getSunOrbitInclination(mp);
+  const ci = Math.cos(inc);
+  const si = Math.sin(inc);
+  mp.orbitPlaneNormal = new THREE.Vector3(0, ci, si);
+}
+
+function sunInclinedHelioPos(out, r, theta, inc) {
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  const ci = Math.cos(inc);
+  const si = Math.sin(inc);
+  out.set(r * c, -r * s * si, r * s * ci);
+}
+
+function sunInclinedHelioTanUnit(out, theta, inc) {
+  const s = Math.sin(theta);
+  const c = Math.cos(theta);
+  const ci = Math.cos(inc);
+  const si = Math.sin(inc);
+  out.set(-s, -c * si, c * ci).normalize();
+}
+
 function initializeSunOrbiterState(mp) {
   if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
-  const yLane = getSunOrbitY(mp);
+  ensureSunOrbiterPlaneNormal(mp);
+  const inc = getSunOrbitInclination(mp);
+  const r0 = Math.max(mp.orbitR || mp.orbitBaseR || SUN_ORBIT_MIN_R, SUN_ORBIT_MIN_R);
+  const th = mp.angle;
   if (!mp.orbitPos) {
-    mp.orbitPos = new THREE.Vector3(
-      Math.cos(mp.angle) * Math.max(mp.orbitR, SUN_ORBIT_MIN_R),
-      yLane,
-      Math.sin(mp.angle) * Math.max(mp.orbitR, SUN_ORBIT_MIN_R)
-    );
+    mp.orbitPos = new THREE.Vector3();
+    sunInclinedHelioPos(mp.orbitPos, r0, th, inc);
   }
   if (!mp.orbitVel) {
-    const r = Math.max(Math.hypot(mp.orbitPos.x, mp.orbitPos.z), SUN_ORBIT_MIN_R);
-    const tangent = new THREE.Vector3(-Math.sin(mp.angle), 0, Math.cos(mp.angle));
+    const speed = Math.sqrt(SOLAR_MU / r0);
     const sign = mp.orbitSpeed < 0 ? -1 : 1;
-    const speed = Math.sqrt(SOLAR_MU / r);
-    mp.orbitVel = tangent.multiplyScalar(speed * sign);
+    const tu = new THREE.Vector3();
+    sunInclinedHelioTanUnit(tu, th, inc);
+    mp.orbitVel = tu.multiplyScalar(speed * sign);
   }
-  mp.orbitPos.y = yLane;
-  mp.orbitVel.y = 0;
 }
 
 function ensureSunTrail(mp) {
@@ -3225,59 +3271,67 @@ function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
   }
 
   const worldSample = new THREE.Vector3();
-  let chosenY = 0;
+  let chosenInc = 0;
   let bestLaneScore = -Infinity;
-  SOLAR_ORBIT_Y_LANES.forEach(yLane => {
+  SOLAR_ORBIT_INCLINATIONS.forEach(incLane => {
     let minSlack = Infinity;
     managedPlanets.forEach(mp => {
       if (!mp?.obj?.pivot) return;
       let otherR;
-      let otherY;
+      let otherInc;
       if (!mp.isBinary && mp.orbitCenter === 'sun') {
         otherR = getSunOrbitRadius(mp);
-        otherY = getSunOrbitY(mp);
+        otherInc = getSunOrbitInclination(mp);
       } else {
         mp.obj.pivot.getWorldPosition(worldSample);
-        otherR = Math.hypot(worldSample.x, worldSample.z);
-        otherY = worldSample.y;
+        otherR = worldSample.length();
+        otherInc = 0;
       }
       const requiredGap = newClearance + getOrbitalClearance(mp);
-      const laneDist = Math.hypot(chosenRadius - otherR, yLane - otherY);
+      const laneDist = Math.hypot(
+        chosenRadius - otherR,
+        chosenRadius * Math.abs(incLane - otherInc)
+      );
       minSlack = Math.min(minSlack, laneDist - requiredGap);
     });
-    // Slightly prefer non-zero Y lanes so not everything stacks in one plane.
-    const diversificationBonus = Math.abs(yLane) * 0.01;
+    const diversificationBonus = Math.abs(incLane) * 0.06;
     const score = minSlack + diversificationBonus;
     if (score > bestLaneScore) {
       bestLaneScore = score;
-      chosenY = yLane;
+      chosenInc = incLane;
     }
   });
 
   const nearbyAngles = sunOrbiters
     .filter(mp => {
       const requiredGap = newClearance + getOrbitalClearance(mp);
-      const laneDist = Math.hypot(getSunOrbitRadius(mp) - chosenRadius, getSunOrbitY(mp) - chosenY);
+      const laneDist = Math.hypot(
+        getSunOrbitRadius(mp) - chosenRadius,
+        chosenRadius * Math.abs(getSunOrbitInclination(mp) - chosenInc)
+      );
       return laneDist < requiredGap;
     })
     .map(mp => mp.angle);
   managedPlanets.forEach(mp => {
     if (!mp?.obj?.pivot) return;
     mp.obj.pivot.getWorldPosition(worldSample);
-    const worldR = Math.hypot(worldSample.x, worldSample.z);
-    const worldY = (!mp.isBinary && mp.orbitCenter === 'sun') ? getSunOrbitY(mp) : worldSample.y;
+    const worldHelioR = worldSample.length();
+    const worldInc = (!mp.isBinary && mp.orbitCenter === 'sun') ? getSunOrbitInclination(mp) : 0;
     const requiredGap = newClearance + getOrbitalClearance(mp);
-    const laneDist = Math.hypot(worldR - chosenRadius, worldY - chosenY);
+    const laneDist = Math.hypot(
+      worldHelioR - chosenRadius,
+      chosenRadius * Math.abs(worldInc - chosenInc)
+    );
     if (laneDist > requiredGap) return;
     nearbyAngles.push(Math.atan2(worldSample.z, worldSample.x));
   });
   const chosenAngle = chooseLargestGapMidpoint(nearbyAngles);
   const phaseIdx = Math.round((normalizeAngle(chosenAngle) / twoPi) * (SOLAR_ORBIT_GRID_PHASE_COUNT - 1));
   return {
-    key: `${chosenRadius.toFixed(2)}:${phaseIdx}:${chosenY.toFixed(1)}`,
+    key: `${chosenRadius.toFixed(2)}:${phaseIdx}:${chosenInc.toFixed(3)}`,
     radius: chosenRadius,
     angle: chosenAngle,
-    y: chosenY,
+    inc: chosenInc,
   };
 }
 
@@ -3285,7 +3339,7 @@ function createSunOrbitPlanet({
   orbitR,
   orbitSpeed,
   orbitAngle,
-  orbitY = 0,
+  orbitInclination = 0,
   slotKey = null,
   spinRateBase = 0.006 + Math.random() * 0.006,
   tilt = (Math.random() - 0.5) * 0.6,
@@ -3299,7 +3353,7 @@ function createSunOrbitPlanet({
   const newP  = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, initState);
   scene.add(newP.pivot);
   newP.pivot.visible = planetsRenderable;
-  newP.pivot.position.set(Math.cos(orbitAngle) * orbitR, orbitY, Math.sin(orbitAngle) * orbitR);
+  newP.pivot.position.set(0, 0, 0);
   newP.setGrid(gridOn);
   registerPlanet(
     newP,
@@ -3314,11 +3368,12 @@ function createSunOrbitPlanet({
     slotKey,
     orbitAngle,
     null,
-    orbitY
+    orbitInclination
   );
   const newIdx = managedPlanets.length - 1;
   const mp = managedPlanets[newIdx];
   initializeSunOrbiterState(mp);
+  newP.pivot.position.copy(mp.orbitPos);
   ensureSunTrail(mp);
   syncTrailVisibility();
   return newIdx;
@@ -3733,7 +3788,7 @@ function addPlanetFromSelectionUi() {
     orbitR: slot.radius,
     orbitSpeed,
     orbitAngle: slot.angle,
-    orbitY: slot.y ?? 0,
+    orbitInclination: slot.inc ?? 0,
     slotKey: slot.key,
   });
   rebuildPlanetList();
@@ -4170,7 +4225,11 @@ function animate() {
         const r2 = pos.x*pos.x + pos.y*pos.y + pos.z*pos.z + ORBIT_SOFTENING;
         const invR3 = 1 / (r2 * Math.sqrt(r2));
         // Sun gravity
-        acc[i].set(-SOLAR_MU * pos.x * invR3, 0, -SOLAR_MU * pos.z * invR3);
+        acc[i].set(
+          -SOLAR_MU * pos.x * invR3,
+          -SOLAR_MU * pos.y * invR3,
+          -SOLAR_MU * pos.z * invR3
+        );
       });
       sunOrbiters.forEach((mp, i) => {
         mp.orbitVel.addScaledVector(acc[i], subDt);
@@ -4180,11 +4239,15 @@ function animate() {
       enforceSunOrbiterNoOverlap(sunOrbiters);
     }
     sunOrbiters.forEach(mp => {
-      const r = Math.max(Math.hypot(mp.orbitPos.x, mp.orbitPos.z), SUN_ORBIT_MIN_R);
+      const r = Math.max(mp.orbitPos.length(), SUN_ORBIT_MIN_R);
       mp.orbitR = r;
       mp.angle = Math.atan2(mp.orbitPos.z, mp.orbitPos.x);
-      const tangential = (-mp.orbitVel.x * Math.sin(mp.angle)) + (mp.orbitVel.z * Math.cos(mp.angle));
-      mp.orbitSpeed = tangential / r;
+      ensureSunOrbiterPlaneNormal(mp);
+      _sunHelioRxv.copy(mp.orbitPos).cross(mp.orbitVel);
+      const n = mp.orbitPlaneNormal;
+      let omegaSigned = r > 1e-7 && n ? _sunHelioRxv.dot(n) / (r * r) : 0;
+      if (!Number.isFinite(omegaSigned)) omegaSigned = 0;
+      mp.orbitSpeed = omegaSigned;
       mp.obj.pivot.position.set(mp.orbitPos.x, mp.orbitPos.y, mp.orbitPos.z);
     });
 
