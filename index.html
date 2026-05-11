@@ -3377,15 +3377,10 @@ const planetRadialState = {
   knobRadius: 95,
   dragSetting: null,
   dragPointerId: null,
-  sideMountGap: 22,
   /** Pointer angle (deg) at drag start — maps to current value via dragValueStartDeg */
   dragPointerStartDeg: null,
   /** Arc angle (deg) that matches the planet value when the drag began */
   dragValueStartDeg: null,
-  dragStartClientX: 0,
-  dragStartClientY: 0,
-  /** Keep the active knob on the side stack until the finger moves a few px */
-  knobDragKeepSideMount: false,
 };
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
@@ -3560,7 +3555,6 @@ function hidePlanetRadialEditor() {
   planetRadialState.dragPointerId = null;
   planetRadialState.dragPointerStartDeg = null;
   planetRadialState.dragValueStartDeg = null;
-  planetRadialState.knobDragKeepSideMount = false;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
 }
@@ -3568,33 +3562,10 @@ function hidePlanetRadialEditor() {
 function updatePlanetRadialKnobPositions(mp) {
   if (!planetRadialEditorEl || !mp) return;
   const r = planetRadialState.knobRadius;
-  const active = planetRadialState.dragSetting;
-  const mountDir = planetRadialState.centerX > window.innerWidth * 0.62 ? -1 : 1;
-  const sideX = mountDir * Math.max(r + planetRadialState.sideMountGap, planetRadialState.knobRadius + 16);
-  const sideYOffset = {
-    size: -r * 0.52,
-    peak: 0,
-    water: r * 0.52,
-  };
   ['size', 'peak', 'water'].forEach(setting => {
     const knob = planetRadialKnobEls[setting];
     const cfg = PLANET_EDIT_CONFIG[setting];
     if (!knob || !cfg) return;
-    if (active && active !== setting) {
-      knob.style.left = `${sideX.toFixed(1)}px`;
-      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
-      return;
-    }
-    if (!active) {
-      knob.style.left = `${sideX.toFixed(1)}px`;
-      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
-      return;
-    }
-    if (planetRadialState.knobDragKeepSideMount && active === setting) {
-      knob.style.left = `${sideX.toFixed(1)}px`;
-      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
-      return;
-    }
     const value = valueFromPlanetSetting(mp, setting);
     const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
     const deg = planetEditTToAngle(setting, t);
@@ -3681,7 +3652,6 @@ function updatePlanetSelectionEditor() {
   planetRadialState.centerX = cx;
   planetRadialState.centerY = cy;
   planetRadialState.knobRadius = ringSize * 0.5;
-  planetRadialState.sideMountGap = Math.max(16, ringSize * 0.1);
   syncPlanetEditReadouts(mp);
   updatePlanetRadialKnobPositions(mp);
 }
@@ -3900,9 +3870,6 @@ if (planetRadialEditorEl) {
     e.stopPropagation();
     planetRadialState.dragSetting = setting;
     planetRadialState.dragPointerId = e.pointerId;
-    planetRadialState.dragStartClientX = e.clientX;
-    planetRadialState.dragStartClientY = e.clientY;
-    planetRadialState.knobDragKeepSideMount = true;
     const mp = managedPlanets[selectedPlanetIdx];
     const cfg = PLANET_EDIT_CONFIG[setting];
     if (mp && cfg) {
@@ -3923,15 +3890,6 @@ if (planetRadialEditorEl) {
   const onKnobMove = e => {
     if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
     e.preventDefault();
-    if (planetRadialState.knobDragKeepSideMount) {
-      const ddx = e.clientX - planetRadialState.dragStartClientX;
-      const ddy = e.clientY - planetRadialState.dragStartClientY;
-      if (ddx * ddx + ddy * ddy < 49) {
-        updatePlanetSelectionEditor();
-        return;
-      }
-      planetRadialState.knobDragKeepSideMount = false;
-    }
     updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
     updatePlanetSelectionEditor();
   };
@@ -3942,7 +3900,6 @@ if (planetRadialEditorEl) {
     planetRadialState.dragPointerId = null;
     planetRadialState.dragPointerStartDeg = null;
     planetRadialState.dragValueStartDeg = null;
-    planetRadialState.knobDragKeepSideMount = false;
     Object.values(planetRadialKnobEls).forEach(knob => {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
