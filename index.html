@@ -55,40 +55,59 @@ canvas:not(#start-starfield) {
 body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
 ::selection { background: transparent; color: inherit; }
 
-/* First screen: single tap to unlock audio, then the astra gate appears */
+/* First screen: remind about volume, then tap unlocks audio → astra gate */
 #tap-primer-screen {
   position: fixed;
   inset: 0;
   z-index: 1002;
   background: #000;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: clamp(1.25rem, 5vw, 2.5rem);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
+  text-align: center;
 }
-#tap-primer-icon {
-  width: clamp(100px, 28vw, 200px);
-  height: clamp(100px, 28vw, 200px);
+#tap-primer-panel {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  filter: drop-shadow(0 0 28px rgba(94, 232, 255, 0.45)) drop-shadow(0 0 48px rgba(255, 255, 255, 0.2));
-  animation: tap-primer-pulse 1.15s ease-in-out infinite;
+  gap: clamp(1rem, 3.5vh, 1.85rem);
+  max-width: min(22rem, 92vw);
 }
-#tap-primer-icon svg {
+#tap-primer-speaker {
+  width: clamp(76px, 22vw, 118px);
+  height: clamp(76px, 22vw, 118px);
+  color: #c8f8ff;
+  filter: drop-shadow(0 0 22px rgba(94, 232, 255, 0.5)) drop-shadow(0 0 40px rgba(255, 255, 255, 0.12));
+}
+#tap-primer-speaker svg {
   width: 100%;
   height: 100%;
   display: block;
 }
-@keyframes tap-primer-pulse {
-  0%, 100% { transform: scale(1) translateY(0); opacity: 0.9; }
-  50% { transform: scale(1.04) translateY(5px); opacity: 1; }
+#tap-primer-headline {
+  margin: 0;
+  font-family: "Exo 2", system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.2rem, 4.8vw, 1.75rem);
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  color: #f2fbff;
+  text-shadow: 0 0 28px rgba(120, 220, 255, 0.35);
 }
-@media (prefers-reduced-motion: reduce) {
-  #tap-primer-icon { animation: none; opacity: 1; }
+#tap-primer-cta {
+  margin: 0;
+  font-family: "Exo 2", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: clamp(0.78rem, 2.8vw, 0.95rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(190, 236, 255, 0.72);
 }
 
 /* Pre-splash start gate (Astra + tap / key to continue) */
@@ -1425,25 +1444,15 @@ input[type=range]::-moz-range-thumb {
   <div id="galaxy-list"></div>
 </div>
 
-<div id="tap-primer-screen" role="button" tabindex="0" aria-label="Tap to enable sound and continue">
-  <div id="tap-primer-icon" aria-hidden="true">
-    <!-- Curved index + touch ripples = reads as “tap” (not an upright hand silhouette) -->
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" aria-hidden="true">
-      <g stroke-linecap="round" stroke-linejoin="round">
-        <!-- Surface ripples (drawn under finger) -->
-        <circle cx="48" cy="78" r="22" stroke="#3eb8dc" stroke-width="1.1" opacity="0.22"/>
-        <circle cx="48" cy="78" r="14" stroke="#5fd8f0" stroke-width="1.2" opacity="0.4"/>
-        <circle cx="48" cy="78" r="7" stroke="#8aefff" stroke-width="1.35" opacity="0.65"/>
-        <circle cx="48" cy="78" r="3" fill="#e8fbff" stroke="#b8f6ff" stroke-width="0.85"/>
-        <!-- Index finger: thick curved stroke (outline + fill) -->
-        <path d="M 64 10 Q 52 42 48 76" stroke="#5ecfff" stroke-width="14" fill="none"/>
-        <path d="M 64 10 Q 52 42 48 76" stroke="#f4fbff" stroke-width="8" fill="none"/>
-        <!-- Nail / pad at tip -->
-        <ellipse cx="48" cy="74" rx="5" ry="4.2" fill="#dff8ff" stroke="#7ee8ff" stroke-width="1.05" transform="rotate(-18 48 74)"/>
-        <!-- Contact sparks -->
-        <path stroke="#c8f8ff" stroke-width="1.1" opacity="0.9" d="M 48 66 v-6 M 39 69 l4 -5 M 57 69 l-4 -5"/>
-      </g>
-    </svg>
+<div id="tap-primer-screen" role="button" tabindex="0" aria-labelledby="tap-primer-headline" aria-describedby="tap-primer-cta">
+  <div id="tap-primer-panel">
+    <div id="tap-primer-speaker" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M11 5 6 9H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h2l5 4V5z"/>
+      </svg>
+    </div>
+    <p id="tap-primer-headline">Turn your sound up.</p>
+    <p id="tap-primer-cta">Tap anywhere to continue</p>
   </div>
 </div>
 <div id="start-screen" class="gate-behind-primer" role="dialog" aria-modal="true" aria-labelledby="start-title" aria-describedby="start-hint">
