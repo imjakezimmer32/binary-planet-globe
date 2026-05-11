@@ -1338,7 +1338,7 @@ input[type=range]::-moz-range-thumb {
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script>
 // ── Renderer ──────────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -1426,6 +1426,7 @@ let dragging = false, lastPX = 0, lastPY = 0;
 // cameraTarget — the world point the camera orbits.  Normally the sun (origin)
 // but animates smoothly when navigating to another star system.
 const cameraTarget = new THREE.Vector3(0, 0, 0);
+const _cameraClipFocus = new THREE.Vector3();
 
 // Pan offset — shifts the look-at target in camera's local right/up plane
 const panOffset = new THREE.Vector3();
@@ -2535,16 +2536,23 @@ function updateCamera(curScale) {
   }
 }
 
-/** Widen the perspective far plane when zoomed out so orbit distance does not clip the scene. */
+/** Expand far clip for zoom-out; keep depth usable via logarithmicDepthBuffer on the renderer. */
 function updateDynamicCameraFar() {
   if (walkMode.active) return;
-  const orbitDist = cameraMode === 'sun'
+  _cameraClipFocus.copy(cameraTarget).add(panOffset);
+  const distToFocus = camera.position.distanceTo(_cameraClipFocus);
+  const orbitCap = cameraMode === 'sun'
     ? ORBIT_BASE * curScale * orbitZoom
     : PLANET_ORBIT_BASE * curScale * orbitZoom;
-  const camLen = camera.position.length();
+  const span = Math.max(distToFocus, orbitCap);
   const far = Math.min(
-    12e6,
-    Math.max(220000, orbitDist * 1.65 + 340000, camLen * 1.8 + 420000)
+    5e7,
+    Math.max(
+      220000,
+      span * 2.15 + 780000,
+      _cameraClipFocus.length() + 900000,
+      camera.position.length() + 900000
+    )
   );
   if (Math.abs(far - camera.far) > Math.max(800, camera.far * 0.035)) {
     camera.far = far;
