@@ -81,7 +81,7 @@ body.scene-visible canvas { opacity: 1; }
   text-shadow: 0 0 40px rgba(255,255,255,0.5);
 }
 
-/* Hide gameplay HUD until intro zoom settles */
+/* Hide gameplay HUD until intro zoom settles, and during flights between solar systems */
 /* Keep a transition so reveal fades in instead of popping */
 #ui,
 #cam-buttons,
@@ -5134,6 +5134,7 @@ function navigateTo(idx) {
   if (isNavigating || idx === currentDestIndex) return;
   if (walkMode.active) stopWalkMode();
   isNavigating = true;
+  document.body.classList.add('hud-hidden');
   syncTrailVisibility();
   zoomTarget = null; // cancel any splash zoom in progress
   const dest   = GALAXY_DESTINATIONS[idx];
@@ -5173,6 +5174,7 @@ function navigateTo(idx) {
       solGalaxyMenuRevealed = idx !== 0;
       syncTrailVisibility();
       rebuildGalaxyMenu();
+      document.body.classList.remove('hud-hidden');
     }
   }
   requestAnimationFrame(step);
