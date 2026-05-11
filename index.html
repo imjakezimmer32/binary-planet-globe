@@ -3378,6 +3378,14 @@ const planetRadialState = {
   dragSetting: null,
   dragPointerId: null,
   sideMountGap: 22,
+  /** Pointer angle (deg) at drag start — maps to current value via dragValueStartDeg */
+  dragPointerStartDeg: null,
+  /** Arc angle (deg) that matches the planet value when the drag began */
+  dragValueStartDeg: null,
+  dragStartClientX: 0,
+  dragStartClientY: 0,
+  /** Keep the active knob on the side stack until the finger moves a few px */
+  knobDragKeepSideMount: false,
 };
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
@@ -3550,6 +3558,9 @@ function hidePlanetRadialEditor() {
   planetRadialState.visible = false;
   planetRadialState.dragSetting = null;
   planetRadialState.dragPointerId = null;
+  planetRadialState.dragPointerStartDeg = null;
+  planetRadialState.dragValueStartDeg = null;
+  planetRadialState.knobDragKeepSideMount = false;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
 }
@@ -3575,6 +3586,11 @@ function updatePlanetRadialKnobPositions(mp) {
       return;
     }
     if (!active) {
+      knob.style.left = `${sideX.toFixed(1)}px`;
+      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
+      return;
+    }
+    if (planetRadialState.knobDragKeepSideMount && active === setting) {
       knob.style.left = `${sideX.toFixed(1)}px`;
       knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
       return;
@@ -3676,7 +3692,11 @@ function updatePlanetSettingFromPointer(clientX, clientY, setting) {
   const dx = clientX - planetRadialState.centerX;
   const dy = clientY - planetRadialState.centerY;
   if (dx * dx + dy * dy < 25) return;
-  const deg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  let deg = pointerDeg;
+  if (planetRadialState.dragPointerStartDeg !== null && planetRadialState.dragValueStartDeg !== null) {
+    deg = (pointerDeg - planetRadialState.dragPointerStartDeg + planetRadialState.dragValueStartDeg + 360) % 360;
+  }
   const t = planetEditAngleToT(setting, deg);
   const value = cfg.min + t * (cfg.max - cfg.min);
   applyPlanetEditSetting(setting, value);
@@ -3880,14 +3900,38 @@ if (planetRadialEditorEl) {
     e.stopPropagation();
     planetRadialState.dragSetting = setting;
     planetRadialState.dragPointerId = e.pointerId;
+    planetRadialState.dragStartClientX = e.clientX;
+    planetRadialState.dragStartClientY = e.clientY;
+    planetRadialState.knobDragKeepSideMount = true;
+    const mp = managedPlanets[selectedPlanetIdx];
+    const cfg = PLANET_EDIT_CONFIG[setting];
+    if (mp && cfg) {
+      const v = valueFromPlanetSetting(mp, setting);
+      const startT = (v - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      planetRadialState.dragValueStartDeg = planetEditTToAngle(setting, startT);
+      const dx = e.clientX - planetRadialState.centerX;
+      const dy = e.clientY - planetRadialState.centerY;
+      planetRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    } else {
+      planetRadialState.dragPointerStartDeg = null;
+      planetRadialState.dragValueStartDeg = null;
+    }
     updatePlanetRadialFocusVisuals();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
-    updatePlanetSettingFromPointer(e.clientX, e.clientY, setting);
     updatePlanetSelectionEditor();
   };
   const onKnobMove = e => {
     if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
     e.preventDefault();
+    if (planetRadialState.knobDragKeepSideMount) {
+      const ddx = e.clientX - planetRadialState.dragStartClientX;
+      const ddy = e.clientY - planetRadialState.dragStartClientY;
+      if (ddx * ddx + ddy * ddy < 49) {
+        updatePlanetSelectionEditor();
+        return;
+      }
+      planetRadialState.knobDragKeepSideMount = false;
+    }
     updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
     updatePlanetSelectionEditor();
   };
@@ -3896,6 +3940,9 @@ if (planetRadialEditorEl) {
     e.preventDefault();
     planetRadialState.dragSetting = null;
     planetRadialState.dragPointerId = null;
+    planetRadialState.dragPointerStartDeg = null;
+    planetRadialState.dragValueStartDeg = null;
+    planetRadialState.knobDragKeepSideMount = false;
     Object.values(planetRadialKnobEls).forEach(knob => {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
