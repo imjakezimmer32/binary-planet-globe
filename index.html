@@ -245,6 +245,11 @@ body.hud-hidden #walk-cam-badge {
 body.radial-edit-active #planet-panel {
   display: none !important;
 }
+#galaxy-menu.galaxy-await-sun-tap {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 body.sun-radial-edit-active #ui {
   opacity: 0 !important;
   visibility: hidden !important;
@@ -1254,8 +1259,6 @@ input[type=range]::-moz-range-thumb {
   <div id="s-face"></div>
 </div>
 <div id="cam-buttons">
-  <button class="cam-btn active" id="btn-sun">Solar View</button>
-  <button class="cam-btn" id="btn-planet">Planet View</button>
   <button class="cam-btn" id="btn-walk">Walk</button>
   <button class="cam-btn active" id="btn-grid">Grid</button>
   <button class="cam-btn" id="btn-cam-settings">Cam Settings</button>
@@ -1652,7 +1655,17 @@ const _pickRay = new THREE.Raycaster();
 const _pickNdc = new THREE.Vector2();
 let tapCandidate = null;
 
-function pickPlanetFromScreen(clientX, clientY) {
+function syncSolGalaxyMenuVisibility() {
+  const gm = document.getElementById('galaxy-menu');
+  if (!gm) return;
+  const hide =
+    cameraMode === 'sun' &&
+    currentDestIndex === 0 &&
+    (!solGalaxyMenuRevealed || isNavigating);
+  gm.classList.toggle('galaxy-await-sun-tap', hide);
+}
+
+function pickSolarSystemFromScreen(clientX, clientY) {
   if (walkMode.active) return;
   const rect = _canvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
@@ -1661,22 +1674,56 @@ function pickPlanetFromScreen(clientX, clientY) {
   _pickRay.setFromCamera(_pickNdc, camera);
 
   const pickObjects = [];
-  const objectToPlanet = new Map();
+  const metaByUuid = new Map();
+
   managedPlanets.forEach((mp, idx) => {
     const targets = mp.obj.getPickables ? mp.obj.getPickables() : [];
     targets.forEach(obj => {
       if (!obj || !obj.visible) return;
       pickObjects.push(obj);
-      objectToPlanet.set(obj.uuid, idx);
+      metaByUuid.set(obj.uuid, { kind: 'planet', idx });
     });
   });
-  if (pickObjects.length === 0) return;
+
+  if (currentDestIndex === 0) {
+    sunGroup.updateMatrixWorld(true);
+    sunGroup.traverse(child => {
+      if (child.isMesh && child.visible) {
+        pickObjects.push(child);
+        metaByUuid.set(child.uuid, { kind: 'sun' });
+      }
+    });
+  }
+
+  if (!pickObjects.length) return;
   const hits = _pickRay.intersectObjects(pickObjects, false);
-  if (!hits.length) return;
-  const idx = objectToPlanet.get(hits[0].object.uuid);
-  if (idx === undefined) return;
-  if (cameraMode !== 'planet') setCamMode('planet');
-  selectPlanet(idx);
+  for (let hi = 0; hi < hits.length; hi++) {
+    let obj = hits[hi].object;
+    let tag = null;
+    while (obj) {
+      tag = metaByUuid.get(obj.uuid);
+      if (tag) break;
+      obj = obj.parent;
+    }
+    if (!tag) continue;
+    if (tag.kind === 'planet') {
+      if (cameraMode !== 'planet') setCamMode('planet');
+      selectPlanet(tag.idx);
+      return;
+    }
+    if (tag.kind === 'sun') {
+      onSunTapped();
+      return;
+    }
+  }
+}
+
+function onSunTapped() {
+  if (walkMode.active || currentDestIndex !== 0) return;
+  solGalaxyMenuRevealed = true;
+  setCamMode('sun');
+  sunRadialDismissed = false;
+  syncSolGalaxyMenuVisibility();
 }
 
 function isTouchPointer(e) {
@@ -1911,7 +1958,7 @@ _canvas.addEventListener('pointerup', e => {
   if (!tapCandidate || tapCandidate.id !== e.pointerId) return;
   const shouldPick = !tapCandidate.moved && (isTouchPointer(e) || e.button === 0);
   tapCandidate = null;
-  if (shouldPick) pickPlanetFromScreen(e.clientX, e.clientY);
+  if (shouldPick) pickSolarSystemFromScreen(e.clientX, e.clientY);
 });
 
 _canvas.addEventListener('pointercancel', e => {
@@ -3025,6 +3072,7 @@ dialWarp.addEventListener('input', () => {
 });
 
 let sunRadialDismissed = false;
+let solGalaxyMenuRevealed = false;
 function scaleWorldToSliderValue(worldScale) {
   const ui = scaleWorldToUi(worldScale);
   const u = Math.max(SCALE_MIN, Math.min(SCALE_MAX, ui));
@@ -4407,30 +4455,26 @@ updateTwinButtonVisibility();
 updateWalkButtonVisibility();
 if (isNarrowPlanetUI()) setPlanetPanelOpen(true);
 
-// ── Camera view buttons ───────────────────────────────────────────
-const btnSun    = document.getElementById('btn-sun');
-const btnPlanet = document.getElementById('btn-planet');
+// ── Camera view buttons (Solar / Planet views: tap sun or a planet on canvas) ──
 function setCamMode(mode) {
   if (mode !== 'planet' && walkMode.active) stopWalkMode();
+  if (mode === 'planet') {
+    hideSunRadialEditor();
+    solGalaxyMenuRevealed = true;
+  }
   cameraMode = mode;
   if (mode === 'sun') {
     sunRadialDismissed = false;
-  } else {
-    hideSunRadialEditor();
   }
   applyDetailForCurrentView(targetScale);
   setPlanetsRenderable(mode === 'planet' || curScale < PLANET_HIDE_SCALE);
-  btnSun.classList.toggle('active', mode === 'sun');
-  btnPlanet.classList.toggle('active', mode === 'planet');
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
   galaxyList.classList.remove('open');
   galaxyBtn.classList.remove('open');
   rebuildGalaxyMenu();
+  syncSolGalaxyMenuVisibility();
 }
-btnSun.addEventListener('click',    () => setCamMode('sun'));
-btnPlanet.addEventListener('click', () => setCamMode('planet'));
-
 const btnGrid = document.getElementById('btn-grid');
 let gridOn = true;
 btnGrid.addEventListener('click', () => {
@@ -4701,6 +4745,7 @@ function animate() {
   sunGroup.rotation.y = sunSpin;
   updatePlanetSelectionEditor();
   updateSunSelectionEditor();
+  syncSolGalaxyMenuVisibility();
 
   renderer.render(scene, camera);
 }
@@ -4812,6 +4857,7 @@ function navigateTo(idx) {
     } else {
       currentDestIndex = idx;
       isNavigating     = false;
+      solGalaxyMenuRevealed = idx !== 0;
       syncTrailVisibility();
       rebuildGalaxyMenu();
     }
@@ -4914,6 +4960,7 @@ function rebuildGalaxyMenu() {
         ? managedPlanets[selectedPlanetIdx].name
         : 'Pick Planet';
     galaxyBtn.textContent = '◉ ' + selectedName;
+    syncSolGalaxyMenuVisibility();
     return;
   }
 
@@ -4929,6 +4976,7 @@ function rebuildGalaxyMenu() {
     galaxyList.appendChild(el);
   });
   galaxyBtn.textContent = '⬡ ' + GALAXY_DESTINATIONS[currentDestIndex].name;
+  syncSolGalaxyMenuVisibility();
 }
 
 galaxyBtn.addEventListener('click', () => {
