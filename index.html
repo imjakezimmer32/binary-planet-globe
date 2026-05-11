@@ -2963,6 +2963,30 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   // Per-planet state — independent of any global
   const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
 
+  let _depthBack, _terrain, _gridWire, _outlineWire, _atmo, _lavaList;
+
+  function syncPlanetVisuals() {
+    if (!_terrain) return;
+    const full = cameraMode === 'planet';
+    _depthBack.visible = full;
+    _terrain.visible = true;
+    const terrMat = _terrain.material;
+    if (full) {
+      terrMat.transparent = false;
+      terrMat.opacity = 1;
+      terrMat.depthWrite = true;
+    } else {
+      terrMat.transparent = true;
+      terrMat.opacity = 0;
+      terrMat.depthWrite = false;
+    }
+    if (_lavaList) _lavaList.forEach(m => { m.visible = full; });
+    if (_atmo) _atmo.visible = full;
+    const gOn = typeof gridOn !== 'undefined' ? gridOn : true;
+    if (_gridWire) _gridWire.visible = full && gOn;
+    if (_outlineWire) _outlineWire.visible = !full;
+  }
+
   function build(d) {
     built.forEach(c => {
       if (c.geometry) c.geometry.dispose();
@@ -2979,6 +3003,12 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     const idxGeo  = buildGlobe(baseR, buildDetail, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
     const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, seed);
+
+    // Low-detail mesh edges for solar / system view (dense grid only in planet view).
+    const OUTLINE_DETAIL = 2;
+    const idxOutlineGeo = buildGlobe(baseR, OUTLINE_DETAIL, seed, ps, wl);
+    const outlineEdgesGeo = new THREE.EdgesGeometry(idxOutlineGeo);
+    idxOutlineGeo.dispose();
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
@@ -3019,12 +3049,19 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       });
     })();
 
-    const wire = new THREE.LineSegments(
+    const gridWire = new THREE.LineSegments(
       new THREE.EdgesGeometry(idxGeo),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
     );
-    wire.scale.setScalar(1.0015);
-    wire.renderOrder = 2;
+    gridWire.scale.setScalar(1.0015);
+    gridWire.renderOrder = 2;
+
+    const outlineWire = new THREE.LineSegments(
+      outlineEdgesGeo,
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 })
+    );
+    outlineWire.scale.setScalar(1.0022);
+    outlineWire.renderOrder = 2;
 
     const atmo = new THREE.Mesh(
       new THREE.SphereGeometry(baseR * 1.10, 24, 24),
@@ -3039,9 +3076,16 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 
     built = [depthBack, terrain];
     if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
-    built.push(wire, atmo);
+    built.push(gridWire, outlineWire, atmo);
     pickables = [terrain];
+    _depthBack = depthBack;
+    _terrain = terrain;
+    _gridWire = gridWire;
+    _outlineWire = outlineWire;
+    _atmo = atmo;
+    _lavaList = lavaGlowMeshes;
     spin.add(...built);
+    syncPlanetVisuals();
   }
 
   build(detailInit);
@@ -3050,13 +3094,13 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     baseRadius: baseR,
     rebuild:  build,
     setWater: () => {},
-    setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
-    syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
+    syncPlanetVisuals,
+    setGrid:  () => { syncPlanetVisuals(); },
+    syncGrid: ()  => { syncPlanetVisuals(); },
     setWireOpacity: (v) => {
-      const a = Math.max(0, Math.min(1, v));
-      built.forEach(c => {
-        if (c.isLineSegments && c.material) c.material.opacity = a;
-      });
+      const outlineOp = Math.max(0, Math.min(0.55, v * 1.85));
+      if (_gridWire?.material) _gridWire.material.opacity = 0.25;
+      if (_outlineWire?.material) _outlineWire.material.opacity = cameraMode === 'planet' ? 0.35 : outlineOp;
     },
     getTerrainMesh: () => pickables[0] || null,
     getPickables: () => pickables,
@@ -4840,6 +4884,7 @@ function setCamMode(mode) {
   galaxyBtn.classList.remove('open');
   rebuildGalaxyMenu();
   syncSolGalaxyMenuVisibility();
+  managedPlanets.forEach(mp => mp.obj.syncPlanetVisuals?.());
 }
 const btnGrid = document.getElementById('btn-grid');
 let gridOn = true;
