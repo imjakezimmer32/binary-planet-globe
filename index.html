@@ -5667,9 +5667,20 @@ const _origAnimate = animate;
   const startScreenOuterEl = new Audio(START_SCREEN_MUSIC_SRC);
   startScreenOuterEl.loop = true;
   startScreenOuterEl.preload = 'auto';
+  try {
+    startScreenOuterEl.playsInline = true;
+  } catch (_) {}
+  startScreenOuterEl.setAttribute('playsinline', '');
+  startScreenOuterEl.setAttribute('webkit-playsinline', '');
+  // In-document audio is more reliable on iOS/Safari than a detached Audio node.
+  startScreenOuterEl.style.cssText =
+    'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;';
+  document.body.appendChild(startScreenOuterEl);
   startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
 
   function tryPlayStartScreenMusic() {
+    // After fade/stop we set volume to 0 — without this, pageshow / primers replay silent.
+    startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
     const pr = startScreenOuterEl.play();
     if (pr && typeof pr.catch === 'function') pr.catch(() => {});
   }
