@@ -21,6 +21,9 @@
 <link rel="icon" type="image/png" sizes="512x512" href="/app-icon-512.png">
 <link rel="apple-touch-icon" href="/app-icon-192.png">
 <link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,800;0,900;1,700&display=swap" rel="stylesheet">
 <title>AstraBound</title>
 <style>
 /* ── Shared (all viewports) ─────────────────────────────────────── */
@@ -66,28 +69,44 @@ body.scene-visible canvas { opacity: 1; }
   #start-screen { cursor: pointer; }
 }
 #start-title {
-  font-family: monospace;
-  font-size: clamp(40px, 11vw, 160px);
+  font-family: "Exo 2", system-ui, sans-serif;
+  font-weight: 900;
+  font-size: clamp(64px, 19vw, 260px);
+  line-height: 0.95;
   color: #fff;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.06em;
   text-transform: lowercase;
-  text-shadow: 0 0 60px rgba(255,255,255,0.35);
+  text-shadow:
+    0 0 80px rgba(255, 255, 255, 0.45),
+    0 0 28px rgba(180, 230, 255, 0.35);
 }
 #start-hint {
-  font-family: monospace;
-  font-size: clamp(14px, 3.2vw, 22px);
-  color: rgba(255,255,255,0.62);
-  letter-spacing: 0.12em;
+  font-family: "Exo 2", system-ui, sans-serif;
+  font-weight: 700;
+  font-style: italic;
+  font-size: clamp(17px, 4.2vw, 30px);
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: 0.14em;
   text-align: center;
   padding: 0 1.5rem;
-  max-width: 90vw;
+  max-width: 92vw;
   line-height: 1.45;
   margin: 0;
-  animation: start-hint-pulse 2.2s ease-in-out infinite;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity, letter-spacing;
+  animation: start-hint-breathe 3.4s ease-in-out infinite;
 }
-@keyframes start-hint-pulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+@keyframes start-hint-breathe {
+  0%, 100% {
+    opacity: 0.58;
+    transform: scale(1);
+    letter-spacing: 0.12em;
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.045);
+    letter-spacing: 0.2em;
+  }
 }
 
 /* Splash: same structure on all viewports; font sizes tuned per breakpoint */
