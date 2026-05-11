@@ -1169,7 +1169,7 @@ const WALK_CFG = {
   tpCollisionPadding: 0.12,
   tpSurfaceClearance: 0.28,
   lookSensitivity: 0.0028,
-  mobileLookSensitivity: 0.0034,
+  mobileLookSensitivity: 0.0052,
   pitchDotLimit: 0.96,
   upParallelLimit: 0.985,
   sprintBobFreq: 13,
@@ -1435,16 +1435,14 @@ function onMobilePointerDown(e) {
 
 function onMobilePointerMove(e) {
   if (!mobPointers.has(e.pointerId)) return;
+  const prev = mobPointers.get(e.pointerId);
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   if (walkMode.active) {
-    if (mobPointers.size === 1 && mobSingleReady) {
-      const rawDX = e.clientX - mobSingleLX;
-      const rawDY = e.clientY - mobSingleLY;
-      mobSingleLX = e.clientX;
-      mobSingleLY = e.clientY;
-      queueWalkLook(rawDX, rawDY, true);
-    } else if (mobPointers.size === 2) {
+    if (prev) {
+      queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
+    }
+    if (mobPointers.size >= 2) {
       const pair = mobPinchPair();
       if (pair) {
         const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
@@ -1976,6 +1974,20 @@ function updateWalkMode(dt) {
   } else {
     walkState.grounded = false;
     walkState.anchorPlanetIdx = null;
+    if (walkMode.spawnPlanetIdx !== null) {
+      const spawnPlanet = managedPlanets[walkMode.spawnPlanetIdx];
+      const fallbackSurface = spawnPlanet
+        ? sampleWalkSurfaceForPlanet(spawnPlanet, walkMode.spawnPlanetIdx, walkState.position)
+        : null;
+      if (fallbackSurface && fallbackSurface.gap <= WALK_CFG.snapDistance * 3.5) {
+        walkState.position.copy(fallbackSurface.point).addScaledVector(fallbackSurface.normal, WALK_CFG.footOffset);
+        walkState.up.copy(fallbackSurface.normal).normalize();
+        const inward = walkState.velocity.dot(fallbackSurface.normal);
+        if (inward < 0) walkState.velocity.addScaledVector(fallbackSurface.normal, -inward);
+        walkState.grounded = true;
+        walkState.anchorPlanetIdx = walkMode.spawnPlanetIdx;
+      }
+    }
   }
 
   walkState.sprintBlend += ((sprinting ? 1 : 0) - walkState.sprintBlend) * Math.min(1, dt * 10);
@@ -2022,7 +2034,10 @@ function updateWalkMode(dt) {
   } else {
     walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
     _walkTmp.copy(walkState.viewDir);
+    _walkTmp.projectOnPlane(walkState.up);
     if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(walkState.forward);
+    _walkTmp.projectOnPlane(walkState.up);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(_walkRight);
     _walkTmp.normalize();
     _walkCamTarget.copy(walkState.position)
       .addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bob)
@@ -2041,6 +2056,15 @@ function updateWalkMode(dt) {
           if (camRadius < 1e-6) _walkTmp2.copy(walkState.up);
           else _walkTmp2.multiplyScalar(1 / camRadius);
           _walkCamPos.copy(_walkCenter).addScaledVector(_walkTmp2, minCamRadius);
+        }
+      }
+    }
+    if (walkState.anchorPlanetIdx !== null) {
+      const anchorPlanet = managedPlanets[walkState.anchorPlanetIdx];
+      if (anchorPlanet) {
+        const camSurface = sampleWalkSurfaceForPlanet(anchorPlanet, walkState.anchorPlanetIdx, _walkCamPos);
+        if (camSurface && camSurface.gap < WALK_CFG.tpSurfaceClearance) {
+          _walkCamPos.copy(camSurface.point).addScaledVector(camSurface.normal, WALK_CFG.tpSurfaceClearance);
         }
       }
     }
