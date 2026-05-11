@@ -5593,6 +5593,16 @@ const _origAnimate = animate;
     else startScreenOuterEl.volume = 0;
   }
 
+  /**
+   * Stop title music only after Sol music has begun in the same user-activation turn.
+   * Pausing the start-screen MediaElementSource first can prevent the in-game track
+   * from starting on some browsers (shared AudioContext).
+   */
+  function handoffFromStartScreenToGameMusic() {
+    solarSystemAudio.unlock();
+    stopStartScreenMusic();
+  }
+
   /** First real gesture must start audio on strict browsers; capture runs before dismiss handlers. */
   function attachStartScreenMusicPrimers() {
     const prime = () => tryPlayStartScreenMusic();
@@ -5711,8 +5721,7 @@ const _origAnimate = animate;
   const detachStartScreenMusicPrimers = attachStartScreenMusicPrimers();
   await waitForStart();
   detachStartScreenMusicPrimers();
-  stopStartScreenMusic();
-  solarSystemAudio.unlock();
+  handoffFromStartScreenToGameMusic();
   await dismissStartScreen();
   await run();
 })();
