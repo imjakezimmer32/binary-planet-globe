@@ -75,6 +75,20 @@ canvas { display: block; touch-action: none; }
   text-shadow: 0 0 40px rgba(255,255,255,0.5);
 }
 
+/* Hide gameplay HUD until intro zoom settles */
+body.hud-hidden #ui,
+body.hud-hidden #cam-buttons,
+body.hud-hidden #cam-settings,
+body.hud-hidden #planet-panel,
+body.hud-hidden #planet-radial-editor,
+body.hud-hidden #galaxy-menu,
+body.hud-hidden #walk-controls,
+body.hud-hidden #walk-cam-badge {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /* ══════════════════════════════════════════════════════════════════
    PC / DESKTOP — wide layouts, original spacing (769px and wider)
    ══════════════════════════════════════════════════════════════════ */
@@ -1027,7 +1041,7 @@ input[type=range]::-moz-range-thumb {
 
 </style>
 </head>
-<body>
+<body class="hud-hidden">
 
 <div id="planet-panel">
   <div id="planet-panel-header">
@@ -4247,8 +4261,19 @@ const _origAnimate = animate;
   const splash  = document.getElementById('splash');
   const helloEl = document.getElementById('s-hello');
   const faceEl  = document.getElementById('s-face');
+  const INTRO_ZOOM_EPSILON = 0.02;
+  const INTRO_ZOOM_TIMEOUT_MS = 9000;
 
   function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+  async function waitForIntroZoom() {
+    const start = performance.now();
+    while (performance.now() - start < INTRO_ZOOM_TIMEOUT_MS) {
+      const zoomSettled = zoomTarget === null;
+      const zoomDistance = Math.abs(Math.log(orbitZoom) - Math.log(SYSTEM_FIT_ZOOM));
+      if (zoomSettled && zoomDistance <= INTRO_ZOOM_EPSILON) return;
+      await wait(16);
+    }
+  }
 
   // Start camera very far out; the animate loop will log-lerp it to 3.0
   orbitZoom = 4000;
@@ -4293,6 +4318,8 @@ const _origAnimate = animate;
     splash.style.opacity    = '0';
     await wait(900);
     splash.style.display = 'none';
+    await waitForIntroZoom();
+    document.body.classList.remove('hud-hidden');
     rebuildGalaxyMenu();
     // zoom continues past the fade, settling gently near orbitZoom 3
   }
