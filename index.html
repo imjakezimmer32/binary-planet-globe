@@ -75,6 +75,19 @@ canvas { display: block; touch-action: none; }
   text-shadow: 0 0 40px rgba(255,255,255,0.5);
 }
 
+/* Intro: keep chrome hidden until post-splash camera zoom settles (see splashIntroZoomPrimed). */
+body.intro-hud-hidden #planet-panel,
+body.intro-hud-hidden #galaxy-menu,
+body.intro-hud-hidden #cam-buttons,
+body.intro-hud-hidden #cam-settings,
+body.intro-hud-hidden #ui,
+body.intro-hud-hidden #walk-controls,
+body.intro-hud-hidden #walk-cam-badge,
+body.intro-hud-hidden #planet-radial-editor {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /* ══════════════════════════════════════════════════════════════════
    PC / DESKTOP — wide layouts, original spacing (769px and wider)
    ══════════════════════════════════════════════════════════════════ */
@@ -1027,7 +1040,7 @@ input[type=range]::-moz-range-thumb {
 
 </style>
 </head>
-<body>
+<body class="intro-hud-hidden">
 
 <div id="planet-panel">
   <div id="planet-panel-header">
@@ -1211,6 +1224,7 @@ const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 // Sun-view orbit state
 let orbitTheta = -0.3, orbitPhi = 0.92, orbitZoom = 3.0;
 let zoomTarget = null; // when set, animate loop log-lerps orbitZoom toward it
+let splashIntroZoomPrimed = false; // splash phase 5: reveal HUD when log-zoom lerp finishes
 let dTheta = 0, dPhi = 0;
 
 // Planet-view orbit state (separate angles so each view remembers its position)
@@ -3905,6 +3919,10 @@ function animate() {
       orbitZoom = Math.exp(logCur + (logTgt - logCur) * 0.008);
     }
   }
+  if (splashIntroZoomPrimed && zoomTarget === null) {
+    splashIntroZoomPrimed = false;
+    document.body.classList.remove('intro-hud-hidden');
+  }
 
   // Smooth scale lerp (camera/universe view only; objects keep real size)
   curScale += (targetScale - curScale) * 0.08;
@@ -4137,6 +4155,8 @@ syncTrailVisibility();
 function navigateTo(idx) {
   if (isNavigating || idx === currentDestIndex) return;
   if (walkMode.active) stopWalkMode();
+  document.body.classList.remove('intro-hud-hidden');
+  splashIntroZoomPrimed = false;
   isNavigating = true;
   syncTrailVisibility();
   zoomTarget = null; // cancel any splash zoom in progress
@@ -4288,6 +4308,7 @@ const _origAnimate = animate;
 
     // ── Phase 5: Fade splash — zoom starts HERE so the user's first view
     //    of the 3D scene is from 4000× and they watch it zoom in. ────────
+    splashIntroZoomPrimed = true;
     zoomTarget = SYSTEM_FIT_ZOOM;   // log-lerp fires from this exact frame onward
     splash.style.transition = 'opacity 0.9s ease';
     splash.style.opacity    = '0';
