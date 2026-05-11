@@ -111,6 +111,98 @@ body.hud-hidden #walk-cam-badge {
   display: none !important;
 }
 
+/* Planet radial editor — shared across viewports (JS sets left/top on the root).
+   Must not live only inside the desktop media query, or narrow screens never get
+   position:fixed and knob offsets anchor incorrectly. */
+#planet-radial-editor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 88;
+  display: none;
+  pointer-events: none;
+  --pre-size: 220px;
+}
+#planet-radial-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pre-size);
+  height: var(--pre-size);
+  margin-left: calc(var(--pre-size) * -0.5);
+  margin-top: calc(var(--pre-size) * -0.5);
+  border-radius: 50%;
+  border: 1px solid rgba(122, 233, 255, 0.35);
+  box-shadow: 0 0 22px rgba(56, 201, 255, 0.32), inset 0 0 32px rgba(16, 140, 205, 0.2);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
+}
+#planet-radial-guide {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pre-size);
+  height: var(--pre-size);
+  margin-left: calc(var(--pre-size) * -0.5);
+  margin-top: calc(var(--pre-size) * -0.5);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  background: conic-gradient(
+    from var(--guide-start, 0deg),
+    rgba(129, 235, 255, 0.92) 0deg var(--guide-span, 90deg),
+    rgba(129, 235, 255, 0) var(--guide-span, 90deg) 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
+  mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
+}
+#planet-radial-guide.visible { opacity: 1; }
+.planet-radial-knob {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 72px;
+  padding: 6px 8px;
+  border-radius: 11px;
+  border: 1px solid rgba(162, 236, 255, 0.38);
+  background: rgba(1, 15, 28, 0.72);
+  box-shadow: 0 0 14px rgba(44, 184, 255, 0.28);
+  color: rgba(219, 247, 255, 0.95);
+  font-family: monospace;
+  text-transform: uppercase;
+  text-align: center;
+  pointer-events: auto;
+  cursor: grab;
+  opacity: 0.98;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.planet-radial-knob:active { cursor: grabbing; }
+.planet-radial-knob.active {
+  border-color: rgba(210, 247, 255, 0.9);
+  box-shadow: 0 0 22px rgba(84, 206, 255, 0.55);
+  transform: translate(-50%, -50%) scale(1.05);
+}
+.planet-radial-knob.dim {
+  opacity: 0.18;
+  transform: translate(-50%, -50%) scale(0.94);
+}
+.planet-radial-knob .prk-name {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(181, 238, 255, 0.85);
+}
+.planet-radial-knob .prk-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.92);
+}
+body.radial-edit-active #planet-panel {
+  display: none !important;
+}
+
 /* ══════════════════════════════════════════════════════════════════
    PC / DESKTOP — wide layouts, original spacing (769px and wider)
    ══════════════════════════════════════════════════════════════════ */
@@ -302,94 +394,6 @@ input[type=range]::-webkit-slider-thumb {
   pointer-events: none;
 }
 #planet-edit-panel input[type=range] { width: 100%; }
-#planet-radial-editor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 88;
-  display: none;
-  pointer-events: none;
-  --pre-size: 220px;
-}
-#planet-radial-ring {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--pre-size);
-  height: var(--pre-size);
-  margin-left: calc(var(--pre-size) * -0.5);
-  margin-top: calc(var(--pre-size) * -0.5);
-  border-radius: 50%;
-  border: 1px solid rgba(122, 233, 255, 0.35);
-  box-shadow: 0 0 22px rgba(56, 201, 255, 0.32), inset 0 0 32px rgba(16, 140, 205, 0.2);
-  background:
-    radial-gradient(circle at 50% 50%, rgba(74, 232, 255, 0.03) 0 46%, rgba(65, 194, 255, 0.11) 58%, rgba(14, 39, 59, 0.18) 100%);
-}
-#planet-radial-guide {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--pre-size);
-  height: var(--pre-size);
-  margin-left: calc(var(--pre-size) * -0.5);
-  margin-top: calc(var(--pre-size) * -0.5);
-  border-radius: 50%;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.16s ease;
-  background: conic-gradient(
-    from var(--guide-start, 0deg),
-    rgba(129, 235, 255, 0.92) 0deg var(--guide-span, 90deg),
-    rgba(129, 235, 255, 0) var(--guide-span, 90deg) 360deg
-  );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
-  mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
-}
-#planet-radial-guide.visible { opacity: 1; }
-.planet-radial-knob {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  min-width: 72px;
-  padding: 6px 8px;
-  border-radius: 11px;
-  border: 1px solid rgba(162, 236, 255, 0.38);
-  background: rgba(1, 15, 28, 0.72);
-  box-shadow: 0 0 14px rgba(44, 184, 255, 0.28);
-  color: rgba(219, 247, 255, 0.95);
-  font-family: monospace;
-  text-transform: uppercase;
-  text-align: center;
-  pointer-events: auto;
-  cursor: grab;
-  opacity: 0.98;
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-.planet-radial-knob:active { cursor: grabbing; }
-.planet-radial-knob.active {
-  border-color: rgba(210, 247, 255, 0.9);
-  box-shadow: 0 0 22px rgba(84, 206, 255, 0.55);
-  transform: translate(-50%, -50%) scale(1.05);
-}
-.planet-radial-knob.dim {
-  opacity: 0.18;
-  transform: translate(-50%, -50%) scale(0.94);
-}
-.planet-radial-knob .prk-name {
-  display: block;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  color: rgba(181, 238, 255, 0.85);
-}
-.planet-radial-knob .prk-value {
-  display: block;
-  margin-top: 2px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.92);
-}
-body.radial-edit-active #planet-panel {
-  display: none !important;
-}
 
 /* ── Galaxy navigation menu ─────────────────────────────────────── */
 #galaxy-menu {
@@ -2485,14 +2489,18 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   const liquidStrength = liquid.strength;
   const liquidR = liquid.liquidR;
   const liquidEps = hasLiquid ? liquidR * 0.0018 : 0;
-  const lavaGlowPos = [];
-  const lavaGlowCol = [];
+  const lavaGlowInnerPos = [];
+  const lavaGlowInnerCol = [];
+  const lavaGlowOuterPos = [];
+  const lavaGlowOuterCol = [];
   const WATER_DEEP = [0.06, 0.46, 0.56];
   const WATER_AQUA = [0.20, 0.78, 0.76];
   const WATER_SAND = [0.84, 0.75, 0.50];
   const LAND_SAND = [0.87, 0.78, 0.55];
   const LAVA_BLACK = [0.08, 0.08, 0.09];
-  const LAVA_RED = [0.82, 0.10, 0.04];
+  const LAVA_RED_HOT = [0.96, 0.14, 0.05];
+  const LAVA_RED_MID = [0.78, 0.09, 0.04];
+  const LAVA_RED_DEEP = [0.42, 0.05, 0.03];
   const LAVA_YELLOW = [1.00, 0.88, 0.18];
   const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
   const landShoreBand = shoreBand * 1.55;
@@ -2568,21 +2576,39 @@ function colorizeGlobe(geo, baseR, ps, wl) {
       }
       continue;
     } else if (isLiquidFace && hasLava) {
-      // Lava gradient: yellow core -> red ring -> dark shoreline crust.
+      // Lava: yellow core -> hot red -> deep red -> dark crust (extra red in the mid bands).
       for (let v = 0; v < 3; v++) {
         const i = faceIdx[v];
         const rr = faceR[v];
         const shoreT = Math.max(0, Math.min(1, (rr - liquidR) / lavaBand));
-        const c = shoreT < 0.52
-          ? mix3(LAVA_YELLOW, LAVA_RED, shoreT / 0.52)
-          : mix3(LAVA_RED, LAVA_BLACK, (shoreT - 0.52) / 0.48);
+        let c;
+        if (shoreT < 0.36) {
+          c = mix3(LAVA_YELLOW, LAVA_RED_HOT, shoreT / 0.36);
+        } else if (shoreT < 0.70) {
+          c = mix3(LAVA_RED_HOT, LAVA_RED_MID, (shoreT - 0.36) / 0.34);
+        } else {
+          c = mix3(LAVA_RED_MID, LAVA_BLACK, (shoreT - 0.70) / 0.30);
+        }
         col[i*3] = c[0];
         col[i*3+1] = c[1];
         col[i*3+2] = c[2];
 
-        const glow = mix3([0.44, 0.08, 0.04], [0.92, 0.74, 0.22], Math.pow(1 - shoreT, 0.72));
-        lavaGlowPos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-        lavaGlowCol.push(glow[0], glow[1], glow[2]);
+        const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+        // Double additive red polygon shells: inner crimson sheet + outer hot rim.
+        const innerGlow = mix3(
+          [0.30, 0.03, 0.02],
+          [0.98, 0.16, 0.07],
+          Math.pow(1 - shoreT, 0.62)
+        );
+        const outerGlow = mix3(
+          [0.48, 0.05, 0.03],
+          [1.0, 0.42, 0.12],
+          Math.pow(1 - shoreT, 0.88)
+        );
+        lavaGlowInnerPos.push(px, py, pz);
+        lavaGlowInnerCol.push(innerGlow[0], innerGlow[1], innerGlow[2]);
+        lavaGlowOuterPos.push(px, py, pz);
+        lavaGlowOuterCol.push(outerGlow[0], outerGlow[1], outerGlow[2]);
       }
       continue;
     } else {
@@ -2608,7 +2634,10 @@ function colorizeGlobe(geo, baseR, ps, wl) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return {
-    lavaGlow: lavaGlowPos.length > 0 ? { positions: lavaGlowPos, colors: lavaGlowCol } : null
+    lavaGlow: lavaGlowInnerPos.length > 0 ? [
+      { positions: lavaGlowInnerPos, colors: lavaGlowInnerCol, scale: 1.0025, opacity: 0.46 },
+      { positions: lavaGlowOuterPos, colors: lavaGlowOuterCol, scale: 1.0049, opacity: 0.34 }
+    ] : null
   };
 }
 
@@ -2651,27 +2680,29 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
     terrain.renderOrder = 0;
-    const lavaGlow = (() => {
+    const lavaGlowMeshes = (() => {
       if (!colorMeta?.lavaGlow) return null;
-      const glowGeo = new THREE.BufferGeometry();
-      glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(colorMeta.lavaGlow.positions, 3));
-      glowGeo.setAttribute('color', new THREE.Float32BufferAttribute(colorMeta.lavaGlow.colors, 3));
-      const glowMat = new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.42,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        depthTest: true,
-        side: THREE.DoubleSide
+      const layers = Array.isArray(colorMeta.lavaGlow) ? colorMeta.lavaGlow : [colorMeta.lavaGlow];
+      return layers.map((layer, li) => {
+        const glowGeo = new THREE.BufferGeometry();
+        glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(layer.positions, 3));
+        glowGeo.setAttribute('color', new THREE.Float32BufferAttribute(layer.colors, 3));
+        const glowMat = new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: layer.opacity != null ? layer.opacity : 0.42,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: true,
+          side: THREE.DoubleSide
+        });
+        const glowMesh = new THREE.Mesh(glowGeo, glowMat);
+        glowGeo.computeBoundingSphere();
+        glowMesh.scale.setScalar(layer.scale != null ? layer.scale : 1.0032);
+        glowMesh.frustumCulled = false;
+        glowMesh.renderOrder = 1 + li * 0.02;
+        return glowMesh;
       });
-      const glowMesh = new THREE.Mesh(glowGeo, glowMat);
-      glowGeo.computeBoundingSphere();
-      glowMesh.scale.setScalar(1.0032);
-      // Avoid long-range culling glitches on thin additive geometry.
-      glowMesh.frustumCulled = false;
-      glowMesh.renderOrder = 1;
-      return glowMesh;
     })();
 
     const wire = new THREE.LineSegments(
@@ -2693,7 +2724,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     atmo.renderOrder = 3;
 
     built = [depthBack, terrain];
-    if (lavaGlow) built.push(lavaGlow);
+    if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
     built.push(wire, atmo);
     pickables = [terrain];
     spin.add(...built);
@@ -3347,6 +3378,14 @@ const planetRadialState = {
   dragSetting: null,
   dragPointerId: null,
   sideMountGap: 22,
+  /** Pointer angle (deg) at drag start — maps to current value via dragValueStartDeg */
+  dragPointerStartDeg: null,
+  /** Arc angle (deg) that matches the planet value when the drag began */
+  dragValueStartDeg: null,
+  dragStartClientX: 0,
+  dragStartClientY: 0,
+  /** Keep the active knob on the side stack until the finger moves a few px */
+  knobDragKeepSideMount: false,
 };
 const planetPanel = $('planet-panel');
 const planetPanelToggle = $('planet-panel-toggle');
@@ -3519,6 +3558,9 @@ function hidePlanetRadialEditor() {
   planetRadialState.visible = false;
   planetRadialState.dragSetting = null;
   planetRadialState.dragPointerId = null;
+  planetRadialState.dragPointerStartDeg = null;
+  planetRadialState.dragValueStartDeg = null;
+  planetRadialState.knobDragKeepSideMount = false;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
 }
@@ -3544,6 +3586,11 @@ function updatePlanetRadialKnobPositions(mp) {
       return;
     }
     if (!active) {
+      knob.style.left = `${sideX.toFixed(1)}px`;
+      knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
+      return;
+    }
+    if (planetRadialState.knobDragKeepSideMount && active === setting) {
       knob.style.left = `${sideX.toFixed(1)}px`;
       knob.style.top = `${(sideYOffset[setting] || 0).toFixed(1)}px`;
       return;
@@ -3591,9 +3638,8 @@ function updatePlanetSelectionEditor() {
   planetSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
 
   _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
-  const forceCenteredOverlay = isNarrowPlanetUI();
   const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
-  if (depthOutOfRange && !forceCenteredOverlay) {
+  if (depthOutOfRange) {
     hidePlanetRadialEditor();
     return;
   }
@@ -3601,19 +3647,12 @@ function updatePlanetSelectionEditor() {
   const vh = window.innerHeight;
   const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
-  // On phones, keep the edit ring locked to screen center so halo+dials stay visually attached.
-  const fallbackCenterX = vw * 0.5;
-  const fallbackCenterY = vh * 0.5;
-  const cx = forceCenteredOverlay
-    ? fallbackCenterX
-    : (Number.isFinite(projectedCx) ? projectedCx : fallbackCenterX);
-  const cy = forceCenteredOverlay
-    ? fallbackCenterY
-    : (Number.isFinite(projectedCy) ? projectedCy : fallbackCenterY);
-  if ((!Number.isFinite(cx) || !Number.isFinite(cy)) && !forceCenteredOverlay) {
+  if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
     hidePlanetRadialEditor();
     return;
   }
+  const cx = projectedCx;
+  const cy = projectedCy;
 
   camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
   _planetEditorEdgeWorld.copy(_planetEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
@@ -3623,7 +3662,14 @@ function updatePlanetSelectionEditor() {
   const projectedRadius = Number.isFinite(ex) && Number.isFinite(ey)
     ? Math.max(26, Math.hypot(ex - cx, ey - cy))
     : 64;
-  const ringSize = Math.max(160, Math.min(Math.min(vw, vh) * 0.72, projectedRadius * 2.85));
+  const narrow = isNarrowPlanetUI();
+  const shortSide = Math.min(vw, vh);
+  const ringMinPx = narrow ? 132 : 156;
+  const ringMaxPx = narrow
+    ? Math.min(292, shortSide * 0.54)
+    : Math.min(560, shortSide * 0.74);
+  const ringFromProjection = projectedRadius * 2.85;
+  const ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
 
   if (planetRadialEditorEl) {
     planetRadialEditorEl.style.display = 'block';
@@ -3646,7 +3692,11 @@ function updatePlanetSettingFromPointer(clientX, clientY, setting) {
   const dx = clientX - planetRadialState.centerX;
   const dy = clientY - planetRadialState.centerY;
   if (dx * dx + dy * dy < 25) return;
-  const deg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  let deg = pointerDeg;
+  if (planetRadialState.dragPointerStartDeg !== null && planetRadialState.dragValueStartDeg !== null) {
+    deg = (pointerDeg - planetRadialState.dragPointerStartDeg + planetRadialState.dragValueStartDeg + 360) % 360;
+  }
   const t = planetEditAngleToT(setting, deg);
   const value = cfg.min + t * (cfg.max - cfg.min);
   applyPlanetEditSetting(setting, value);
@@ -3850,14 +3900,38 @@ if (planetRadialEditorEl) {
     e.stopPropagation();
     planetRadialState.dragSetting = setting;
     planetRadialState.dragPointerId = e.pointerId;
+    planetRadialState.dragStartClientX = e.clientX;
+    planetRadialState.dragStartClientY = e.clientY;
+    planetRadialState.knobDragKeepSideMount = true;
+    const mp = managedPlanets[selectedPlanetIdx];
+    const cfg = PLANET_EDIT_CONFIG[setting];
+    if (mp && cfg) {
+      const v = valueFromPlanetSetting(mp, setting);
+      const startT = (v - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      planetRadialState.dragValueStartDeg = planetEditTToAngle(setting, startT);
+      const dx = e.clientX - planetRadialState.centerX;
+      const dy = e.clientY - planetRadialState.centerY;
+      planetRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    } else {
+      planetRadialState.dragPointerStartDeg = null;
+      planetRadialState.dragValueStartDeg = null;
+    }
     updatePlanetRadialFocusVisuals();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
-    updatePlanetSettingFromPointer(e.clientX, e.clientY, setting);
     updatePlanetSelectionEditor();
   };
   const onKnobMove = e => {
     if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
     e.preventDefault();
+    if (planetRadialState.knobDragKeepSideMount) {
+      const ddx = e.clientX - planetRadialState.dragStartClientX;
+      const ddy = e.clientY - planetRadialState.dragStartClientY;
+      if (ddx * ddx + ddy * ddy < 49) {
+        updatePlanetSelectionEditor();
+        return;
+      }
+      planetRadialState.knobDragKeepSideMount = false;
+    }
     updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
     updatePlanetSelectionEditor();
   };
@@ -3866,6 +3940,9 @@ if (planetRadialEditorEl) {
     e.preventDefault();
     planetRadialState.dragSetting = null;
     planetRadialState.dragPointerId = null;
+    planetRadialState.dragPointerStartDeg = null;
+    planetRadialState.dragValueStartDeg = null;
+    planetRadialState.knobDragKeepSideMount = false;
     Object.values(planetRadialKnobEls).forEach(knob => {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
