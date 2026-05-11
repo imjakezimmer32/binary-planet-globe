@@ -3487,7 +3487,9 @@ function updatePlanetSelectionEditor() {
   planetSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
 
   _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
-  if (_planetEditorNdc.z < -1 || _planetEditorNdc.z > 1) {
+  const forceCenteredOverlay = isNarrowPlanetUI();
+  const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
+  if (depthOutOfRange && !forceCenteredOverlay) {
     hidePlanetRadialEditor();
     return;
   }
@@ -3496,10 +3498,15 @@ function updatePlanetSelectionEditor() {
   const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
   // On phones, keep the edit ring locked to screen center so halo+dials stay visually attached.
-  const forceCenteredOverlay = isNarrowPlanetUI();
-  const cx = forceCenteredOverlay ? vw * 0.5 : projectedCx;
-  const cy = forceCenteredOverlay ? vh * 0.5 : projectedCy;
-  if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+  const fallbackCenterX = vw * 0.5;
+  const fallbackCenterY = vh * 0.5;
+  const cx = forceCenteredOverlay
+    ? fallbackCenterX
+    : (Number.isFinite(projectedCx) ? projectedCx : fallbackCenterX);
+  const cy = forceCenteredOverlay
+    ? fallbackCenterY
+    : (Number.isFinite(projectedCy) ? projectedCy : fallbackCenterY);
+  if ((!Number.isFinite(cx) || !Number.isFinite(cy)) && !forceCenteredOverlay) {
     hidePlanetRadialEditor();
     return;
   }
