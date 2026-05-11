@@ -837,7 +837,24 @@ input[type=range]::-moz-range-thumb {
   bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 112px);
   z-index: 85;
   display: none;
+  grid-template-columns: auto auto;
+  align-items: end;
+  gap: 10px;
+}
+#walk-dpad {
+  display: grid;
   grid-template-columns: repeat(3, 54px);
+  grid-template-rows: repeat(2, 44px);
+  gap: 6px;
+}
+#walk-dpad button[data-walk="left"] { grid-column: 1; grid-row: 2; }
+#walk-dpad button[data-walk="forward"] { grid-column: 2; grid-row: 1; }
+#walk-dpad button[data-walk="right"] { grid-column: 3; grid-row: 2; }
+#walk-dpad button[data-walk="back"] { grid-column: 2; grid-row: 2; }
+#walk-action-buttons {
+  display: grid;
+  grid-template-columns: 54px;
+  grid-auto-rows: 44px;
   gap: 6px;
 }
 #walk-controls button {
@@ -859,6 +876,46 @@ input[type=range]::-moz-range-thumb {
 #walk-controls button[data-walk="view"] {
   font-size: 11px;
   letter-spacing: 0.08em;
+}
+#walk-joystick {
+  position: relative;
+  width: 126px;
+  height: 126px;
+  border-radius: 50%;
+  display: none;
+  border: 1px solid rgba(255,255,255,0.2);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,0.09) 0 36%, rgba(0,0,0,0.48) 72%, rgba(0,0,0,0.62) 100%);
+  touch-action: none;
+}
+#walk-joystick::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 68px;
+  height: 68px;
+  margin-left: -34px;
+  margin-top: -34px;
+  border-radius: 50%;
+  border: 1px dashed rgba(255,255,255,0.16);
+}
+#walk-joystick-thumb {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 50px;
+  height: 50px;
+  margin-left: -25px;
+  margin-top: -25px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.28);
+  background: rgba(255,255,255,0.18);
+  transform: translate(0px, 0px);
+}
+@media (pointer: coarse) {
+  #walk-joystick { display: block; }
+  #walk-dpad { display: none; }
 }
 #walk-cam-badge {
   position: fixed;
@@ -962,13 +1019,20 @@ input[type=range]::-moz-range-thumb {
   <input type="range" id="dial-warp" min="0" max="100" step="0.1" value="1">
 </div>
 <div id="walk-controls">
-  <button type="button" data-walk="left">◀</button>
-  <button type="button" data-walk="forward">▲</button>
-  <button type="button" data-walk="right">▶</button>
-  <button type="button" data-walk="back">▼</button>
-  <button type="button" data-walk="jump">JUMP</button>
-  <button type="button" data-walk="sprint">RUN</button>
-  <button type="button" data-walk="view">TP</button>
+  <div id="walk-joystick" aria-label="Movement joystick">
+    <div id="walk-joystick-thumb"></div>
+  </div>
+  <div id="walk-dpad">
+    <button type="button" data-walk="left">◀</button>
+    <button type="button" data-walk="forward">▲</button>
+    <button type="button" data-walk="right">▶</button>
+    <button type="button" data-walk="back">▼</button>
+  </div>
+  <div id="walk-action-buttons">
+    <button type="button" data-walk="jump">JUMP</button>
+    <button type="button" data-walk="sprint">RUN</button>
+    <button type="button" data-walk="view">TP</button>
+  </div>
 </div>
 <div id="walk-cam-badge">3rd</div>
 
@@ -1073,6 +1137,7 @@ const _selectedPlanetWorld = new THREE.Vector3();
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, sprint: false };
 const walkLookInput = { x: 0, y: 0 };
+const walkAnalog = { x: 0, y: 0 };
 const WALK_CFG = {
   footOffset: 0.055,
   snapDistance: 0.09,
@@ -1101,6 +1166,8 @@ const WALK_CFG = {
   tpDistanceMax: 12.0,
   tpZoomWheelStep: 1.08,
   tpZoomSmooth: 8.5,
+  tpCollisionPadding: 0.12,
+  tpSurfaceClearance: 0.28,
   lookSensitivity: 0.0028,
   mobileLookSensitivity: 0.0034,
   pitchDotLimit: 0.96,
@@ -1144,6 +1211,7 @@ const _walkDesired = new THREE.Vector3();
 const _walkNearestCenter = new THREE.Vector3();
 const _walkRight = new THREE.Vector3();
 const _walkRaycaster = new THREE.Raycaster();
+const _walkCamObstacles = [];
 const _walkContactField = {
   gravity: new THREE.Vector3(),
   nearestIdx: null,
@@ -1621,6 +1689,31 @@ function sampleWalkField(pos) {
   return true;
 }
 
+function resolveWalkCameraOcclusion(target, desiredPos, outPos) {
+  outPos.copy(desiredPos);
+  _walkTmp3.copy(desiredPos).sub(target);
+  const dist = _walkTmp3.length();
+  if (dist <= 1e-5) return outPos;
+
+  _walkTmp3.multiplyScalar(1 / dist);
+  _walkRaycaster.set(target, _walkTmp3);
+  _walkRaycaster.near = 0.02;
+  _walkRaycaster.far = dist;
+
+  _walkCamObstacles.length = 0;
+  managedPlanets.forEach(mp => {
+    const mesh = getWalkTerrainMesh(mp);
+    if (mesh?.visible) _walkCamObstacles.push(mesh);
+  });
+  if (!_walkCamObstacles.length) return outPos;
+
+  const hits = _walkRaycaster.intersectObjects(_walkCamObstacles, false);
+  if (!hits.length) return outPos;
+  const safeDist = Math.max(0.28, hits[0].distance - WALK_CFG.tpCollisionPadding);
+  outPos.copy(target).addScaledVector(_walkTmp3, safeDist);
+  return outPos;
+}
+
 function setWalkTpDistanceTarget(nextValue) {
   walkTpDistanceTarget = Math.max(WALK_CFG.tpDistanceMin, Math.min(WALK_CFG.tpDistanceMax, nextValue));
   if (walkCameraMode !== 'tp') return;
@@ -1642,6 +1735,7 @@ function clearWalkInputState() {
   walkInput.fwd = false;
   walkInput.back = false;
   walkInput.sprint = false;
+  resetWalkJoystick();
 }
 
 function refreshWalkUi() {
@@ -1700,6 +1794,7 @@ function startWalkMode(idx) {
   walkPrevMs = performance.now();
   walkLookInput.x = 0;
   walkLookInput.y = 0;
+  clearWalkInputState();
   setWalkTpDistanceTarget(walkTpDistanceTarget);
   walkTpDistance = walkTpDistanceTarget;
   mp.obj.pivot.getWorldPosition(_walkCenter);
@@ -1781,8 +1876,8 @@ function updateWalkMode(dt) {
   walkState.forward.normalize();
   _walkRight.crossVectors(walkState.forward, walkState.up).normalize();
 
-  const moveX = (walkInput.right ? 1 : 0) - (walkInput.left ? 1 : 0);
-  const moveZ = (walkInput.fwd ? 1 : 0) - (walkInput.back ? 1 : 0);
+  const moveX = ((walkInput.right ? 1 : 0) - (walkInput.left ? 1 : 0)) + walkAnalog.x;
+  const moveZ = ((walkInput.fwd ? 1 : 0) - (walkInput.back ? 1 : 0)) + walkAnalog.y;
   _walkDesired.copy(_walkRight).multiplyScalar(moveX).addScaledVector(walkState.forward, moveZ);
   const moveLen = _walkDesired.length();
   if (moveLen > 1) _walkDesired.multiplyScalar(1 / moveLen);
@@ -1926,12 +2021,30 @@ function updateWalkMode(dt) {
     camera.lookAt(_walkCamTarget);
   } else {
     walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
+    _walkTmp.copy(walkState.viewDir);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(walkState.forward);
+    _walkTmp.normalize();
     _walkCamTarget.copy(walkState.position)
       .addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bob)
-      .addScaledVector(walkState.forward, WALK_CFG.cameraLead);
+      .addScaledVector(_walkTmp, WALK_CFG.cameraLead * 0.35);
     _walkCamPos.copy(walkState.position)
       .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bob)
-      .addScaledVector(walkState.forward, -walkTpDistance);
+      .addScaledVector(_walkTmp, -walkTpDistance);
+    if (walkState.anchorPlanetIdx !== null) {
+      const anchorPlanet = managedPlanets[walkState.anchorPlanetIdx];
+      if (anchorPlanet) {
+        const anchorRadius = getPlanetCenterRadius(anchorPlanet, _walkCenter);
+        _walkTmp2.copy(_walkCamPos).sub(_walkCenter);
+        const camRadius = _walkTmp2.length();
+        const minCamRadius = anchorRadius + WALK_CFG.tpSurfaceClearance;
+        if (camRadius < minCamRadius) {
+          if (camRadius < 1e-6) _walkTmp2.copy(walkState.up);
+          else _walkTmp2.multiplyScalar(1 / camRadius);
+          _walkCamPos.copy(_walkCenter).addScaledVector(_walkTmp2, minCamRadius);
+        }
+      }
+    }
+    resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
     camera.position.lerp(_walkCamPos, 0.24);
     camera.up.lerp(walkState.up, 0.35).normalize();
     camera.lookAt(_walkCamTarget);
@@ -2948,6 +3061,45 @@ const addPlanetBtn = $('add-planet-btn');
 const addTwinBtn = $('add-twin-btn');
 const btnWalk = $('btn-walk');
 const walkControlsEl = $('walk-controls');
+const walkJoystickEl = $('walk-joystick');
+const walkJoystickThumbEl = $('walk-joystick-thumb');
+const walkJoystickState = { pointerId: null, rangePx: 38 };
+
+function updateWalkJoystickThumb() {
+  if (!walkJoystickThumbEl) return;
+  const xPx = walkAnalog.x * walkJoystickState.rangePx;
+  const yPx = -walkAnalog.y * walkJoystickState.rangePx;
+  walkJoystickThumbEl.style.transform = `translate(${xPx.toFixed(1)}px, ${yPx.toFixed(1)}px)`;
+}
+
+function setWalkAnalogInput(rawX, rawY) {
+  let x = Math.max(-1, Math.min(1, rawX));
+  let y = Math.max(-1, Math.min(1, rawY));
+  const mag = Math.hypot(x, y);
+  if (mag > 1e-6 && mag > 1) {
+    x /= mag;
+    y /= mag;
+  }
+  walkAnalog.x = x;
+  walkAnalog.y = y;
+  updateWalkJoystickThumb();
+}
+
+function resetWalkJoystick() {
+  walkJoystickState.pointerId = null;
+  setWalkAnalogInput(0, 0);
+}
+
+function sampleWalkJoystickPointer(clientX, clientY) {
+  if (!walkJoystickEl) return;
+  const rect = walkJoystickEl.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const centerX = rect.left + rect.width * 0.5;
+  const centerY = rect.top + rect.height * 0.5;
+  const nx = (clientX - centerX) / (rect.width * 0.5);
+  const ny = (clientY - centerY) / (rect.height * 0.5);
+  setWalkAnalogInput(nx, -ny);
+}
 
 function syncPlanetCount() {
   if (planetCountEl) planetCountEl.textContent = String(managedPlanets.length);
@@ -3124,6 +3276,35 @@ if (walkControlsEl) {
     btn.addEventListener('pointerleave', up);
   });
 }
+if (walkJoystickEl) {
+  const onJoyDown = e => {
+    if (!walkMode.active) return;
+    e.preventDefault();
+    e.stopPropagation();
+    walkJoystickState.pointerId = e.pointerId;
+    try { walkJoystickEl.setPointerCapture(e.pointerId); } catch (err) {}
+    sampleWalkJoystickPointer(e.clientX, e.clientY);
+  };
+  const onJoyMove = e => {
+    if (!walkMode.active) return;
+    if (walkJoystickState.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    sampleWalkJoystickPointer(e.clientX, e.clientY);
+  };
+  const onJoyUp = e => {
+    if (walkJoystickState.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    try { walkJoystickEl.releasePointerCapture(e.pointerId); } catch (err) {}
+    resetWalkJoystick();
+  };
+  walkJoystickEl.addEventListener('pointerdown', onJoyDown);
+  walkJoystickEl.addEventListener('pointermove', onJoyMove);
+  walkJoystickEl.addEventListener('pointerup', onJoyUp);
+  walkJoystickEl.addEventListener('pointercancel', onJoyUp);
+  window.addEventListener('pointerup', onJoyUp);
+  window.addEventListener('pointercancel', onJoyUp);
+}
+updateWalkJoystickThumb();
 
 window.addEventListener('keydown', e => {
   if (!walkMode.active) return;
