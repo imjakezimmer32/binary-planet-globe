@@ -2535,6 +2535,23 @@ function updateCamera(curScale) {
   }
 }
 
+/** Widen the perspective far plane when zoomed out so orbit distance does not clip the scene. */
+function updateDynamicCameraFar() {
+  if (walkMode.active) return;
+  const orbitDist = cameraMode === 'sun'
+    ? ORBIT_BASE * curScale * orbitZoom
+    : PLANET_ORBIT_BASE * curScale * orbitZoom;
+  const camLen = camera.position.length();
+  const far = Math.min(
+    12e6,
+    Math.max(220000, orbitDist * 1.65 + 340000, camLen * 1.8 + 420000)
+  );
+  if (Math.abs(far - camera.far) > Math.max(800, camera.far * 0.035)) {
+    camera.far = far;
+    camera.updateProjectionMatrix();
+  }
+}
+
 // ── Noise ─────────────────────────────────────────────────────────
 function noise3(x, y, z) {
   return (
@@ -3050,16 +3067,16 @@ let comAngle = 0;
 const SCALE_MIN = 1.0, SCALE_MAX = 400;
 const SCALE_BASE_MULT = 3.0; // User request: legacy 3x should read as new 1x.
 const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
-const PLANET_HIDE_SCALE_UI = 15.0;
-const PLANET_HIDE_SCALE = PLANET_HIDE_SCALE_UI * SCALE_BASE_MULT;
+// Above this UI scale, terrain uses detail 0 (lowest tier) for performance — not planet visibility.
+const PLANET_DETAIL_ZERO_UI = 15.0;
 const PLANET_VIEW_DETAIL = 20;
 function scaleUiToWorld(s) { return s * SCALE_BASE_MULT; }
 function scaleWorldToUi(s) { return s / SCALE_BASE_MULT; }
 function sliderToScale(v) { return scaleUiToWorld(SCALE_MIN * Math.exp(SCALE_LOG * v)); }
 function scaleToDetail(worldScale) {
   const s = scaleWorldToUi(worldScale);
-  // User tuning: detail 1 at 10x, and disable planet rendering at 15x+.
-  if (s >= PLANET_HIDE_SCALE_UI) return 0;
+  // User tuning: detail 1 at 10× UI; lowest mesh tier at 15× UI (pivots stay visible — see updateDynamicCameraFar).
+  if (s >= PLANET_DETAIL_ZERO_UI) return 0;
   if (s >= 10.0) return 1;
   if (s >= 8.0)  return 2;
   if (s >= 6.0)  return 3;
@@ -4199,7 +4216,7 @@ function applySunEditSetting(setting, rawValue) {
     if (dialScale) dialScale.value = String(scaleWorldToSliderValue(targetScale));
     if (lblScale) lblScale.textContent = scaleLabelText(targetScale);
     applyDetailForCurrentView(targetScale);
-    setPlanetsRenderable(cameraMode === 'planet' || curScale < PLANET_HIDE_SCALE);
+    setPlanetsRenderable(true);
   } else if (setting === 'warp') {
     timeWarp = next;
     if (dialWarp) dialWarp.value = String(timeWarp);
@@ -4701,7 +4718,7 @@ function setCamMode(mode) {
   cameraMode = mode;
   document.body.classList.toggle('mode-planet-view', mode === 'planet');
   applyDetailForCurrentView(targetScale);
-  setPlanetsRenderable(mode === 'planet' || curScale < PLANET_HIDE_SCALE);
+  setPlanetsRenderable(true);
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
   galaxyList.classList.remove('open');
@@ -4815,7 +4832,7 @@ function animate() {
 
   // Smooth scale lerp (camera/universe view only; objects keep real size)
   curScale += (targetScale - curScale) * 0.08;
-  setPlanetsRenderable(cameraMode === 'planet' || curScale < PLANET_HIDE_SCALE);
+  setPlanetsRenderable(true);
 
   // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
   const curScaleUi = scaleWorldToUi(curScale);
@@ -4825,6 +4842,7 @@ function animate() {
 
   // Camera orbits the sun (world origin), pulls back as curScale grows
   updateCamera(curScale);
+  updateDynamicCameraFar();
 
   const simWarp = getSimulationWarp(timeWarp);
   if (simWarp > 0) {
