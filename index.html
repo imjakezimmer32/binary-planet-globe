@@ -158,6 +158,43 @@ body.hud-hidden #walk-cam-badge {
   mask: radial-gradient(farthest-side, transparent calc(50% - 7px), #000 calc(50% - 7px) calc(50% - 1px), transparent calc(50% - 1px));
 }
 #planet-radial-guide.visible { opacity: 1; }
+.planet-radial-close {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(162, 236, 255, 0.38);
+  background: rgba(1, 15, 28, 0.78);
+  box-shadow: 0 0 14px rgba(44, 184, 255, 0.28);
+  color: rgba(219, 247, 255, 0.95);
+  font-family: monospace;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.98;
+  transition: opacity 0.16s ease, transform 0.16s ease, border-color 0.15s, box-shadow 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.planet-radial-close:hover {
+  border-color: rgba(210, 247, 255, 0.75);
+  box-shadow: 0 0 18px rgba(84, 206, 255, 0.45);
+}
+.planet-radial-close:active {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+.planet-radial-close.dim {
+  opacity: 0.22;
+  pointer-events: none;
+}
 .planet-radial-knob {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -1167,6 +1204,7 @@ input[type=range]::-moz-range-thumb {
 <div id="planet-radial-editor" aria-label="Planet editor around selected planet">
   <div id="planet-radial-ring"></div>
   <div id="planet-radial-guide"></div>
+  <button type="button" id="planet-radial-close" class="planet-radial-close" aria-label="Close planet editor">×</button>
   <button type="button" class="planet-radial-knob" data-setting="size">
     <span class="prk-name">Size</span>
     <span class="prk-value" id="prk-val-size">1.00×</span>
@@ -3355,6 +3393,7 @@ const dialWaterE  = $('dial-water-edit'), lblWaterE = $('lbl-water-edit');
 const planetRadialEditorEl = $('planet-radial-editor');
 const planetRadialRingEl = $('planet-radial-ring');
 const planetRadialGuideEl = $('planet-radial-guide');
+const planetRadialCloseBtn = $('planet-radial-close');
 const planetRadialKnobEls = planetRadialEditorEl ? {
   size: planetRadialEditorEl.querySelector('button[data-setting="size"]'),
   peak: planetRadialEditorEl.querySelector('button[data-setting="peak"]'),
@@ -3503,6 +3542,9 @@ function updatePlanetRadialFocusVisuals() {
     knob.classList.toggle('active', active === setting);
     knob.classList.toggle('dim', !!active && active !== setting);
   });
+  if (planetRadialCloseBtn) {
+    planetRadialCloseBtn.classList.toggle('dim', !!active);
+  }
   setPlanetRadialGuide(active);
 }
 
@@ -3764,13 +3806,14 @@ if (planetPanelHeader) {
 
 function selectPlanet(idx) {
   selectedPlanetIdx = idx;
-  // Reset pan so selected planet is centered immediately.
   panOffset.set(0, 0, 0);
   rebuildPlanetList();
-  const mp = managedPlanets[idx];
+  const mp = idx !== null && idx !== undefined ? managedPlanets[idx] : null;
   if (editPanel) editPanel.style.display = 'none';
-  syncPlanetDialValues(mp);
-  syncPlanetEditReadouts(mp);
+  if (mp) {
+    syncPlanetDialValues(mp);
+    syncPlanetEditReadouts(mp);
+  }
   setPlanetPanelOpen(false);
   updateTwinButtonVisibility();
   updateWalkButtonVisibility();
@@ -3914,6 +3957,13 @@ if (planetRadialEditorEl) {
   });
   window.addEventListener('pointerup', onKnobUp);
   window.addEventListener('pointercancel', onKnobUp);
+  if (planetRadialCloseBtn) {
+    planetRadialCloseBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      selectPlanet(null);
+    });
+  }
 }
 updateWalkJoystickThumb();
 
