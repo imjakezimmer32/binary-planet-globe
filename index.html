@@ -2368,6 +2368,7 @@ let comAngle = 0;
 const SCALE_MIN = 1.0, SCALE_MAX = 150;
 const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
 const PLANET_HIDE_SCALE = 15.0;
+const PLANET_VIEW_DETAIL = 20;
 function sliderToScale(v) { return SCALE_MIN * Math.exp(SCALE_LOG * v); }
 function scaleToDetail(s) {
   // User tuning: detail 1 at 10x, and disable planet rendering at 15x+.
@@ -2396,6 +2397,17 @@ function scaleLabelText(s) {
   return `SCALE  ${s.toFixed(2)}×`;
 }
 
+function desiredDetailForCurrentView(scaleValue) {
+  return cameraMode === 'planet' ? PLANET_VIEW_DETAIL : scaleToDetail(scaleValue);
+}
+
+function applyDetailForCurrentView(scaleValue) {
+  const d = desiredDetailForCurrentView(scaleValue);
+  if (d === curDetail) return;
+  curDetail = d;
+  if (d > 0) managedPlanets.forEach(mp => { mp.obj.rebuild(d); mp.obj.syncGrid(); });
+}
+
 function setPlanetsRenderable(enabled) {
   if (planetsRenderable === enabled) return;
   planetsRenderable = enabled;
@@ -2416,12 +2428,8 @@ function setPlanetsRenderable(enabled) {
 
 dialScale.addEventListener('input', () => {
   targetScale = sliderToScale(parseFloat(dialScale.value));
-  const d = scaleToDetail(targetScale);
   lblScale.textContent = scaleLabelText(targetScale);
-  if (d !== curDetail) {
-    curDetail = d;
-    if (d > 0) managedPlanets.forEach(mp => { mp.obj.rebuild(d); mp.obj.syncGrid(); });
-  }
+  applyDetailForCurrentView(targetScale);
 });
 lblScale.textContent = scaleLabelText(targetScale);
 dialWarp.addEventListener('input', () => {
@@ -3072,6 +3080,8 @@ const btnPlanet = document.getElementById('btn-planet');
 function setCamMode(mode) {
   if (mode !== 'planet' && walkMode.active) stopWalkMode();
   cameraMode = mode;
+  applyDetailForCurrentView(targetScale);
+  setPlanetsRenderable(mode === 'planet' || curScale < PLANET_HIDE_SCALE);
   btnSun.classList.toggle('active', mode === 'sun');
   btnPlanet.classList.toggle('active', mode === 'planet');
   updateTwinButtonVisibility();
@@ -3166,7 +3176,7 @@ function animate() {
 
   // Smooth scale lerp (camera/universe view only; objects keep real size)
   curScale += (targetScale - curScale) * 0.08;
-  setPlanetsRenderable(curScale < PLANET_HIDE_SCALE);
+  setPlanetsRenderable(cameraMode === 'planet' || curScale < PLANET_HIDE_SCALE);
 
   // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
   const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScale - 8) / 44);
