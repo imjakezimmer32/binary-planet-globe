@@ -873,14 +873,6 @@ input[type=range]::-moz-range-thumb {
 #splash #s-face {
   font-size: clamp(48px, 20vw, 160px);
 }
-#planet-radial-editor { --pre-size: min(58vw, 228px); }
-.planet-radial-knob {
-  min-width: 62px;
-  padding: 5px 6px;
-}
-.planet-radial-knob .prk-name { font-size: 8px; }
-.planet-radial-knob .prk-value { font-size: 9px; }
-
 } /* end mobile */
 
 /* ── Mobile landscape: shorter vertical space ───────────────────── */
@@ -3431,7 +3423,8 @@ function updatePlanetRadialKnobPositions(mp) {
   if (!planetRadialEditorEl || !mp) return;
   const r = planetRadialState.knobRadius;
   const active = planetRadialState.dragSetting;
-  const sideX = Math.max(r + planetRadialState.sideMountGap, planetRadialState.knobRadius + 16);
+  const mountDir = planetRadialState.centerX > window.innerWidth * 0.62 ? -1 : 1;
+  const sideX = mountDir * Math.max(r + planetRadialState.sideMountGap, planetRadialState.knobRadius + 16);
   const sideYOffset = {
     size: -r * 0.52,
     peak: 0,
@@ -3481,7 +3474,7 @@ function updatePlanetSelectionEditor() {
     hidePlanetRadialEditor();
     return;
   }
-  document.body.classList.toggle('radial-edit-active', isNarrowPlanetUI());
+  document.body.classList.add('radial-edit-active');
   const radiusWorld = getPlanetCenterRadius(mp, _planetEditorCenterWorld);
   planetSelectionHalo.visible = true;
   planetSelectionHalo.position.copy(_planetEditorCenterWorld);
@@ -3512,7 +3505,9 @@ function updatePlanetSelectionEditor() {
   _planetEditorEdgeNdc.copy(_planetEditorEdgeWorld).project(camera);
   const ex = (_planetEditorEdgeNdc.x * 0.5 + 0.5) * vw;
   const ey = (-_planetEditorEdgeNdc.y * 0.5 + 0.5) * vh;
-  const projectedRadius = Math.max(26, Math.hypot(ex - cx, ey - cy));
+  const projectedRadius = Number.isFinite(ex) && Number.isFinite(ey)
+    ? Math.max(26, Math.hypot(ex - cx, ey - cy))
+    : 64;
   const ringSize = Math.max(160, Math.min(Math.min(vw, vh) * 0.72, projectedRadius * 2.85));
 
   if (planetRadialEditorEl) {
