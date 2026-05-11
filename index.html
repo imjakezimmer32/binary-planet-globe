@@ -3098,7 +3098,7 @@ dialWarp.addEventListener('input', () => {
   syncSunRadialReadouts();
 });
 
-let sunRadialDismissed = false;
+let sunRadialDismissed = true;
 let solGalaxyMenuRevealed = false;
 function scaleWorldToSliderValue(worldScale) {
   const ui = scaleWorldToUi(worldScale);
@@ -4186,6 +4186,7 @@ function hideSunRadialEditor() {
   sunRadialState.dragValueStartDeg = null;
   sunRadialState.dragLastPointerDeg = null;
   sunRadialState.dragAngleAccum = 0;
+  sunRadialDismissed = true;
   document.body.classList.remove('sun-radial-edit-active');
   sunSelectionHalo.visible = false;
   sunSelectionRing.visible = false;
@@ -4623,7 +4624,6 @@ if (sunRadialEditorEl) {
     sunRadialCloseBtn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
-      sunRadialDismissed = true;
       hideSunRadialEditor();
     });
   }
@@ -4659,7 +4659,7 @@ window.addEventListener('keyup', e => {
 rebuildPlanetList();
 updateTwinButtonVisibility();
 updateWalkButtonVisibility();
-if (isNarrowPlanetUI()) setPlanetPanelOpen(true);
+if (isNarrowPlanetUI()) setPlanetPanelOpen(false);
 
 // ── Camera view buttons (Solar / Planet views: tap sun or a planet on canvas) ──
 function setCamMode(mode) {
@@ -4670,9 +4670,6 @@ function setCamMode(mode) {
   }
   cameraMode = mode;
   document.body.classList.toggle('mode-planet-view', mode === 'planet');
-  if (mode === 'sun') {
-    sunRadialDismissed = false;
-  }
   applyDetailForCurrentView(targetScale);
   setPlanetsRenderable(mode === 'planet' || curScale < PLANET_HIDE_SCALE);
   updateTwinButtonVisibility();
