@@ -3595,9 +3595,8 @@ function updatePlanetSelectionEditor() {
   planetSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
 
   _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
-  const forceCenteredOverlay = isNarrowPlanetUI();
   const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
-  if (depthOutOfRange && !forceCenteredOverlay) {
+  if (depthOutOfRange) {
     hidePlanetRadialEditor();
     return;
   }
@@ -3605,19 +3604,12 @@ function updatePlanetSelectionEditor() {
   const vh = window.innerHeight;
   const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
-  // On phones, keep the edit ring locked to screen center so halo+dials stay visually attached.
-  const fallbackCenterX = vw * 0.5;
-  const fallbackCenterY = vh * 0.5;
-  const cx = forceCenteredOverlay
-    ? fallbackCenterX
-    : (Number.isFinite(projectedCx) ? projectedCx : fallbackCenterX);
-  const cy = forceCenteredOverlay
-    ? fallbackCenterY
-    : (Number.isFinite(projectedCy) ? projectedCy : fallbackCenterY);
-  if ((!Number.isFinite(cx) || !Number.isFinite(cy)) && !forceCenteredOverlay) {
+  if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
     hidePlanetRadialEditor();
     return;
   }
+  const cx = projectedCx;
+  const cy = projectedCy;
 
   camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
   _planetEditorEdgeWorld.copy(_planetEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
@@ -3627,7 +3619,14 @@ function updatePlanetSelectionEditor() {
   const projectedRadius = Number.isFinite(ex) && Number.isFinite(ey)
     ? Math.max(26, Math.hypot(ex - cx, ey - cy))
     : 64;
-  const ringSize = Math.max(160, Math.min(Math.min(vw, vh) * 0.72, projectedRadius * 2.85));
+  const narrow = isNarrowPlanetUI();
+  const shortSide = Math.min(vw, vh);
+  const ringMinPx = narrow ? 132 : 156;
+  const ringMaxPx = narrow
+    ? Math.min(292, shortSide * 0.54)
+    : Math.min(560, shortSide * 0.74);
+  const ringFromProjection = projectedRadius * 2.85;
+  const ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
 
   if (planetRadialEditorEl) {
     planetRadialEditorEl.style.display = 'block';
