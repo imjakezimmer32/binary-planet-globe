@@ -1447,10 +1447,11 @@ const SUN_R = 2.5;    // sun radius in physics units
 const sunGroup = new THREE.Group();
 scene.add(sunGroup);
 
-sunGroup.add(new THREE.Mesh(
+const sunCoreMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1, 40, 40),
   new THREE.MeshBasicMaterial({ color: 0xffeedd })
-));
+);
+sunGroup.add(sunCoreMesh);
 [
   [1.30, 0xffcc44, 0.20],
   [2.00, 0xff9900, 0.09],
@@ -1779,12 +1780,10 @@ function pickSolarSystemFromScreen(clientX, clientY) {
 
   if (currentDestIndex === 0) {
     sunGroup.updateMatrixWorld(true);
-    sunGroup.traverse(child => {
-      if (child.isMesh && child.visible) {
-        pickObjects.push(child);
-        metaByUuid.set(child.uuid, { kind: 'sun' });
-      }
-    });
+    if (sunCoreMesh.visible) {
+      pickObjects.push(sunCoreMesh);
+      metaByUuid.set(sunCoreMesh.uuid, { kind: 'sun' });
+    }
   }
 
   if (!pickObjects.length) return;
