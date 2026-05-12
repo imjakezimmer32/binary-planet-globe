@@ -1271,7 +1271,7 @@ input[type=range]::-moz-range-thumb {
   gap: 10px;
 }
 #walk-dpad {
-  display: grid;
+  display: none;
   grid-template-columns: repeat(3, 54px);
   grid-template-rows: repeat(2, 44px);
   gap: 6px;
@@ -1311,7 +1311,7 @@ input[type=range]::-moz-range-thumb {
   width: 126px;
   height: 126px;
   border-radius: 50%;
-  display: none;
+  display: block;
   border: 1px solid rgba(255,255,255,0.2);
   background:
     radial-gradient(circle at 50% 50%, rgba(255,255,255,0.09) 0 36%, rgba(0,0,0,0.48) 72%, rgba(0,0,0,0.62) 100%);
@@ -1341,10 +1341,6 @@ input[type=range]::-moz-range-thumb {
   border: 1px solid rgba(255,255,255,0.28);
   background: rgba(255,255,255,0.18);
   transform: translate(0px, 0px);
-}
-@media (pointer: coarse) {
-  #walk-joystick { display: block; }
-  #walk-dpad { display: none; }
 }
 #walk-cam-badge {
   position: fixed;
@@ -1740,16 +1736,19 @@ const WALK_CFG = {
   characterRadius: 0.024,
   characterHeight: 0.11,
   footOffset: 0.055,
-  moveSpeed: 0.34,
-  sprintBoost: 1.45,
-  acceleration: 8.2,
-  drag: 7.5,
+  moveSpeed: 0.14,
+  sprintBoost: 1.25,
+  acceleration: 6.4,
+  drag: 9.2,
   slideAccel: 2.6,
   slipEnterDeg: 40,
   slipExitDeg: 39,
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
+  bounceFreq: 8.2,
+  bounceAmp: 0.008,
+  bounceResponse: 8.5,
   walkFov: 62,
   cameraDistance: 0.86,
   cameraHeight: 0.16,
@@ -1779,6 +1778,8 @@ const walkState = {
   surfaceType: 'land',
   surfaceSlopeDeg: 0,
   sliding: false,
+  bouncePhase: 0,
+  bounceBlend: 0,
   prevFov: null,
 };
 const _walkCenter = new THREE.Vector3();
@@ -2431,6 +2432,8 @@ function stopWalkMode() {
   walkState.surfaceType = 'land';
   walkState.surfaceSlopeDeg = 0;
   walkState.sliding = false;
+  walkState.bouncePhase = 0;
+  walkState.bounceBlend = 0;
   refreshWalkUi();
 }
 
@@ -2485,6 +2488,8 @@ function startWalkMode(idx) {
   walkState.surfaceType = startSurface ? startSurface.medium : 'land';
   walkState.surfaceSlopeDeg = startSurface ? startSurface.slopeDeg : 0;
   walkState.sliding = false;
+  walkState.bouncePhase = 0;
+  walkState.bounceBlend = 0;
   walkAvatar.position.copy(walkState.position);
   walkAvatar.visible = true;
   refreshWalkUi();
@@ -2583,7 +2588,14 @@ function updateWalkMode(dt) {
     walkState.up.copy(nextSurface.radialDir).normalize();
   }
 
-  walkAvatar.position.copy(walkState.position);
+  const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
+  let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
+  if (moveLen < 0.05) bounceTarget = 0;
+  walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
+  walkState.bouncePhase += dt * (WALK_CFG.bounceFreq + planarSpeed * 10);
+  const bounce = Math.abs(Math.sin(walkState.bouncePhase)) * WALK_CFG.bounceAmp * walkState.bounceBlend;
+
+  walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * 0.45);
   _walkBasisZ.crossVectors(walkState.forward, walkState.up);
   if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.crossVectors(_walkRight, walkState.up);
   if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.set(0, 0, 1);
@@ -2594,10 +2606,10 @@ function updateWalkMode(dt) {
   walkAvatar.visible = true;
 
   walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
-  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift);
+  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bounce * 0.5);
   _walkCamPos.copy(_walkCamTarget)
     .addScaledVector(walkState.viewDir, -walkTpDistance)
-    .addScaledVector(walkState.up, WALK_CFG.cameraHeight);
+    .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bounce);
   resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
   camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
   _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
@@ -3906,7 +3918,7 @@ const btnWalk = $('btn-walk');
 const walkControlsEl = $('walk-controls');
 const walkJoystickEl = $('walk-joystick');
 const walkJoystickThumbEl = $('walk-joystick-thumb');
-const walkJoystickState = { pointerId: null, rangePx: 38 };
+const walkJoystickState = { pointerId: null, rangePx: 44 };
 
 function updateWalkJoystickThumb() {
   if (!walkJoystickThumbEl) return;
