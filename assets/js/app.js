@@ -1,0 +1,4616 @@
+// ── Renderer ──────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+document.addEventListener('selectstart', (e) => e.preventDefault(), { passive: false });
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 0.01, 120000);
+
+// ── Lighting: sun is the only real source ─────────────────────────
+// Very dim ambient keeps the night-sides from going pure black
+scene.add(new THREE.AmbientLight(0xffffff, 0.10));
+// PointLight at origin (the sun). decay=0 → no distance falloff,
+// so both planets get equal light intensity regardless of position.
+const sunLight = new THREE.PointLight(0xfff5cc, 1.6, 0, 0);
+scene.add(sunLight);   // stays at origin; position never needs updating
+
+// ── Starfield — volumetric, many depth layers, no visible edge ────
+(function() {
+  const N = 40000, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random(), v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi   = Math.acos(2 * v - 1);
+    // Strong bias toward mid-range so the zoom flies through dense star lanes
+    const r = 50 + Math.pow(Math.random(), 0.45) * 59950; // 50 → 60000
+    pos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+    pos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+    pos[i*3+2] = r * Math.cos(phi);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo,
+    new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, sizeAttenuation: false })
+  ));
+})();
+
+// ── Sun visual (fixed world radius; universe scale moves orbits only) ─
+// Core + nested corona layers using additive blending
+const SUN_R = 2.5;    // sun radius in physics units
+const sunGroup = new THREE.Group();
+scene.add(sunGroup);
+
+const sunCoreMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 40, 40),
+  new THREE.MeshBasicMaterial({ color: 0xffeedd })
+);
+sunGroup.add(sunCoreMesh);
+[
+  [1.30, 0xffcc44, 0.20],
+  [2.00, 0xff9900, 0.09],
+  [3.20, 0xff5500, 0.04],
+  [5.50, 0xff2200, 0.02],
+].forEach(([s, c, o]) =>
+  sunGroup.add(new THREE.Mesh(
+    new THREE.SphereGeometry(s, 24, 24),
+    new THREE.MeshBasicMaterial({
+      color: c, transparent: true, opacity: o,
+      side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+    })
+  ))
+);
+
+// ── Camera — orbits the sun (world origin) ────────────────────────
+// Distance = ORBIT_BASE * curScale * userZoom.
+// Scale now controls camera distance only (solar system size stays fixed).
+const ORBIT_BASE = 30;
+const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
+
+// Sun-view orbit state
+let orbitTheta = -0.3, orbitPhi = 0.92, orbitZoom = 3.0;
+let zoomTarget = null; // when set, animate loop log-lerps orbitZoom toward it
+let introZoomProfile = null; // custom speed curve used only for splash intro zoom
+let dTheta = 0, dPhi = 0;
+
+// Planet-view orbit state (separate angles so each view remembers its position)
+let pOrbitTheta = -0.3, pOrbitPhi = 1.1;
+let pDTheta = 0, pDPhi = 0;
+
+let cameraMode    = 'sun'; // 'sun' | 'planet'
+let autoRotate    = false;
+let orbitSpeedMul = 0.1;
+let zoomSpeedMul  = 0.1;
+let dragButton = 0;
+let dragging = false, lastPX = 0, lastPY = 0;
+let desktopWalkLookReady = false, desktopWalkLookX = 0, desktopWalkLookY = 0;
+
+// cameraTarget — the world point the camera orbits.  Normally the sun (origin)
+// but animates smoothly when navigating to another star system.
+const cameraTarget = new THREE.Vector3(0, 0, 0);
+const _cameraClipFocus = new THREE.Vector3();
+
+// Pan offset — shifts the look-at target in camera's local right/up plane
+const panOffset = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up    = new THREE.Vector3();
+const _selectedPlanetWorld = new THREE.Vector3();
+const _planetEditorCenterWorld = new THREE.Vector3();
+const _planetEditorEdgeWorld = new THREE.Vector3();
+const _planetEditorNdc = new THREE.Vector3();
+const _planetEditorEdgeNdc = new THREE.Vector3();
+const _planetEditorCamRight = new THREE.Vector3();
+const _planetEditorCamUp = new THREE.Vector3();
+const _planetEditorCamForward = new THREE.Vector3();
+const _sunEditorCenterWorld = new THREE.Vector3();
+
+// ── Walk mode (redesigned pill walker) ──────────────────────────────
+const walkMode = { active: false, spawnPlanetIdx: null };
+const walkInput = { left: false, right: false, fwd: false, back: false, sprint: false };
+const walkLookInput = { x: 0, y: 0 };
+const walkAnalog = { x: 0, y: 0 };
+const WALK_CFG = {
+  characterRadius: 0.005,
+  characterHeight: 0.018,
+  footOffset: 0.009,
+  moveSpeed: 0.10,
+  sprintBoost: 1.25,
+  acceleration: 6.4,
+  drag: 9.2,
+  slideAccel: 2.6,
+  slipEnterDeg: 40,
+  slipExitDeg: 39,
+  landPriorityGapAllowance: 0.12,
+  waterSpeedFactor: 0.5,
+  lavaSpeedFactor: 0.2,
+  bounceFreq: 8.2,
+  bounceAmp: 0.0012,
+  bounceResponse: 8.5,
+  walkFov: 62,
+  cameraDistance: 0.86,
+  cameraHeight: 0.05,
+  cameraLead: 0.42,
+  cameraTargetLift: 0.018,
+  cameraLag: 12.5,
+  avatarTurnLerp: 10.5,
+  tpDistanceMin: 0.25,
+  tpDistanceMax: 2.4,
+  tpZoomWheelStep: 1.10,
+  tpZoomSmooth: 7.8,
+  tpCollisionPadding: 0.08,
+  lookSensitivity: 0.0054,
+  mobileLookSensitivity: 0.0135,
+};
+let walkCameraMode = 'tp';
+let walkTpDistance = WALK_CFG.cameraDistance;
+let walkTpDistanceTarget = WALK_CFG.cameraDistance;
+let walkPrevMs = performance.now();
+const walkState = {
+  position: new THREE.Vector3(),
+  velocity: new THREE.Vector3(),
+  up: new THREE.Vector3(0, 1, 0),
+  forward: new THREE.Vector3(1, 0, 0),
+  viewDir: new THREE.Vector3(1, 0, 0),
+  anchorPlanetIdx: null,
+  surfaceType: 'land',
+  surfaceSlopeDeg: 0,
+  sliding: false,
+  bouncePhase: 0,
+  bounceBlend: 0,
+  missedSurfaceFrames: 0,
+  anchorLastMatrix: new THREE.Matrix4(),
+  anchorLastMatrixValid: false,
+  prevFov: null,
+};
+const _walkCenter = new THREE.Vector3();
+const _walkCamPos = new THREE.Vector3();
+const _walkCamTarget = new THREE.Vector3();
+const _walkBasisZ = new THREE.Vector3();
+const _walkBasisMat = new THREE.Matrix4();
+const _walkQ = new THREE.Quaternion();
+const _walkTmp = new THREE.Vector3();
+const _walkTmp2 = new THREE.Vector3();
+const _walkTmp3 = new THREE.Vector3();
+const _walkX = new THREE.Vector3(1, 0, 0);
+const _walkY = new THREE.Vector3(0, 1, 0);
+const _walkDesired = new THREE.Vector3();
+const _walkRight = new THREE.Vector3();
+const _walkRaycaster = new THREE.Raycaster();
+const _walkCamObstacles = [];
+const _walkSpawnV1 = new THREE.Vector3();
+const _walkSpawnV2 = new THREE.Vector3();
+const _walkSpawnV3 = new THREE.Vector3();
+const _walkSpawnCenter = new THREE.Vector3();
+const _walkSpawnNormal = new THREE.Vector3();
+const _walkSpawnRadial = new THREE.Vector3();
+const _walkSpawnToCam = new THREE.Vector3();
+const _walkAnchorDelta = new THREE.Matrix4();
+const _walkAnchorInv = new THREE.Matrix4();
+const walkTransition = { active: false, token: 0, startedAt: 0 };
+
+function makeWalkSurfaceRecord() {
+  return {
+    idx: null,
+    center: new THREE.Vector3(),
+    radialDir: new THREE.Vector3(),
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    surfaceRadius: 0,
+    gap: Infinity,
+    medium: 'land',
+    slopeDeg: 0,
+  };
+}
+const _walkSurfaceScratch = makeWalkSurfaceRecord();
+const _walkBestLandSurface = makeWalkSurfaceRecord();
+const _walkBestAnySurface = makeWalkSurfaceRecord();
+
+function copyWalkSurface(src, dst) {
+  dst.idx = src.idx;
+  dst.center.copy(src.center);
+  dst.radialDir.copy(src.radialDir);
+  dst.point.copy(src.point);
+  dst.normal.copy(src.normal);
+  dst.surfaceRadius = src.surfaceRadius;
+  dst.gap = src.gap;
+  dst.medium = src.medium;
+  dst.slopeDeg = src.slopeDeg;
+}
+
+function makeCapsuleApprox(radius, midLength, radialSegments, material) {
+  const capsule = new THREE.Group();
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, Math.max(0.001, midLength), radialSegments),
+    material
+  );
+  const capGeo = new THREE.SphereGeometry(
+    radius,
+    Math.max(8, radialSegments),
+    Math.max(6, Math.floor(radialSegments * 0.75))
+  );
+  const capTop = new THREE.Mesh(capGeo, material);
+  const capBottom = new THREE.Mesh(capGeo, material);
+  const halfStem = Math.max(0.001, midLength) * 0.5;
+  capTop.position.y = halfStem;
+  capBottom.position.y = -halfStem;
+  capsule.add(stem, capTop, capBottom);
+  return capsule;
+}
+
+const walkAvatar = new THREE.Group();
+const avatarBodyMat = new THREE.MeshLambertMaterial({ color: 0xe4ebfb });
+const avatarStripeMat = new THREE.MeshLambertMaterial({ color: 0x5aa6ff });
+const capsuleMidLen = Math.max(0.001, WALK_CFG.characterHeight - WALK_CFG.characterRadius * 2);
+const avatarBody = makeCapsuleApprox(WALK_CFG.characterRadius, capsuleMidLen, 16, avatarBodyMat);
+const avatarStripe = new THREE.Mesh(
+  new THREE.CylinderGeometry(WALK_CFG.characterRadius * 0.76, WALK_CFG.characterRadius * 0.76, WALK_CFG.characterHeight * 0.22, 16),
+  avatarStripeMat
+);
+avatarStripe.position.y = WALK_CFG.characterHeight * 0.12;
+walkAvatar.add(avatarBody, avatarStripe);
+walkAvatar.visible = false;
+scene.add(walkAvatar);
+
+const planetSelectionHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 36, 24),
+  new THREE.MeshBasicMaterial({
+    color: 0x58dfff,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.BackSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+planetSelectionHalo.visible = false;
+scene.add(planetSelectionHalo);
+
+const planetSelectionRing = new THREE.Mesh(
+  new THREE.TorusGeometry(1, 0.028, 14, 96),
+  new THREE.MeshBasicMaterial({
+    color: 0x9ceeff,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+planetSelectionRing.visible = false;
+scene.add(planetSelectionRing);
+
+const sunSelectionHalo = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 36, 24),
+  new THREE.MeshBasicMaterial({
+    color: 0x58dfff,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.BackSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+sunSelectionHalo.visible = false;
+scene.add(sunSelectionHalo);
+
+const sunSelectionRing = new THREE.Mesh(
+  new THREE.TorusGeometry(1, 0.028, 14, 96),
+  new THREE.MeshBasicMaterial({
+    color: 0x9ceeff,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+sunSelectionRing.visible = false;
+scene.add(sunSelectionRing);
+
+// ── Camera input: separate paths (do not mix) ─────────────────────
+// Desktop: mouse / pen — left = orbit, right = pan on plane, wheel = zoom.
+// Touch: 1 finger = orbit; 2 fingers pinch (spacing change) = zoom;
+//        2 fingers drag together (spacing ~stable) = pan on view plane.
+const _canvas = renderer.domElement;
+const _pickRay = new THREE.Raycaster();
+const _pickNdc = new THREE.Vector2();
+let tapCandidate = null;
+
+function syncSolGalaxyMenuVisibility() {
+  const gm = document.getElementById('galaxy-menu');
+  if (!gm) return;
+  const hide =
+    cameraMode === 'sun' &&
+    currentDestIndex === 0 &&
+    (!solGalaxyMenuRevealed || isNavigating);
+  gm.classList.toggle('galaxy-await-sun-tap', hide);
+}
+
+function pickSolarSystemFromScreen(clientX, clientY) {
+  if (walkMode.active) return;
+  const rect = _canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  _pickNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  _pickNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  _pickRay.setFromCamera(_pickNdc, camera);
+
+  const pickObjects = [];
+  const metaByUuid = new Map();
+
+  managedPlanets.forEach((mp, idx) => {
+    const targets = mp.obj.getPickables ? mp.obj.getPickables() : [];
+    targets.forEach(obj => {
+      if (!obj || !obj.visible) return;
+      pickObjects.push(obj);
+      metaByUuid.set(obj.uuid, { kind: 'planet', idx });
+    });
+  });
+
+  if (currentDestIndex === 0) {
+    sunGroup.updateMatrixWorld(true);
+    if (sunCoreMesh.visible) {
+      pickObjects.push(sunCoreMesh);
+      metaByUuid.set(sunCoreMesh.uuid, { kind: 'sun' });
+    }
+  }
+
+  if (!pickObjects.length) return;
+  const hits = _pickRay.intersectObjects(pickObjects, false);
+  for (let hi = 0; hi < hits.length; hi++) {
+    let obj = hits[hi].object;
+    let tag = null;
+    while (obj) {
+      tag = metaByUuid.get(obj.uuid);
+      if (tag) break;
+      obj = obj.parent;
+    }
+    if (!tag) continue;
+    if (tag.kind === 'planet') {
+      if (cameraMode !== 'planet') setCamMode('planet');
+      selectPlanet(tag.idx);
+      return;
+    }
+    if (tag.kind === 'sun') {
+      onSunTapped();
+      return;
+    }
+  }
+}
+
+function onSunTapped() {
+  if (walkMode.active || currentDestIndex !== 0) return;
+  solGalaxyMenuRevealed = true;
+  setCamMode('sun');
+  sunRadialDismissed = false;
+  syncSolGalaxyMenuVisibility();
+}
+
+function isTouchPointer(e) {
+  return e.pointerType === 'touch';
+}
+
+function queueWalkLook(rawDX, rawDY, isMobile = false) {
+  if (!walkMode.active) return;
+  const sens = isMobile ? WALK_CFG.mobileLookSensitivity : WALK_CFG.lookSensitivity;
+  walkLookInput.x += rawDX * sens;
+  walkLookInput.y += rawDY * sens;
+}
+
+// ----- Desktop (mouse / pen) -----
+function desktopPointerDown(e) {
+  dragging = true;
+  dragButton = e.button;
+  lastPX = e.clientX;
+  lastPY = e.clientY;
+  desktopWalkLookX = e.clientX;
+  desktopWalkLookY = e.clientY;
+  desktopWalkLookReady = true;
+  try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
+}
+function desktopPointerUp(e) {
+  dragging = false;
+  desktopWalkLookReady = false;
+  try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+}
+function desktopPointerMove(e) {
+  if (walkMode.active) {
+    let rawDX = 0;
+    let rawDY = 0;
+    if (dragging) {
+      rawDX = e.clientX - lastPX;
+      rawDY = e.clientY - lastPY;
+    } else if (Math.abs(e.movementX || 0) > 0 || Math.abs(e.movementY || 0) > 0) {
+      rawDX = e.movementX || 0;
+      rawDY = e.movementY || 0;
+    } else if (desktopWalkLookReady) {
+      rawDX = e.clientX - desktopWalkLookX;
+      rawDY = e.clientY - desktopWalkLookY;
+    }
+    desktopWalkLookX = e.clientX;
+    desktopWalkLookY = e.clientY;
+    desktopWalkLookReady = true;
+    if (dragging) {
+      lastPX = e.clientX;
+      lastPY = e.clientY;
+    }
+    queueWalkLook(rawDX, rawDY, false);
+    return;
+  }
+  if (!dragging) return;
+  const rawDX = e.clientX - lastPX;
+  const rawDY = e.clientY - lastPY;
+  lastPX = e.clientX;
+  lastPY = e.clientY;
+  if (dragButton === 2) {
+    camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
+    const panSpeed = 0.012 * orbitZoom;
+    panOffset.addScaledVector(_right, -rawDX * panSpeed);
+    panOffset.addScaledVector(_up,     rawDY * panSpeed);
+  } else {
+    const dx = -rawDX * 0.006 * orbitSpeedMul;
+    const dy = -rawDY * 0.006 * orbitSpeedMul;
+    if (cameraMode === 'sun') { dTheta += dx; dPhi += dy; }
+    else                      { pDTheta += dx; pDPhi += dy; }
+  }
+}
+
+// ----- Touch (phones / tablets) -----
+const mobPointers = new Map();
+let mobPinchDist = 0;
+let mobMidX = 0, mobMidY = 0;
+let mobSingleLX = 0, mobSingleLY = 0;
+let mobSingleReady = false;
+// Split 2-finger gestures: pinch → zoom; parallel drag → pan on camera plane (like desktop right-drag)
+const MOB_SPREAD_ZOOM = 0.55;   // px finger-spacing change → pinch zoom
+const MOB_PAN_DOM = 0.48;       // plane-pan only if spacing shifts < this × travel
+const MOB_PAN_MIN = 0.45;       // min midpoint motion (px) for plane pan
+const MOB_ZOOM_VS_PAN = 0.28;   // zoom wins if spacing shift > this × pan motion
+
+function mobPinchPair() {
+  const pts = Array.from(mobPointers.values());
+  if (pts.length < 2) return null;
+  return { a: pts[0], b: pts[1] };
+}
+
+function onMobilePointerDown(e) {
+  try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (mobPointers.size === 1) {
+    mobSingleLX = e.clientX;
+    mobSingleLY = e.clientY;
+    mobSingleReady = true;
+  }
+  if (mobPointers.size === 2) {
+    const pair = mobPinchPair();
+    if (pair) {
+      mobPinchDist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+      mobMidX = (pair.a.x + pair.b.x) * 0.5;
+      mobMidY = (pair.a.y + pair.b.y) * 0.5;
+    }
+  }
+}
+
+function onMobilePointerMove(e) {
+  if (!mobPointers.has(e.pointerId)) {
+    if (!walkMode.active) return;
+    mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (mobPointers.size === 1) {
+      mobSingleLX = e.clientX;
+      mobSingleLY = e.clientY;
+      mobSingleReady = true;
+    }
+    return;
+  }
+  const prev = mobPointers.get(e.pointerId);
+  mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (walkMode.active) {
+    if (prev) {
+      queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
+    }
+    if (mobPointers.size >= 2) {
+      const pair = mobPinchPair();
+      if (pair) {
+        const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+        mobMidX = (pair.a.x + pair.b.x) * 0.5;
+        mobMidY = (pair.a.y + pair.b.y) * 0.5;
+        if (mobPinchDist > 10 && dist > 10 && walkCameraMode === 'tp') {
+          const ratio = mobPinchDist / dist;
+          setWalkTpDistanceTarget(walkTpDistanceTarget * Math.pow(ratio, 1.08));
+        }
+        mobPinchDist = dist;
+      }
+    } else if (mobPointers.size >= 1) {
+      const p = mobPointers.values().next().value;
+      if (p) {
+        mobSingleLX = p.x;
+        mobSingleLY = p.y;
+        mobSingleReady = true;
+      }
+    }
+    return;
+  }
+
+  if (mobPointers.size === 1 && mobSingleReady) {
+    const rawDX = e.clientX - mobSingleLX;
+    const rawDY = e.clientY - mobSingleLY;
+    mobSingleLX = e.clientX;
+    mobSingleLY = e.clientY;
+    const sens = 0.005 * orbitSpeedMul;
+    const dx = -rawDX * sens;
+    const dy = -rawDY * sens;
+    if (cameraMode === 'sun') { dTheta += dx; dPhi += dy; }
+    else                      { pDTheta += dx; pDPhi += dy; }
+    return;
+  }
+
+  if (mobPointers.size === 2) {
+    const pair = mobPinchPair();
+    if (!pair) return;
+    const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+    const midX = (pair.a.x + pair.b.x) * 0.5;
+    const midY = (pair.a.y + pair.b.y) * 0.5;
+
+    const prevD = mobPinchDist;
+    const prevMx = mobMidX;
+    const prevMy = mobMidY;
+
+    if (prevD > 10 && dist > 10) {
+      const spreadPx = Math.abs(dist - prevD);
+      const mdx = midX - prevMx;
+      const mdy = midY - prevMy;
+      const panLen = Math.hypot(mdx, mdy);
+
+      const doPinchZoom =
+        spreadPx >= MOB_SPREAD_ZOOM && spreadPx > panLen * MOB_ZOOM_VS_PAN;
+      const doPlanePan =
+        panLen >= MOB_PAN_MIN && spreadPx < panLen * MOB_PAN_DOM;
+
+      if (doPinchZoom) {
+        zoomTarget = null;
+        // Spread fingers → zoom in (smaller orbit radius); pinch together → zoom out — matches maps / photos
+        const ratio = prevD / dist;
+        const zf = Math.pow(ratio, 1.13);
+        orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * zf));
+      } else if (doPlanePan) {
+        camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
+        const panSpeed = 0.019 * orbitZoom;
+        panOffset.addScaledVector(_right, -mdx * panSpeed);
+        panOffset.addScaledVector(_up,     mdy * panSpeed);
+      }
+    }
+
+    mobPinchDist = dist;
+    mobMidX = midX;
+    mobMidY = midY;
+  }
+}
+
+function onMobilePointerUp(e) {
+  mobPointers.delete(e.pointerId);
+  try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+  if (mobPointers.size < 2) {
+    mobPinchDist = 0;
+    mobMidX = 0;
+    mobMidY = 0;
+  }
+  if (mobPointers.size === 1) {
+    const p = mobPointers.values().next().value;
+    mobSingleLX = p.x;
+    mobSingleLY = p.y;
+    mobSingleReady = true;
+  }
+  if (mobPointers.size === 0) mobSingleReady = false;
+}
+
+_canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+_canvas.addEventListener('pointerdown', e => {
+  if (isTouchPointer(e)) onMobilePointerDown(e);
+  else desktopPointerDown(e);
+});
+
+window.addEventListener('pointerdown', e => {
+  if (!walkMode.active) return;
+  const target = e.target;
+  if (target && typeof target.closest === 'function'
+    && target.closest('#walk-controls, #ui, #planet-selection-editor, #primer, #splash')) return;
+  if (isTouchPointer(e)) {
+    if (mobPointers.has(e.pointerId)) return;
+    onMobilePointerDown(e);
+  } else if (!dragging) {
+    desktopPointerDown(e);
+  }
+}, { passive: false });
+
+window.addEventListener('pointerup', e => {
+  if (isTouchPointer(e)) onMobilePointerUp(e);
+  else desktopPointerUp(e);
+});
+
+window.addEventListener('pointercancel', e => {
+  if (isTouchPointer(e)) onMobilePointerUp(e);
+  else desktopPointerUp(e);
+});
+
+window.addEventListener('pointermove', e => {
+  if (isTouchPointer(e)) {
+    if (mobPointers.has(e.pointerId)) onMobilePointerMove(e);
+  } else {
+    desktopPointerMove(e);
+  }
+});
+
+_canvas.addEventListener('pointerdown', e => {
+  tapCandidate = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+});
+
+_canvas.addEventListener('pointermove', e => {
+  if (!tapCandidate || tapCandidate.id !== e.pointerId) return;
+  if (Math.hypot(e.clientX - tapCandidate.x, e.clientY - tapCandidate.y) > 8) {
+    tapCandidate.moved = true;
+  }
+});
+
+_canvas.addEventListener('pointerup', e => {
+  if (!tapCandidate || tapCandidate.id !== e.pointerId) return;
+  const shouldPick = !tapCandidate.moved && (isTouchPointer(e) || e.button === 0);
+  tapCandidate = null;
+  if (shouldPick) pickSolarSystemFromScreen(e.clientX, e.clientY);
+});
+
+_canvas.addEventListener('pointercancel', e => {
+  if (tapCandidate && tapCandidate.id === e.pointerId) tapCandidate = null;
+});
+
+_canvas.addEventListener('wheel', e => {
+  if (isTouchPointer(e)) return;
+  e.preventDefault();
+  if (walkMode.active) {
+    if (walkCameraMode === 'tp') {
+      const zoomOut = e.deltaY > 0 ? WALK_CFG.tpZoomWheelStep : 1 / WALK_CFG.tpZoomWheelStep;
+      setWalkTpDistanceTarget(walkTpDistanceTarget * zoomOut);
+    }
+    return;
+  }
+  zoomTarget = null;
+  const step = 1 + 0.08 * zoomSpeedMul;
+  orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * (e.deltaY > 0 ? step : 1 / step)));
+}, { passive: false });
+
+function getPlanetCenterRadius(mp, centerOut) {
+  mp.obj.pivot.getWorldPosition(centerOut);
+  return Math.max(0.25, (mp.obj.baseRadius || 0.8) * mp.obj.state.size);
+}
+
+function getWalkTerrainMesh(mp) {
+  if (!mp?.obj) return null;
+  const direct = mp.obj.getTerrainMesh ? mp.obj.getTerrainMesh() : null;
+  if (direct) return direct;
+  const pickables = mp.obj.getPickables ? mp.obj.getPickables() : null;
+  return Array.isArray(pickables) && pickables.length ? pickables[0] : null;
+}
+
+function getWalkLandSpawnOnPlanet(idx) {
+  const mp = managedPlanets[idx];
+  if (!mp?.obj?.pivot) return null;
+  const mesh = getWalkTerrainMesh(mp);
+  const posAttr = mesh?.geometry?.attributes?.position;
+  if (!posAttr || posAttr.count < 3) return null;
+
+  mesh.updateMatrixWorld(true);
+  mp.obj.pivot.getWorldPosition(_walkSpawnCenter);
+
+  const liquid = getLiquidState(mp.obj.state.waterLevel, mp.obj.baseRadius || 0.8);
+  const scaledLiquidR = liquid.liquidR * Math.max(mp.obj.state.size, 0.05);
+  const liquidEps = Math.max(0.003, scaledLiquidR * 0.012);
+
+  let bestScore = -Infinity;
+  let best = null;
+  const triCount = posAttr.count - (posAttr.count % 3);
+  for (let i = 0; i < triCount; i += 3) {
+    _walkSpawnV1.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
+    _walkSpawnV2.fromBufferAttribute(posAttr, i + 1).applyMatrix4(mesh.matrixWorld);
+    _walkSpawnV3.fromBufferAttribute(posAttr, i + 2).applyMatrix4(mesh.matrixWorld);
+
+    const avgR = (
+      _walkSpawnV1.distanceTo(_walkSpawnCenter) +
+      _walkSpawnV2.distanceTo(_walkSpawnCenter) +
+      _walkSpawnV3.distanceTo(_walkSpawnCenter)
+    ) / 3;
+    if (liquid.hasLiquid && avgR <= scaledLiquidR + liquidEps) continue;
+
+    _walkTmp.copy(_walkSpawnV1).add(_walkSpawnV2).add(_walkSpawnV3).multiplyScalar(1 / 3);
+    _walkSpawnRadial.copy(_walkTmp).sub(_walkSpawnCenter);
+    const radialLen = _walkSpawnRadial.length();
+    if (radialLen < 1e-7) continue;
+    _walkSpawnRadial.multiplyScalar(1 / radialLen);
+
+    _walkSpawnNormal
+      .subVectors(_walkSpawnV2, _walkSpawnV1)
+      .cross(_walkTmp2.subVectors(_walkSpawnV3, _walkSpawnV1));
+    if (_walkSpawnNormal.lengthSq() < 1e-9) continue;
+    _walkSpawnNormal.normalize();
+    if (_walkSpawnNormal.dot(_walkSpawnRadial) < 0) _walkSpawnNormal.multiplyScalar(-1);
+
+    const slopeDot = Math.max(-1, Math.min(1, _walkSpawnNormal.dot(_walkSpawnRadial)));
+    const slopeDeg = Math.acos(slopeDot) * THREE.MathUtils.RAD2DEG;
+    if (slopeDeg > 56) continue;
+
+    _walkSpawnToCam.copy(camera.position).sub(_walkTmp);
+    const distToCam = _walkSpawnToCam.length();
+    if (distToCam > 1e-7) _walkSpawnToCam.multiplyScalar(1 / distToCam);
+    const facing = Math.max(-1, Math.min(1, _walkSpawnNormal.dot(_walkSpawnToCam)));
+    const stableBonus = slopeDeg <= WALK_CFG.slipExitDeg ? 2.2 : 0.0;
+    const slopePref = 1 - Math.min(1, Math.abs(slopeDeg - 16) / 26);
+    const nearPref = 1 - Math.min(1, distToCam / 70);
+    const score = stableBonus + slopePref * 2.1 + facing * 0.85 + nearPref * 0.55;
+    if (score <= bestScore) continue;
+    bestScore = score;
+    best = {
+      idx,
+      center: _walkSpawnCenter.clone(),
+      point: _walkTmp.clone(),
+      normal: _walkSpawnNormal.clone(),
+      radialDir: _walkSpawnRadial.clone(),
+      medium: 'land',
+      slopeDeg,
+    };
+  }
+  return best;
+}
+
+function resolveWalkStartPlanetAndSpawn() {
+  const ordered = [];
+  if (selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]?.obj?.pivot) {
+    ordered.push(selectedPlanetIdx);
+  }
+  for (let i = 0; i < managedPlanets.length; i++) {
+    if (!managedPlanets[i]?.obj?.pivot || i === selectedPlanetIdx) continue;
+    ordered.push(i);
+  }
+  ordered.sort((a, b) => {
+    managedPlanets[a].obj.pivot.getWorldPosition(_walkTmp);
+    managedPlanets[b].obj.pivot.getWorldPosition(_walkTmp2);
+    return _walkTmp.distanceToSquared(camera.position) - _walkTmp2.distanceToSquared(camera.position);
+  });
+  for (let i = 0; i < ordered.length; i++) {
+    const idx = ordered[i];
+    const spawn = getWalkLandSpawnOnPlanet(idx);
+    if (spawn) return { idx, spawn };
+  }
+  return null;
+}
+
+function classifyWalkSurfaceMedium(mp, hitDistanceWorld) {
+  if (!mp?.obj) return 'land';
+  const liquid = getLiquidState(mp.obj.state.waterLevel, mp.obj.baseRadius || 0.8);
+  if (!liquid.hasLiquid) return 'land';
+  const scaledLiquidR = liquid.liquidR * Math.max(mp.obj.state.size, 0.05);
+  const eps = Math.max(0.004, scaledLiquidR * 0.012);
+  if (hitDistanceWorld > scaledLiquidR + eps) return 'land';
+  if (liquid.hasWater) return 'water';
+  if (liquid.hasLava) return 'lava';
+  return 'land';
+}
+
+function sampleWalkSurfaceForPlanet(mp, idx, pos, out = _walkSurfaceScratch) {
+  const mesh = getWalkTerrainMesh(mp);
+  if (!mesh) return null;
+  getPlanetCenterRadius(mp, _walkCenter);
+  _walkTmp.copy(pos).sub(_walkCenter);
+  const radialLen = _walkTmp.length();
+  if (radialLen < 1e-6) return null;
+  _walkTmp.multiplyScalar(1 / radialLen);
+  const nominalRadius = Math.max(0.25, (mp.obj.baseRadius || 0.8) * mp.obj.state.size);
+  const far = Math.max(2.0, nominalRadius * 3.2 + 2.0);
+  _walkRaycaster.ray.origin.copy(_walkCenter);
+  _walkRaycaster.ray.direction.copy(_walkTmp);
+  _walkRaycaster.near = 0;
+  _walkRaycaster.far = far;
+  const hits = _walkRaycaster.intersectObject(mesh, false);
+  if (!hits.length) return null;
+  const hit = hits[0];
+  _walkTmp2.copy(_walkTmp);
+  _walkTmp3.copy(hit.face?.normal || _walkTmp2).transformDirection(hit.object.matrixWorld).normalize();
+  if (_walkTmp3.dot(_walkTmp2) < 0) _walkTmp3.multiplyScalar(-1);
+  const medium = classifyWalkSurfaceMedium(mp, hit.distance);
+  const slopeDot = Math.max(-1, Math.min(1, _walkTmp3.dot(_walkTmp2)));
+  out.idx = idx;
+  out.center.copy(_walkCenter);
+  out.radialDir.copy(_walkTmp2);
+  out.point.copy(hit.point);
+  out.normal.copy(_walkTmp3);
+  out.surfaceRadius = hit.distance;
+  out.gap = radialLen - hit.distance;
+  out.medium = medium;
+  out.slopeDeg = Math.acos(slopeDot) * THREE.MathUtils.RAD2DEG;
+  return out;
+}
+
+function sampleBestWalkSurface(pos, preferredIdx = null) {
+  let bestLandGap = Infinity;
+  let bestAnyGap = Infinity;
+  let hasLand = false;
+  let hasAny = false;
+
+  function scoreSurface(sample) {
+    if (!sample) return;
+    const absGap = Math.abs(sample.gap);
+    if (absGap < bestAnyGap) {
+      bestAnyGap = absGap;
+      copyWalkSurface(sample, _walkBestAnySurface);
+      hasAny = true;
+    }
+    if (sample.medium !== 'land') return;
+    if (absGap < bestLandGap) {
+      bestLandGap = absGap;
+      copyWalkSurface(sample, _walkBestLandSurface);
+      hasLand = true;
+    }
+  }
+
+  if (preferredIdx !== null && preferredIdx >= 0 && preferredIdx < managedPlanets.length) {
+    scoreSurface(sampleWalkSurfaceForPlanet(managedPlanets[preferredIdx], preferredIdx, pos));
+  }
+  for (let i = 0; i < managedPlanets.length; i++) {
+    if (i === preferredIdx) continue;
+    scoreSurface(sampleWalkSurfaceForPlanet(managedPlanets[i], i, pos));
+  }
+  if (hasLand && (!hasAny || bestLandGap <= bestAnyGap + WALK_CFG.landPriorityGapAllowance)) {
+    return _walkBestLandSurface;
+  }
+  if (hasAny) return _walkBestAnySurface;
+  return null;
+}
+
+function resolveWalkCameraOcclusion(target, desiredPos, outPos) {
+  outPos.copy(desiredPos);
+  _walkTmp3.copy(desiredPos).sub(target);
+  const dist = _walkTmp3.length();
+  if (dist <= 1e-5) return outPos;
+
+  _walkTmp3.multiplyScalar(1 / dist);
+  _walkRaycaster.set(target, _walkTmp3);
+  _walkRaycaster.near = 0.02;
+  _walkRaycaster.far = dist;
+
+  _walkCamObstacles.length = 0;
+  managedPlanets.forEach(mp => {
+    const mesh = getWalkTerrainMesh(mp);
+    if (mesh?.visible) _walkCamObstacles.push(mesh);
+  });
+  if (!_walkCamObstacles.length) return outPos;
+
+  const hits = _walkRaycaster.intersectObjects(_walkCamObstacles, false);
+  if (!hits.length) return outPos;
+  const safeDist = Math.max(0.08, hits[0].distance - WALK_CFG.tpCollisionPadding);
+  outPos.copy(target).addScaledVector(_walkTmp3, safeDist);
+  return outPos;
+}
+
+function setWalkTpDistanceTarget(nextValue) {
+  walkTpDistanceTarget = Math.max(WALK_CFG.tpDistanceMin, Math.min(WALK_CFG.tpDistanceMax, nextValue));
+  refreshWalkUi();
+}
+
+function queueWalkJump() {
+  // Intentional no-op in redesigned walker: movement is grounded + slope sliding only.
+}
+
+function toggleWalkCameraMode() {
+  // Intentional no-op: walk camera is always free-look third-person.
+}
+
+function clearWalkInputState() {
+  walkInput.left = false;
+  walkInput.right = false;
+  walkInput.fwd = false;
+  walkInput.back = false;
+  walkInput.sprint = false;
+  resetWalkJoystick();
+}
+
+function refreshWalkUi() {
+  const btn = document.getElementById('btn-walk');
+  const controls = document.getElementById('walk-controls');
+  const badge = document.getElementById('walk-cam-badge');
+  const viewBtn = controls ? controls.querySelector('button[data-walk="view"]') : null;
+  if (btn) {
+    btn.classList.toggle('active', walkMode.active);
+  }
+  if (controls) {
+    controls.style.display = walkMode.active ? 'grid' : 'none';
+  }
+  if (badge) {
+    badge.style.display = walkMode.active ? 'block' : 'none';
+    if (walkMode.active) {
+      const mediumTag = walkState.surfaceType === 'lava' ? 'LAVA' : (walkState.surfaceType === 'water' ? 'WATER' : 'LAND');
+      badge.textContent = `${mediumTag} ${walkTpDistanceTarget.toFixed(2)}x`;
+    }
+  }
+  if (viewBtn) {
+    viewBtn.textContent = 'FREE';
+    viewBtn.title = 'Free drag camera is always enabled';
+    viewBtn.disabled = true;
+  }
+}
+
+function stopWalkMode() {
+  if (!walkMode.active) return;
+  walkTransition.active = false;
+  walkTransition.startedAt = 0;
+  walkMode.active = false;
+  walkMode.spawnPlanetIdx = null;
+  if (walkState.prevFov !== null) {
+    camera.fov = walkState.prevFov;
+    camera.updateProjectionMatrix();
+    walkState.prevFov = null;
+  }
+  walkAvatar.visible = false;
+  clearWalkInputState();
+  walkLookInput.x = 0;
+  walkLookInput.y = 0;
+  walkState.velocity.set(0, 0, 0);
+  walkState.anchorPlanetIdx = null;
+  walkState.surfaceType = 'land';
+  walkState.surfaceSlopeDeg = 0;
+  walkState.sliding = false;
+  walkState.bouncePhase = 0;
+  walkState.bounceBlend = 0;
+  walkState.missedSurfaceFrames = 0;
+  walkState.anchorLastMatrixValid = false;
+  desktopWalkLookReady = false;
+  refreshWalkUi();
+}
+
+function startWalkMode(idx, spawnSurface = null) {
+  if (idx === null || idx === undefined) return;
+  const mp = managedPlanets[idx];
+  if (!mp) return;
+  walkTransition.active = false;
+  walkTransition.startedAt = 0;
+  walkMode.active = true;
+  walkMode.spawnPlanetIdx = idx;
+  walkCameraMode = 'tp';
+  if (walkState.prevFov === null) walkState.prevFov = camera.fov;
+  camera.fov = WALK_CFG.walkFov;
+  camera.updateProjectionMatrix();
+  walkPrevMs = performance.now();
+  walkLookInput.x = 0;
+  walkLookInput.y = 0;
+  clearWalkInputState();
+  setWalkTpDistanceTarget(WALK_CFG.cameraDistance);
+  walkTpDistance = walkTpDistanceTarget;
+
+  let startSurface = spawnSurface;
+  mp.obj.pivot.getWorldPosition(_walkCenter);
+  if (startSurface) {
+    walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
+    walkState.up.copy(startSurface.radialDir).normalize();
+  } else {
+    walkState.position.copy(camera.position);
+    startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
+    if (startSurface) {
+      walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
+      walkState.up.copy(startSurface.radialDir).normalize();
+    }
+    const fallbackR = getPlanetCenterRadius(mp, _walkCenter) + WALK_CFG.footOffset;
+    if (!startSurface) {
+      walkState.up.copy(camera.position).sub(_walkCenter);
+      if (walkState.up.lengthSq() < 1e-8) walkState.up.set(0, 1, 0);
+      walkState.up.normalize();
+      walkState.position.copy(_walkCenter).addScaledVector(walkState.up, fallbackR);
+      startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
+      if (startSurface) {
+        walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
+        walkState.up.copy(startSurface.radialDir).normalize();
+      }
+    }
+  }
+
+  camera.getWorldDirection(_walkTmp);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.set(1, 0, 0);
+  walkState.viewDir.copy(_walkTmp.normalize());
+  walkState.forward.copy(walkState.viewDir).projectOnPlane(walkState.up);
+  if (walkState.forward.lengthSq() < 1e-8) {
+    walkState.forward.copy(_walkX).projectOnPlane(walkState.up);
+    if (walkState.forward.lengthSq() < 1e-8) walkState.forward.crossVectors(_walkY, walkState.up);
+  }
+  walkState.forward.normalize();
+
+  walkState.velocity.set(0, 0, 0);
+  walkState.anchorPlanetIdx = idx;
+  walkState.surfaceType = startSurface ? startSurface.medium : 'land';
+  walkState.surfaceSlopeDeg = startSurface ? startSurface.slopeDeg : 0;
+  walkState.sliding = false;
+  walkState.bouncePhase = 0;
+  walkState.bounceBlend = 0;
+  walkState.missedSurfaceFrames = 0;
+  desktopWalkLookReady = false;
+  mp.obj.pivot.updateMatrixWorld(true);
+  walkState.anchorLastMatrix.copy(mp.obj.pivot.matrixWorld);
+  walkState.anchorLastMatrixValid = true;
+  walkAvatar.position.copy(walkState.position);
+  walkAvatar.visible = true;
+  refreshWalkUi();
+}
+
+function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
+  return new Promise((resolve) => {
+    const token = ++walkTransition.token;
+    walkTransition.active = true;
+    walkTransition.startedAt = performance.now();
+
+    const startPos = camera.position.clone();
+    const startUp = camera.up.clone();
+    camera.getWorldDirection(_walkTmp3);
+    const startLook = startPos.clone().addScaledVector(_walkTmp3, 6);
+
+    _walkTmp.copy(camera.position).sub(spawn.point).projectOnPlane(spawn.radialDir);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.crossVectors(_walkY, spawn.radialDir);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.crossVectors(spawn.normal, spawn.radialDir);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.set(1, 0, 0);
+    _walkTmp.normalize();
+
+    const endLook = spawn.point.clone().addScaledVector(spawn.radialDir, WALK_CFG.cameraTargetLift);
+    const endPos = endLook
+      .clone()
+      .addScaledVector(_walkTmp, -walkTpDistanceTarget)
+      .addScaledVector(spawn.radialDir, WALK_CFG.cameraHeight);
+    resolveWalkCameraOcclusion(endLook, endPos, endPos);
+    const endUp = spawn.radialDir.clone();
+
+    const t0 = performance.now();
+    function frame(now) {
+      if (token !== walkTransition.token) {
+        walkTransition.active = false;
+        walkTransition.startedAt = 0;
+        resolve();
+        return;
+      }
+      const p = Math.max(0, Math.min(1, (now - t0) / durationMs));
+      const eased = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+      camera.position.lerpVectors(startPos, endPos, eased);
+      _walkTmp2.lerpVectors(startLook, endLook, eased);
+      camera.up.lerpVectors(startUp, endUp, eased).normalize();
+      camera.lookAt(_walkTmp2);
+      if (p < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        walkTransition.active = false;
+        walkTransition.startedAt = 0;
+        resolve();
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+function applyWalkLook() {
+  if (!walkMode.active) return;
+  const yaw = -walkLookInput.x;
+  const pitch = -walkLookInput.y;
+  walkLookInput.x = 0;
+  walkLookInput.y = 0;
+
+  if (Math.abs(yaw) > 1e-6) {
+    walkState.viewDir.applyAxisAngle(walkState.up, yaw).normalize();
+  }
+  _walkRight.crossVectors(walkState.viewDir, walkState.up);
+  if (_walkRight.lengthSq() < 1e-8) _walkRight.crossVectors(walkState.forward, walkState.up);
+  if (_walkRight.lengthSq() < 1e-8) _walkRight.crossVectors(_walkX, walkState.up);
+  if (_walkRight.lengthSq() < 1e-8) return;
+  _walkRight.normalize();
+  if (Math.abs(pitch) > 1e-6) {
+    _walkQ.setFromAxisAngle(_walkRight, pitch);
+    walkState.viewDir.applyQuaternion(_walkQ).normalize();
+  }
+  const upDot = walkState.viewDir.dot(walkState.up);
+  if (Math.abs(upDot) > 0.9985) {
+    _walkTmp.copy(walkState.forward).projectOnPlane(walkState.up);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(_walkX).projectOnPlane(walkState.up);
+    if (_walkTmp.lengthSq() > 1e-8) {
+      _walkTmp.normalize();
+      const verticalSign = upDot >= 0 ? 1 : -1;
+      walkState.viewDir
+        .copy(walkState.up).multiplyScalar(verticalSign * 0.9985)
+        .addScaledVector(_walkTmp, 0.054)
+        .normalize();
+    }
+  }
+}
+
+function getWalkSurfaceSpeedFactor(surface) {
+  if (!surface) return 1;
+  if (surface.medium === 'water') return WALK_CFG.waterSpeedFactor;
+  if (surface.medium === 'lava') return WALK_CFG.lavaSpeedFactor;
+  return 1;
+}
+
+function updateWalkMode(dt) {
+  const anchorIdx = walkState.anchorPlanetIdx !== null
+    ? walkState.anchorPlanetIdx
+    : walkMode.spawnPlanetIdx;
+  const anchorMp = anchorIdx !== null ? managedPlanets[anchorIdx] : null;
+  if (anchorMp?.obj?.pivot) {
+    anchorMp.obj.pivot.updateMatrixWorld(true);
+    if (walkState.anchorLastMatrixValid) {
+      _walkAnchorInv.copy(walkState.anchorLastMatrix).invert();
+      _walkAnchorDelta.multiplyMatrices(anchorMp.obj.pivot.matrixWorld, _walkAnchorInv);
+      walkState.position.applyMatrix4(_walkAnchorDelta);
+      walkState.up.transformDirection(_walkAnchorDelta).normalize();
+      walkState.forward.transformDirection(_walkAnchorDelta).normalize();
+      walkState.viewDir.transformDirection(_walkAnchorDelta).normalize();
+    }
+    walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
+    walkState.anchorLastMatrixValid = true;
+  } else {
+    walkState.anchorLastMatrixValid = false;
+  }
+  const currentSurface = anchorMp
+    ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position)
+    : null;
+  if (!currentSurface) {
+    walkState.missedSurfaceFrames += 1;
+    if (walkState.missedSurfaceFrames >= 4) {
+      const recovered = resolveWalkStartPlanetAndSpawn();
+      if (recovered?.spawn) {
+        walkState.anchorPlanetIdx = recovered.idx;
+        walkState.position.copy(recovered.spawn.point).addScaledVector(recovered.spawn.radialDir, WALK_CFG.footOffset);
+        walkState.up.copy(recovered.spawn.radialDir).normalize();
+        walkState.velocity.set(0, 0, 0);
+        walkState.surfaceType = 'land';
+        walkState.surfaceSlopeDeg = recovered.spawn.slopeDeg || 0;
+        walkState.sliding = false;
+        walkState.missedSurfaceFrames = 0;
+        const recoveredMp = managedPlanets[recovered.idx];
+        if (recoveredMp?.obj?.pivot) {
+          recoveredMp.obj.pivot.updateMatrixWorld(true);
+          walkState.anchorLastMatrix.copy(recoveredMp.obj.pivot.matrixWorld);
+          walkState.anchorLastMatrixValid = true;
+        } else {
+          walkState.anchorLastMatrixValid = false;
+        }
+        refreshWalkUi();
+      }
+    }
+    if (walkState.missedSurfaceFrames > 32) stopWalkMode();
+    return;
+  }
+  walkState.missedSurfaceFrames = 0;
+  walkState.anchorPlanetIdx = anchorIdx;
+  walkState.surfaceType = currentSurface.medium;
+  walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
+  walkState.up.copy(currentSurface.radialDir).normalize();
+
+  applyWalkLook();
+
+  walkState.forward.copy(walkState.viewDir).projectOnPlane(currentSurface.normal);
+  if (walkState.forward.lengthSq() < 1e-8) {
+    walkState.forward.copy(_walkX).projectOnPlane(walkState.up);
+    if (walkState.forward.lengthSq() < 1e-8) walkState.forward.crossVectors(_walkY, walkState.up);
+  }
+  walkState.forward.normalize();
+  _walkRight.crossVectors(walkState.forward, walkState.up).normalize();
+
+  const moveX = ((walkInput.right ? 1 : 0) - (walkInput.left ? 1 : 0)) + walkAnalog.x;
+  const moveY = ((walkInput.fwd ? 1 : 0) - (walkInput.back ? 1 : 0)) + walkAnalog.y;
+  _walkDesired.copy(_walkRight).multiplyScalar(moveX).addScaledVector(walkState.forward, moveY);
+  const moveLen = _walkDesired.length();
+  if (moveLen > 1) _walkDesired.multiplyScalar(1 / moveLen);
+
+  const sprinting = walkInput.sprint && moveLen > 0.08;
+  const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
+  const desiredSpeed = WALK_CFG.moveSpeed * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
+  _walkDesired.projectOnPlane(currentSurface.normal);
+  if (_walkDesired.lengthSq() > 1e-8) _walkDesired.setLength(desiredSpeed);
+
+  _walkTmp.copy(walkState.velocity).projectOnPlane(currentSurface.normal);
+  const accelStep = Math.min(1, WALK_CFG.acceleration * dt);
+  _walkTmp.lerp(_walkDesired, accelStep);
+  if (moveLen < 0.05) {
+    _walkTmp.multiplyScalar(Math.max(0, 1 - WALK_CFG.drag * dt));
+  }
+
+  if (currentSurface.slopeDeg > WALK_CFG.slipEnterDeg) walkState.sliding = true;
+  else if (currentSurface.slopeDeg <= WALK_CFG.slipExitDeg) walkState.sliding = false;
+  if (walkState.sliding) {
+    _walkTmp2.copy(currentSurface.radialDir).multiplyScalar(-1).projectOnPlane(currentSurface.normal);
+    const downhillLen = _walkTmp2.length();
+    if (downhillLen > 1e-8) {
+      _walkTmp2.multiplyScalar(1 / downhillLen);
+      const slopeGain = Math.max(0, Math.min(1, (currentSurface.slopeDeg - WALK_CFG.slipExitDeg) / (90 - WALK_CFG.slipExitDeg)));
+      const slideImpulse = WALK_CFG.slideAccel * (0.45 + slopeGain * 1.2);
+      _walkTmp.addScaledVector(_walkTmp2, slideImpulse * dt);
+    }
+  }
+
+  _walkTmp3.copy(walkState.position).addScaledVector(_walkTmp, dt);
+  const nextSurface = anchorMp
+    ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, _walkTmp3)
+    : null;
+  if (!nextSurface) {
+    walkState.position.copy(currentSurface.point).addScaledVector(currentSurface.radialDir, WALK_CFG.footOffset);
+    walkState.velocity.set(0, 0, 0);
+    walkState.surfaceType = currentSurface.medium;
+    walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
+  } else {
+    walkState.position.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
+    _walkTmp.projectOnPlane(nextSurface.normal);
+    walkState.velocity.copy(_walkTmp);
+    walkState.anchorPlanetIdx = anchorIdx;
+    walkState.surfaceType = nextSurface.medium;
+    walkState.surfaceSlopeDeg = nextSurface.slopeDeg;
+    walkState.up.copy(nextSurface.radialDir).normalize();
+  }
+
+  const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
+  let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
+  if (moveLen < 0.05) bounceTarget = 0;
+  walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
+  walkState.bouncePhase += dt * (WALK_CFG.bounceFreq + planarSpeed * 10);
+  const bounce = Math.abs(Math.sin(walkState.bouncePhase)) * WALK_CFG.bounceAmp * walkState.bounceBlend;
+
+  walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * 0.45);
+  _walkBasisZ.crossVectors(walkState.forward, walkState.up);
+  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.crossVectors(_walkRight, walkState.up);
+  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.set(0, 0, 1);
+  _walkBasisZ.normalize();
+  _walkBasisMat.makeBasis(walkState.forward, walkState.up, _walkBasisZ);
+  _walkQ.setFromRotationMatrix(_walkBasisMat);
+  walkAvatar.quaternion.slerp(_walkQ, Math.min(1, dt * WALK_CFG.avatarTurnLerp));
+  walkAvatar.visible = true;
+
+  walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
+  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bounce * 0.5);
+  _walkCamPos.copy(_walkCamTarget)
+    .addScaledVector(walkState.viewDir, -walkTpDistance)
+    .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bounce);
+  resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
+  camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
+  _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
+  camera.up.lerp(walkState.up, Math.min(1, dt * 8)).normalize();
+  camera.lookAt(_walkTmp);
+}
+
+function updateCamera(curScale) {
+  if (walkMode.active) {
+    if (walkTransition.active) {
+      walkTransition.active = false;
+      walkTransition.startedAt = 0;
+    }
+    const now = performance.now();
+    const dt = Math.min(0.05, Math.max(0.001, (now - walkPrevMs) / 1000));
+    walkPrevMs = now;
+    updateWalkMode(dt);
+    return;
+  }
+  if (walkTransition.active) {
+    const elapsed = performance.now() - (walkTransition.startedAt || 0);
+    if (elapsed > 2200) {
+      walkTransition.active = false;
+      walkTransition.startedAt = 0;
+    } else {
+      return;
+    }
+  }
+  if (cameraMode === 'sun') {
+    orbitTheta += dTheta; dTheta *= 0.88;
+    orbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, orbitPhi + dPhi));
+    dPhi *= 0.88;
+    if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) orbitTheta += 0.0007; // gentle idle drift
+
+    const r = ORBIT_BASE * curScale * orbitZoom;
+    const sp = Math.sin(orbitPhi), cp = Math.cos(orbitPhi);
+    const lookAt = cameraTarget.clone().add(panOffset);
+    camera.position.set(
+      lookAt.x + r * sp * Math.sin(orbitTheta),
+      lookAt.y + r * cp,
+      lookAt.z + r * sp * Math.cos(orbitTheta)
+    );
+    camera.lookAt(lookAt);
+  } else {
+    // Planet view: orbit around selected planet (fallback to system center).
+    pOrbitTheta += pDTheta; pDTheta *= 0.88;
+    pOrbitPhi = Math.max(0.06, Math.min(Math.PI - 0.06, pOrbitPhi + pDPhi));
+    pDPhi *= 0.88;
+    if (autoRotate && mobPointers.size === 0 && (!dragging || dragButton !== 0)) pOrbitTheta += 0.0012;
+
+    let baseTarget = null;
+    if (selectedPlanetIdx !== null) {
+      const selected = managedPlanets[selectedPlanetIdx];
+      if (selected?.obj?.pivot) {
+        baseTarget = selected.obj.pivot.getWorldPosition(_selectedPlanetWorld);
+      }
+    }
+    if (!baseTarget) {
+      baseTarget = currentDestIndex === 0
+        ? sysGroup.position
+        : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
+    }
+    const base = baseTarget.clone().add(panOffset);
+    const r = PLANET_ORBIT_BASE * orbitZoom * curScale;
+    const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
+    camera.position.set(
+      base.x + r * sp * Math.sin(pOrbitTheta),
+      base.y + r * cp,
+      base.z + r * sp * Math.cos(pOrbitTheta)
+    );
+    camera.lookAt(base);
+  }
+}
+
+/** Expand far clip for zoom-out; keep depth usable via logarithmicDepthBuffer on the renderer. */
+function updateDynamicCameraFar() {
+  if (walkMode.active) return;
+  _cameraClipFocus.copy(cameraTarget).add(panOffset);
+  const distToFocus = camera.position.distanceTo(_cameraClipFocus);
+  const orbitCap = cameraMode === 'sun'
+    ? ORBIT_BASE * curScale * orbitZoom
+    : PLANET_ORBIT_BASE * curScale * orbitZoom;
+  const span = Math.max(distToFocus, orbitCap);
+  const far = Math.min(
+    5e7,
+    Math.max(
+      220000,
+      span * 2.15 + 780000,
+      _cameraClipFocus.length() + 900000,
+      camera.position.length() + 900000
+    )
+  );
+  if (Math.abs(far - camera.far) > Math.max(800, camera.far * 0.035)) {
+    camera.far = far;
+    camera.updateProjectionMatrix();
+  }
+}
+
+// ── Noise ─────────────────────────────────────────────────────────
+function noise3(x, y, z) {
+  return (
+    Math.sin(x * 1.731 + y * 2.571 + z * 0.913) * 0.500 +
+    Math.sin(x * 3.127 + z * 1.234 + y * 0.456) * 0.250 +
+    Math.sin(y * 4.321 + z * 2.876 + x * 1.111) * 0.125 +
+    Math.sin(x * 7.654 + y * 5.432 + z * 3.210) * 0.063 +
+    Math.sin(x * 13.10 + z * 11.30 + y * 9.170) * 0.031
+  );
+}
+
+// ── Globe geometry ────────────────────────────────────────────────
+function getLiquidState(wl, baseR) {
+  const signedLevel = Math.max(-1, Math.min(1, wl));
+  // Shared slider spectrum: + side is water, - side is lava.
+  const hasWater = signedLevel > 0.0001;
+  const hasLava = signedLevel < -0.0001;
+  const strength = Math.abs(signedLevel);
+  const hasLiquid = strength > 0.0001;
+  const liquidScale = 0.80 + strength * 0.42;
+  return {
+    signedLevel,
+    hasWater,
+    hasLava,
+    hasLiquid,
+    strength,
+    liquidScale,
+    liquidR: baseR * liquidScale,
+  };
+}
+
+function buildGlobe(radius, detail, seed, ps, wl) {
+  // ps = peakScale, wl = waterLevel (explicit per-planet)
+  const geo = new THREE.IcosahedronGeometry(radius, detail);
+  const arr = geo.attributes.position.array;
+  const liquid = getLiquidState(wl, radius);
+  const hasLiquid = liquid.hasLiquid;
+  const liquidR = liquid.liquidR;
+  for (let i = 0; i < geo.attributes.position.count; i++) {
+    const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
+    const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
+    const nx = ox/len, ny = oy/len, nz = oz/len;
+    const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
+             + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
+    // Clamp low terrain only when a liquid exists so 0 stays dry.
+    const rawR = radius * (1 + d);
+    const r = hasLiquid ? Math.max(rawR, liquidR) : rawR;
+    arr[i*3] = nx*r; arr[i*3+1] = ny*r; arr[i*3+2] = nz*r;
+  }
+  geo.attributes.position.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// ── Elevation colour ramps ─────────────────────────────────────────
+// WET palette: vegetation appears, with no lava colors while water exists.
+const PALETTE_WET = [
+  [-0.200, [0.070, 0.065, 0.070]],  // deep basalt
+  [-0.180, [0.090, 0.085, 0.090]],  // dark basalt
+  [-0.130, [0.120, 0.110, 0.105]],  // rocky lowland
+  [-0.100, [0.180, 0.175, 0.170]],  // dark grey
+  [-0.030, [0.300, 0.205, 0.120]],  // brown sub-floor
+  [ 0.000, [0.290, 0.175, 0.090]],  // shore brown
+  [ 0.040, [0.105, 0.320, 0.062]],  // lowland green
+  [ 0.140, [0.080, 0.220, 0.040]],  // highland green
+  [ 0.165, [0.330, 0.190, 0.090]],  // treeline brown
+  [ 0.182, [0.370, 0.365, 0.355]],  // rock grey
+  [ 0.200, [0.940, 0.940, 0.930]],  // peak white
+];
+// DRY palette: no water → no green, still no baked-in lava tones.
+const PALETTE_DRY = [
+  [-0.200, [0.120, 0.100, 0.080]],  // deep dry basin
+  [-0.180, [0.150, 0.120, 0.095]],  // dark rust-brown
+  [-0.130, [0.190, 0.150, 0.110]],  // lowland earth
+  [-0.100, [0.230, 0.175, 0.120]],  // dark tan
+  [-0.030, [0.310, 0.195, 0.105]],  // brown
+  [ 0.000, [0.310, 0.195, 0.105]],  // dusty brown (same — no shore distinction)
+  [ 0.040, [0.462, 0.312, 0.155]],  // sandy tan   (was green)
+  [ 0.140, [0.382, 0.240, 0.110]],  // dusty brown (was highland green)
+  [ 0.165, [0.330, 0.190, 0.090]],  // brown
+  [ 0.182, [0.370, 0.365, 0.355]],  // rock grey
+  [ 0.200, [0.940, 0.940, 0.930]],  // peak white
+];
+function elevColor(ne, pal) {
+  if (ne <= pal[0][0]) return pal[0][1];
+  for (let i = 1; i < pal.length; i++) {
+    if (ne <= pal[i][0]) {
+      const t = (ne - pal[i-1][0]) / (pal[i][0] - pal[i-1][0]);
+      const a = pal[i-1][1], b = pal[i][1];
+      return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+    }
+  }
+  return pal[pal.length-1][1];
+}
+function blendPalette(wet) {
+  // wet: 0=fully dry, 1=fully wet. Returns blended terrain palette.
+  if (wet >= 1) return PALETTE_WET;
+  if (wet <= 0) return PALETTE_DRY;
+  return PALETTE_WET.map((e, i) => [
+    e[0],
+    e[1].map((c, j) => c * wet + PALETTE_DRY[i][1][j] * (1 - wet))
+  ]);
+}
+
+function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
+  // ps = peakScale, wl = waterLevel — explicit per-planet, not global
+  planetSeed = planetSeed == null ? 0 : planetSeed;
+  ps = Math.max(ps, 0.001);
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const faceCount = pos.count / 3;
+  const liquid = getLiquidState(wl, baseR);
+  const hasWater = liquid.hasWater;
+  const hasLava = liquid.hasLava;
+  const hasLiquid = liquid.hasLiquid;
+  const liquidStrength = liquid.strength;
+  const liquidR = liquid.liquidR;
+  const liquidEps = hasLiquid ? liquidR * 0.0018 : 0;
+  const lavaGlowInnerPos = [];
+  const lavaGlowInnerCol = [];
+  const lavaGlowOuterPos = [];
+  const lavaGlowOuterCol = [];
+  const WATER_DEEP = [0.06, 0.46, 0.56];
+  const WATER_AQUA = [0.20, 0.78, 0.76];
+  const WATER_SAND = [0.84, 0.75, 0.50];
+  const LAND_SAND = [0.87, 0.78, 0.55];
+  const LAVA_BLACK = [0.08, 0.08, 0.09];
+  const LAVA_RED_HOT = [0.96, 0.14, 0.05];
+  const LAVA_RED_MID = [0.78, 0.09, 0.04];
+  const LAVA_RED_DEEP = [0.42, 0.05, 0.03];
+  const LAVA_CRUST_DARK = [0.048, 0.038, 0.037];
+  const LAVA_YELLOW = [1.00, 0.88, 0.18];
+  const shoreBand = Math.max(baseR * 0.055, liquidEps * 10);
+  const landShoreBand = shoreBand * 1.55;
+  const lavaBand = shoreBand * 1.08;
+  // Lava crust patches: angular scale from radius; strength grows with slider (bigger lava seas).
+  const lavaCrustSeed = planetSeed * 0.314 + 7.11;
+  const lavaPatchFreq = 3.9 / Math.max(baseR, 0.11);
+  const lavaSpotStrength = 0.50 + Math.min(liquidStrength / 0.28, 1) * 0.75;
+
+  function mix3(a, b, t) {
+    const k = Math.max(0, Math.min(1, t));
+    return [
+      a[0] + (b[0] - a[0]) * k,
+      a[1] + (b[1] - a[1]) * k,
+      a[2] + (b[2] - a[2]) * k
+    ];
+  }
+
+  // Blend palette: green fades in as water amount rises on the + side.
+  const wet = hasWater ? Math.min(Math.max(liquidStrength / 0.20, 0), 1) : 0;
+  const pal = blendPalette(wet);
+
+  // Pass 1: find terrain (non-liquid) elevation range for palette stretching
+  let minNe = Infinity, maxNe = -Infinity;
+  for (let f = 0; f < faceCount; f++) {
+    let sumE = 0;
+    let liquidVerts = 0;
+    for (let v = 0; v < 3; v++) {
+      const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const rr = Math.sqrt(x*x + y*y + z*z);
+      sumE += rr;
+      if (rr <= liquidR + liquidEps) liquidVerts++;
+    }
+    if (liquidVerts > 0) continue;
+    const ne = (sumE / 3 / baseR - 1) / ps;
+    if (ne < minNe) minNe = ne;
+    if (ne > maxNe) maxNe = ne;
+  }
+  if (!Number.isFinite(minNe) || !Number.isFinite(maxNe)) {
+    minNe = -0.2;
+    maxNe = 0.2;
+  }
+  const pMin = pal[0][0], pMax = pal[pal.length-1][0];
+  const negScale = minNe < 0 ? pMin / minNe : 1;
+  const posScale = maxNe > 0 ? pMax / maxNe : 1;
+
+  // Pass 2: colorize terrain and liquid polygons on this same mesh
+  for (let f = 0; f < faceCount; f++) {
+    let sumE = 0;
+    let liquidVerts = 0;
+    const faceR = [0, 0, 0];
+    const faceIdx = [0, 0, 0];
+    for (let v = 0; v < 3; v++) {
+      const i = f*3+v, x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const rr = Math.sqrt(x*x + y*y + z*z);
+      sumE += rr;
+      faceR[v] = rr;
+      faceIdx[v] = i;
+      if (rr <= liquidR + liquidEps) liquidVerts++;
+    }
+    const isLiquidFace = liquidVerts > 0;
+    const ne     = (sumE / 3 / baseR - 1) / ps;
+    const mapped = ne < 0 ? ne * negScale : ne * posScale;
+    let r, g, b;
+    if (isLiquidFace && hasWater) {
+      // Ocean-side teal, mid-shore aqua, and land-edge sand gradient.
+      for (let v = 0; v < 3; v++) {
+        const i = faceIdx[v];
+        const rr = faceR[v];
+        const shoreT = Math.max(0, Math.min(1, (rr - liquidR) / shoreBand));
+        const c = shoreT < 0.58
+          ? mix3(WATER_DEEP, WATER_AQUA, shoreT / 0.58)
+          : mix3(WATER_AQUA, WATER_SAND, (shoreT - 0.58) / 0.42);
+        col[i*3] = c[0];
+        col[i*3+1] = c[1];
+        col[i*3+2] = c[2];
+      }
+      continue;
+    } else if (isLiquidFace && hasLava) {
+      // Face-centered crust noise: per-vertex noise on huge low-LOD triangles looked glitchy / sparkly from far away.
+      let fnx = 0, fny = 0, fnz = 0, avgShoreT = 0;
+      for (let v = 0; v < 3; v++) {
+        const ii = faceIdx[v];
+        const rrv = faceR[v];
+        const px = pos.getX(ii), py = pos.getY(ii), pz = pos.getZ(ii);
+        const invR = rrv > 1e-8 ? 1 / rrv : 1;
+        fnx += px * invR;
+        fny += py * invR;
+        fnz += pz * invR;
+        const st = Math.max(0, Math.min(1, (rrv - liquidR) / lavaBand));
+        avgShoreT += st;
+      }
+      const fl = Math.hypot(fnx, fny, fnz);
+      const finv = fl > 1e-8 ? 1 / fl : 1;
+      fnx *= finv;
+      fny *= finv;
+      fnz *= finv;
+      avgShoreT /= 3;
+      const fWide = lavaPatchFreq * (0.78 + liquidStrength * 0.28);
+      const fTight = fWide * 2.9;
+      const nWide = noise3(
+        fnx * fWide + lavaCrustSeed,
+        fny * fWide + lavaCrustSeed * 1.07,
+        fnz * fWide + lavaCrustSeed * 0.93
+      );
+      const nTight = noise3(
+        fnx * fTight + lavaCrustSeed + 2.1,
+        fny * fTight + lavaCrustSeed - 1.4,
+        fnz * fTight + lavaCrustSeed + 0.55
+      );
+      const nBlend = nWide * 0.68 + nTight * 0.32;
+      const spotMask = Math.max(0, Math.min(1, (-0.12 - nBlend) / 0.50));
+      const spotShape = Math.pow(spotMask, 1.22);
+      const inDeepLava = Math.pow(1 - avgShoreT, 0.72 + liquidStrength * 0.28);
+      const spotAmtFace = Math.min(1, spotShape * inDeepLava * lavaSpotStrength * 0.82);
+
+      // Lava: yellow core -> hot red -> deep red -> dark crust (extra red in the mid bands).
+      for (let v = 0; v < 3; v++) {
+        const i = faceIdx[v];
+        const rr = faceR[v];
+        const shoreT = Math.max(0, Math.min(1, (rr - liquidR) / lavaBand));
+        let c;
+        if (shoreT < 0.36) {
+          c = mix3(LAVA_YELLOW, LAVA_RED_HOT, shoreT / 0.36);
+        } else if (shoreT < 0.70) {
+          c = mix3(LAVA_RED_HOT, LAVA_RED_MID, (shoreT - 0.36) / 0.34);
+        } else {
+          c = mix3(LAVA_RED_MID, LAVA_BLACK, (shoreT - 0.70) / 0.30);
+        }
+
+        c = mix3(c, LAVA_CRUST_DARK, spotAmtFace);
+        c = mix3(c, LAVA_RED_DEEP, spotAmtFace * 0.36);
+
+        col[i*3] = c[0];
+        col[i*3+1] = c[1];
+        col[i*3+2] = c[2];
+
+        const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+        // Double additive red polygon shells: inner crimson sheet + outer hot rim.
+        const glowDim = 1 - spotAmtFace * 0.78;
+        const innerGlow = mix3(
+          [0.30, 0.03, 0.02],
+          [0.98, 0.16, 0.07],
+          Math.pow(1 - shoreT, 0.62)
+        );
+        const outerGlow = mix3(
+          [0.48, 0.05, 0.03],
+          [1.0, 0.42, 0.12],
+          Math.pow(1 - shoreT, 0.88)
+        );
+        lavaGlowInnerPos.push(px, py, pz);
+        lavaGlowInnerCol.push(innerGlow[0] * glowDim, innerGlow[1] * glowDim, innerGlow[2] * glowDim);
+        lavaGlowOuterPos.push(px, py, pz);
+        lavaGlowOuterCol.push(outerGlow[0] * glowDim, outerGlow[1] * glowDim, outerGlow[2] * glowDim);
+      }
+      continue;
+    } else {
+      [r,g,b] = elevColor(mapped, pal);
+      if (hasWater) {
+        // Land-facing shoreline tint: blend terrain into sand near sea level.
+        for (let v = 0; v < 3; v++) {
+          const i = faceIdx[v];
+          const rr = faceR[v];
+          const edgeT = Math.max(0, Math.min(1, (rr - liquidR) / landShoreBand));
+          const sandBlend = Math.pow(1 - edgeT, 1.18) * 0.92;
+          const c = mix3([r, g, b], LAND_SAND, sandBlend);
+          col[i*3] = c[0];
+          col[i*3+1] = c[1];
+          col[i*3+2] = c[2];
+        }
+        continue;
+      }
+    }
+    for (let v = 0; v < 3; v++) {
+      col[(f*3+v)*3]=r; col[(f*3+v)*3+1]=g; col[(f*3+v)*3+2]=b;
+    }
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  // Radial shell for glow meshes: must be large enough in world units to avoid z-fighting
+  // the terrain at medium camera distance (camera far plane is very large).
+  const lavaGlowShell = 0.0015 + Math.min(0.007, baseR * 0.0025);
+  const lavaGlowOuterMul = 2.08;
+  return {
+    lavaGlow: lavaGlowInnerPos.length > 0 ? [
+      { positions: lavaGlowInnerPos, colors: lavaGlowInnerCol, scale: 1 + lavaGlowShell, opacity: 0.46 },
+      {
+        positions: lavaGlowOuterPos,
+        colors: lavaGlowOuterCol,
+        scale: 1 + lavaGlowShell * lavaGlowOuterMul,
+        opacity: 0.34
+      }
+    ] : null
+  };
+}
+
+// ── Planet factory ────────────────────────────────────────────────
+function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
+  const pivot = new THREE.Group();
+  const spin  = new THREE.Group();
+  spin.rotation.z = axisTilt;
+  pivot.add(spin);
+  let built = [], pickables = [];
+
+  // Per-planet state — independent of any global
+  const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
+
+  function build(d) {
+    built.forEach(c => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => m.dispose());
+      spin.remove(c);
+    });
+    built = [];
+
+    const ps = state.peakScale, wl = state.waterLevel;
+    const liquidState = getLiquidState(wl, baseR);
+    // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
+    const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
+
+    const idxGeo  = buildGlobe(baseR, buildDetail, seed, ps, wl);
+    const flatGeo = idxGeo.toNonIndexed();
+    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, seed);
+
+    // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
+    const depthBack = new THREE.Mesh(flatGeo,
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: THREE.BackSide })
+    );
+    depthBack.renderOrder = 0;
+
+    const terrain = new THREE.Mesh(flatGeo, new THREE.MeshLambertMaterial({
+      vertexColors: true, flatShading: true,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    }));
+    terrain.renderOrder = 0;
+    const lavaGlowMeshes = (() => {
+      if (!colorMeta?.lavaGlow) return null;
+      const layers = Array.isArray(colorMeta.lavaGlow) ? colorMeta.lavaGlow : [colorMeta.lavaGlow];
+      return layers.map((layer, li) => {
+        const glowGeo = new THREE.BufferGeometry();
+        glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(layer.positions, 3));
+        glowGeo.setAttribute('color', new THREE.Float32BufferAttribute(layer.colors, 3));
+        const glowMat = new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: layer.opacity != null ? layer.opacity : 0.42,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: true,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -5 - li * 3,
+          polygonOffsetUnits: -5 - li * 3
+        });
+        const glowMesh = new THREE.Mesh(glowGeo, glowMat);
+        glowGeo.computeBoundingSphere();
+        glowMesh.scale.setScalar(layer.scale != null ? layer.scale : 1.0032);
+        glowMesh.frustumCulled = false;
+        glowMesh.renderOrder = 1 + li * 0.02;
+        return glowMesh;
+      });
+    })();
+
+    const wire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(idxGeo),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
+    );
+    wire.scale.setScalar(1.0015);
+    wire.renderOrder = 2;
+
+    const atmo = new THREE.Mesh(
+      new THREE.SphereGeometry(baseR * 1.10, 24, 24),
+      new THREE.MeshBasicMaterial({
+        color: liquidState.hasLava ? 0xff3c1a : 0x44aaff,
+        transparent: true,
+        opacity: liquidState.hasLava ? (0.05 + liquidState.strength * 0.09) : 0.06,
+        side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    atmo.renderOrder = 3;
+
+    built = [depthBack, terrain];
+    if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
+    built.push(wire, atmo);
+    pickables = [terrain];
+    spin.add(...built);
+  }
+
+  build(detailInit);
+  return {
+    pivot, spin, state,
+    baseRadius: baseR,
+    rebuild:  build,
+    setWater: () => {},
+    setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
+    syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
+    setWireOpacity: (v) => {
+      const a = Math.max(0, Math.min(1, v));
+      built.forEach(c => {
+        if (c.isLineSegments && c.material) c.material.opacity = a;
+      });
+    },
+    getTerrainMesh: () => pickables[0] || null,
+    getPickables: () => pickables,
+  };
+}
+
+// ── System group: binary COM sits here, planets are children ──────
+const sysGroup = new THREE.Group();
+scene.add(sysGroup);
+
+const p1 = createPlanet(1.00, 10, 0.00,  0.22);
+const p2 = createPlanet(0.67, 10, 5.37, -0.38);
+sysGroup.add(p1.pivot, p2.pivot);
+
+// ── Orbit trails (in sysGroup local space = binary-relative) ──────
+const TRAIL_LEN = 520;
+function makeTrail(opts) {
+  const cfg = Object.assign({ len: TRAIL_LEN, color: 0xffffff, opacity: 0.60 }, opts || {});
+  const positions = new Float32Array(cfg.len * 3);
+  const colors    = new Float32Array(cfg.len * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
+  geo.setDrawRange(0, 0);
+  const line = new THREE.Line(geo,
+    new THREE.LineBasicMaterial({
+      color: cfg.color,
+      vertexColors: true,
+      transparent: true,
+      opacity: cfg.opacity
+    })
+  );
+  line.renderOrder = 0;
+  scene.add(line);
+  return { positions, colors, line, count: 0, max: cfg.len };
+}
+function pushTrail(t, x, y, z) {
+  const { positions: p, colors: c } = t;
+  const N = t.max || TRAIL_LEN;
+  if (t.count < N) { p[t.count*3]=x; p[t.count*3+1]=y; p[t.count*3+2]=z; t.count++; }
+  else { p.copyWithin(0, 3); p[(N-1)*3]=x; p[(N-1)*3+1]=y; p[(N-1)*3+2]=z; }
+  const n = t.count;
+  for (let i = 0; i < n; i++) {
+    const v = n < 2 ? 1 : i / (n-1);
+    c[i*3]=v; c[i*3+1]=v; c[i*3+2]=v;
+  }
+  t.line.geometry.setDrawRange(0, n);
+  t.line.geometry.attributes.position.needsUpdate = true;
+  t.line.geometry.attributes.color.needsUpdate    = true;
+}
+const trail1 = makeTrail(), trail2 = makeTrail();
+
+// Gravity link thread between the two planets
+const linkPos = new Float32Array(6);
+const linkGeo = new THREE.BufferGeometry();
+linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
+const linkLine = new THREE.Line(linkGeo,
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07, depthTest: false })
+);
+scene.add(linkLine);
+
+// ── Binary planet physics (positions relative to binary COM) ──────
+// G=1, M1=3, M2=1.5, sep=3.5, T_binary ≈ 19 sim-s at 1× warp
+const G=1, BASE_M1=3, BASE_M2=1.5, SEP=3.5, BASE_MT=BASE_M1+BASE_M2;
+const SOLAR_MU = 4.6;
+const SUN_ORBIT_MIN_R = 4.2;
+const SUN_ORBIT_MAX_R = 48.0;
+const ORBIT_SOFTENING = 0.06;
+const MAX_BOUND_SPEED_FACTOR = 0.95;
+const body = [
+  { pos: new THREE.Vector3(-(BASE_M2/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3() },
+  { pos: new THREE.Vector3( (BASE_M1/BASE_MT)*SEP, 0, 0), vel: new THREE.Vector3() },
+];
+let binaryPhase = 0;
+let binaryPrevMass1 = BASE_M1;
+let binaryPrevMass2 = BASE_M2;
+
+function applyBinaryPairState(m1, m2, phaseAdvance = 0) {
+  const mt = Math.max(m1 + m2, 1e-6);
+  const omega = Math.sqrt(G * mt / Math.pow(SEP, 3));
+  binaryPhase += phaseAdvance * omega;
+  const c = Math.cos(binaryPhase);
+  const s = Math.sin(binaryPhase);
+  const tx = -s;
+  const tz = c;
+  const r1 = (m2 / mt) * SEP;
+  const r2 = (m1 / mt) * SEP;
+  body[0].pos.set(-c * r1, 0, -s * r1);
+  body[1].pos.set( c * r2, 0,  s * r2);
+  body[0].vel.set(tx * -r1 * omega, 0, tz * -r1 * omega);
+  body[1].vel.set(tx *  r2 * omega, 0, tz *  r2 * omega);
+}
+
+function refreshBinaryPairForMassChange(m1, m2) {
+  const dx = body[1].pos.x - body[0].pos.x;
+  const dz = body[1].pos.z - body[0].pos.z;
+  if (dx*dx + dz*dz > 1e-10) binaryPhase = Math.atan2(dz, dx);
+  applyBinaryPairState(m1, m2, 0);
+}
+
+applyBinaryPairState(BASE_M1, BASE_M2, 0);
+
+// ── Binary COM orbit around sun ───────────────────────────────────
+// The binary system as a whole orbits the sun (at origin).
+// SUN_ORBIT: orbit radius in physics units.
+// COM_OMEGA: angular velocity, rad/sim-s → period ≈ 126 sim-s (≈6.5× binary period).
+const SUN_ORBIT = 20;
+const COM_OMEGA = 0.012;
+let comAngle = 0;
+
+// ── Dial wiring ───────────────────────────────────────────────────
+const SCALE_MIN = 1.0, SCALE_MAX = 400;
+const SCALE_BASE_MULT = 3.0; // User request: legacy 3x should read as new 1x.
+const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
+// Above this UI scale, terrain uses detail 0 (lowest tier) for performance — not planet visibility.
+const PLANET_DETAIL_ZERO_UI = 15.0;
+const PLANET_VIEW_DETAIL = 20;
+function scaleUiToWorld(s) { return s * SCALE_BASE_MULT; }
+function scaleWorldToUi(s) { return s / SCALE_BASE_MULT; }
+function sliderToScale(v) { return scaleUiToWorld(SCALE_MIN * Math.exp(SCALE_LOG * v)); }
+function scaleToDetail(worldScale) {
+  const s = scaleWorldToUi(worldScale);
+  // User tuning: detail 1 at 10× UI; lowest mesh tier at 15× UI (pivots stay visible — see updateDynamicCameraFar).
+  if (s >= PLANET_DETAIL_ZERO_UI) return 0;
+  if (s >= 10.0) return 1;
+  if (s >= 8.0)  return 2;
+  if (s >= 6.0)  return 3;
+  if (s >= 4.8)  return 4;
+  if (s >= 3.6)  return 5;
+  if (s >= 2.8)  return 6;
+  if (s >= 2.1)  return 7;
+  if (s >= 1.6)  return 8;
+  if (s >= 1.2)  return 9;
+  return 10;
+}
+
+let targetScale = scaleUiToWorld(1.0), curScale = scaleUiToWorld(1.0), timeWarp = 1.0, curDetail = scaleToDetail(scaleUiToWorld(1.0));
+let sunSpin = 0;
+let planetsRenderable = true;
+
+const $ = id => document.getElementById(id);
+const TIME_WARP_UI_MAX = 200;
+const dialScale = $('dial-scale'), lblScale = $('lbl-scale');
+const dialWarp  = $('dial-warp'),  lblWarp  = $('lbl-warp');
+if (dialWarp) dialWarp.max = String(TIME_WARP_UI_MAX);
+
+function scaleLabelText(s) {
+  return `SCALE  ${scaleWorldToUi(s).toFixed(2)}×`;
+}
+
+function desiredDetailForCurrentView(scaleValue) {
+  return cameraMode === 'planet' ? PLANET_VIEW_DETAIL : scaleToDetail(scaleValue);
+}
+
+function applyDetailForCurrentView(scaleValue) {
+  const d = desiredDetailForCurrentView(scaleValue);
+  if (d === curDetail) return;
+  curDetail = d;
+  if (d > 0) managedPlanets.forEach(mp => { mp.obj.rebuild(d); mp.obj.syncGrid(); });
+}
+
+function setPlanetsRenderable(enabled) {
+  if (planetsRenderable === enabled) return;
+  planetsRenderable = enabled;
+  managedPlanets.forEach(mp => {
+    if (mp?.obj?.pivot) mp.obj.pivot.visible = enabled;
+    if (mp?.trail?.line) mp.trail.line.visible = enabled && !isNavigating && currentDestIndex === 0;
+  });
+  if (typeof trail1 !== 'undefined' && trail1?.line) trail1.line.visible = enabled && !isNavigating && currentDestIndex === 0;
+  if (typeof trail2 !== 'undefined' && trail2?.line) trail2.line.visible = enabled && !isNavigating && currentDestIndex === 0;
+  if (typeof linkLine !== 'undefined' && linkLine) linkLine.visible = enabled && !isNavigating && currentDestIndex === 0;
+  if (!enabled && walkMode.active) {
+    stopWalkMode();
+    updateWalkButtonVisibility();
+  } else if (enabled && typeof syncTrailVisibility === 'function') {
+    syncTrailVisibility();
+  }
+}
+
+dialScale.addEventListener('input', () => {
+  targetScale = sliderToScale(parseFloat(dialScale.value));
+  lblScale.textContent = scaleLabelText(targetScale);
+  applyDetailForCurrentView(targetScale);
+  syncSunRadialReadouts();
+});
+lblScale.textContent = scaleLabelText(targetScale);
+dialWarp.addEventListener('input', () => {
+  timeWarp = parseFloat(dialWarp.value);
+  lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+  syncSunRadialReadouts();
+});
+
+let sunRadialDismissed = true;
+let solGalaxyMenuRevealed = false;
+function scaleWorldToSliderValue(worldScale) {
+  const ui = scaleWorldToUi(worldScale);
+  const u = Math.max(SCALE_MIN, Math.min(SCALE_MAX, ui));
+  return Math.log(u / SCALE_MIN) / SCALE_LOG;
+}
+const SUN_EDIT_CONFIG = {
+  scale: { min: sliderToScale(0), max: sliderToScale(1), arcStart: 146, arcEnd: 266 },
+  warp: { min: 0, max: TIME_WARP_UI_MAX, step: 0.1, arcStart: 302, arcEnd: 58 },
+};
+
+// ── Planet management ─────────────────────────────────────────────
+// managedPlanets mirrors the actual planet objects + metadata.
+// Extra added planets use sun-centered orbit slots with orbital-clearance checks.
+const PLANET_COLORS = ['#4a9eff','#ff6b35','#a8ff78','#ff78a8','#ffd700','#c0a0ff','#ff4444'];
+const SOLAR_ORBIT_GRID_RADII = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30, 34, 38, 42, 46];
+const SOLAR_ORBIT_GRID_PHASE_COUNT = 12;
+// Inclination (rad) of the orbital plane about +X: 0 = ecliptic (XZ); orbit always passes through the sun.
+const SOLAR_ORBIT_INCLINATIONS = [0, 0.12, -0.12, 0.22, -0.22, 0.32, -0.32, 0.45, -0.45, 0.55, -0.55];
+const SUN_ORBIT_SLIDER_R_MIN = 6;
+const SUN_ORBIT_SLIDER_R_MAX = 46;
+const SUN_ORBIT_TILT_DEG_MAX = 35;
+const SUN_ORBIT_TILT_RAD_MAX = (SUN_ORBIT_TILT_DEG_MAX * Math.PI) / 180;
+let managedPlanets = []; // { … orbitPos, orbitVel, orbitInclination, orbitPlaneNormal, orbitParentId, trail }
+let selectedPlanetIdx = null;
+
+function registerPlanet(obj, name, color, isBinary, orbitR, orbitSpeed, spinRateBase, spinAngle, orbitCenter, orbitSlotKey, orbitAngle, orbitParentId, orbitInclination) {
+  managedPlanets.push({ id: managedPlanets.length, name, obj, color, isBinary,
+                         orbitR: orbitR||0, orbitSpeed: orbitSpeed||0,
+                         angle: orbitAngle ?? (Math.random() * Math.PI * 2),
+                         spinRateBase: spinRateBase ?? 0.008, spinAngle: spinAngle ?? (Math.random() * Math.PI * 2),
+                         orbitCenter: orbitCenter ?? (isBinary ? 'binary' : 'sun'),
+                         orbitSlotKey: orbitSlotKey ?? null, orbitBaseR: orbitR || 0,
+                         orbitPos: null, orbitVel: null,
+                         orbitInclination: Number.isFinite(orbitInclination) ? orbitInclination : 0,
+                         orbitPlaneNormal: null,
+                         orbitParentId: orbitParentId ?? null });
+}
+
+// Register original binary planets
+registerPlanet(p1, 'Planet 1', PLANET_COLORS[0], true, 0, 0, 0.006, 0, 'binary', null, 0, null, 0);
+registerPlanet(p2, 'Planet 2', PLANET_COLORS[1], true, 0, 0, 0.009, 0, 'binary', null, 0, null, 0);
+
+function getSpinRateFromSize(mp) {
+  const size = Math.max(mp.obj.state.size, 0.1);
+  // Approximation: angular velocity scales as 1 / R^2 for similar planets.
+  const rawRate = mp.spinRateBase / (size * size);
+  return Math.min(mp.spinRateBase * 4, Math.max(mp.spinRateBase * 0.25, rawRate));
+}
+
+function getPlanetMass(mp) {
+  const size = Math.max(mp.obj.state.size, 0.2);
+  const baseVolume = Math.pow(Math.max(mp.obj.baseRadius || 0.8, 0.2), 3);
+  const density = mp.isBinary ? 3.5 : 1.6;
+  return density * baseVolume * Math.pow(size, 3);
+}
+
+function getSunOrbitRadius(mp) {
+  if (!mp) return 0;
+  if (mp.orbitPos) {
+    const d = mp.orbitPos.length();
+    if (d > 1e-6) return d;
+  }
+  if (mp.orbitR > 0) return mp.orbitR;
+  if (mp.orbitBaseR > 0) return mp.orbitBaseR;
+  return 0;
+}
+
+function getSunOrbitInclination(mp) {
+  if (!mp) return 0;
+  return Number.isFinite(mp.orbitInclination) ? mp.orbitInclination : 0;
+}
+
+function getOrbitalClearance(mp) {
+  const mass = Math.max(getPlanetMass(mp), 0.2);
+  const size = Math.max((mp.obj.baseRadius || 0.8) * Math.max(mp.obj.state.size, 0.2), 0.2);
+  return Math.max(1.6, size * 2.8, Math.cbrt(mass) * 1.35);
+}
+
+const _sunBoundRadial = new THREE.Vector3();
+const _sunHelioRxv = new THREE.Vector3();
+const SUN_COLLISION_PASSES = 3;
+
+function applySunOrbiterBounds(mp) {
+  if (!mp?.orbitPos || !mp?.orbitVel) return;
+  let r = mp.orbitPos.length();
+  if (r < 1e-8) return;
+  _sunBoundRadial.copy(mp.orbitPos).multiplyScalar(1 / r);
+  if (r < SUN_ORBIT_MIN_R) {
+    mp.orbitPos.copy(_sunBoundRadial).multiplyScalar(SUN_ORBIT_MIN_R);
+    const vr = mp.orbitVel.dot(_sunBoundRadial);
+    if (vr < 0) mp.orbitVel.addScaledVector(_sunBoundRadial, -vr);
+    r = SUN_ORBIT_MIN_R;
+  } else if (r > SUN_ORBIT_MAX_R) {
+    mp.orbitPos.copy(_sunBoundRadial).multiplyScalar(SUN_ORBIT_MAX_R);
+    const vr = mp.orbitVel.dot(_sunBoundRadial);
+    if (vr > 0) mp.orbitVel.addScaledVector(_sunBoundRadial, -vr);
+    const esc = Math.sqrt(2 * SOLAR_MU / SUN_ORBIT_MAX_R) * MAX_BOUND_SPEED_FACTOR;
+    const speed = mp.orbitVel.length();
+    if (speed > esc) mp.orbitVel.multiplyScalar(esc / speed);
+  }
+}
+
+function enforceSunOrbiterNoOverlap(sunOrbiters) {
+  if (!sunOrbiters || sunOrbiters.length < 2) return;
+  const twoPi = Math.PI * 2;
+  for (let pass = 0; pass < SUN_COLLISION_PASSES; pass++) {
+    for (let i = 0; i < sunOrbiters.length; i++) {
+      const a = sunOrbiters[i];
+      if (!a?.orbitPos || !a?.orbitVel) continue;
+      for (let j = i + 1; j < sunOrbiters.length; j++) {
+        const b = sunOrbiters[j];
+        if (!b?.orbitPos || !b?.orbitVel) continue;
+
+        const ra = Math.max((a.obj.baseRadius || 0.8) * Math.max(a.obj.state.size, 0.2), 0.2);
+        const rb = Math.max((b.obj.baseRadius || 0.8) * Math.max(b.obj.state.size, 0.2), 0.2);
+        const hardBodySep = (ra + rb) * 2.35;
+        const laneSep = (getOrbitalClearance(a) + getOrbitalClearance(b)) * 0.92;
+        const minSep = Math.max(hardBodySep, laneSep, 1.4);
+
+        const dx = b.orbitPos.x - a.orbitPos.x;
+        const dy = b.orbitPos.y - a.orbitPos.y;
+        const dz = b.orbitPos.z - a.orbitPos.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        const dist = Math.sqrt(Math.max(d2, 1e-12));
+        if (dist >= minSep) continue;
+
+        let nx;
+        let ny;
+        let nz;
+        if (dist < 1e-5) {
+          const angle = (((i + 1) * 1.61803398875) + ((j + 1) * 2.41421356237) + pass * 0.7) % twoPi;
+          const inc = (pass * 0.37 + i * 0.21) % twoPi;
+          nx = Math.cos(angle) * Math.cos(inc);
+          ny = Math.sin(inc);
+          nz = Math.sin(angle) * Math.cos(inc);
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          nx /= nl;
+          ny /= nl;
+          nz /= nl;
+        } else {
+          nx = dx / dist;
+          ny = dy / dist;
+          nz = dz / dist;
+        }
+
+        const overlap = minSep - dist;
+        if (overlap <= 0) continue;
+        const split = overlap * 0.5;
+        a.orbitPos.x -= nx * split;
+        a.orbitPos.y -= ny * split;
+        a.orbitPos.z -= nz * split;
+        b.orbitPos.x += nx * split;
+        b.orbitPos.y += ny * split;
+        b.orbitPos.z += nz * split;
+
+        const rvx = b.orbitVel.x - a.orbitVel.x;
+        const rvy = b.orbitVel.y - a.orbitVel.y;
+        const rvz = b.orbitVel.z - a.orbitVel.z;
+        const closing = rvx * nx + rvy * ny + rvz * nz;
+        if (closing < 0) {
+          const impulse = -closing * 0.92;
+          a.orbitVel.x -= nx * impulse * 0.5;
+          a.orbitVel.y -= ny * impulse * 0.5;
+          a.orbitVel.z -= nz * impulse * 0.5;
+          b.orbitVel.x += nx * impulse * 0.5;
+          b.orbitVel.y += ny * impulse * 0.5;
+          b.orbitVel.z += nz * impulse * 0.5;
+        }
+
+        let ax = 0;
+        let ay = 1;
+        let az = 0;
+        if (Math.abs(nx * ax + ny * ay + nz * az) > 0.88) {
+          ax = 1;
+          ay = 0;
+          az = 0;
+        }
+        let tnx = ny * az - nz * ay;
+        let tny = nz * ax - nx * az;
+        let tnz = nx * ay - ny * ax;
+        const tLen = Math.hypot(tnx, tny, tnz) || 1;
+        tnx /= tLen;
+        tny /= tLen;
+        tnz /= tLen;
+        const tangentBias = Math.min(0.08, 0.02 + overlap * 0.03);
+        a.orbitVel.x -= tnx * tangentBias;
+        a.orbitVel.y -= tny * tangentBias;
+        a.orbitVel.z -= tnz * tangentBias;
+        b.orbitVel.x += tnx * tangentBias;
+        b.orbitVel.y += tny * tangentBias;
+        b.orbitVel.z += tnz * tangentBias;
+      }
+    }
+    sunOrbiters.forEach(applySunOrbiterBounds);
+  }
+}
+
+function ensureSunOrbiterPlaneNormal(mp) {
+  if (!mp || mp.orbitPlaneNormal) return;
+  const inc = getSunOrbitInclination(mp);
+  const ci = Math.cos(inc);
+  const si = Math.sin(inc);
+  mp.orbitPlaneNormal = new THREE.Vector3(0, ci, si);
+}
+
+function sunInclinedHelioPos(out, r, theta, inc) {
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  const ci = Math.cos(inc);
+  const si = Math.sin(inc);
+  out.set(r * c, -r * s * si, r * s * ci);
+}
+
+function sunInclinedHelioTanUnit(out, theta, inc) {
+  const s = Math.sin(theta);
+  const c = Math.cos(theta);
+  const ci = Math.cos(inc);
+  const si = Math.sin(inc);
+  out.set(-s, -c * si, c * ci).normalize();
+}
+
+function initializeSunOrbiterState(mp) {
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
+  ensureSunOrbiterPlaneNormal(mp);
+  const inc = getSunOrbitInclination(mp);
+  const r0 = Math.max(mp.orbitR || mp.orbitBaseR || SUN_ORBIT_MIN_R, SUN_ORBIT_MIN_R);
+  const th = mp.angle;
+  if (!mp.orbitPos) {
+    mp.orbitPos = new THREE.Vector3();
+    sunInclinedHelioPos(mp.orbitPos, r0, th, inc);
+  }
+  if (!mp.orbitVel) {
+    const speed = Math.sqrt(SOLAR_MU / r0);
+    const sign = mp.orbitSpeed < 0 ? -1 : 1;
+    const tu = new THREE.Vector3();
+    sunInclinedHelioTanUnit(tu, th, inc);
+    mp.orbitVel = tu.multiplyScalar(speed * sign);
+  }
+}
+
+/** Re-seat a sun orbiter on a circular path: radius r (heliocentric), plane tilt inc (rad about +X). */
+function reapplySunOrbiterCircularOrbit(mp, r, inc) {
+  if (!mp?.obj?.pivot || mp.isBinary || mp.orbitCenter !== 'sun') return;
+  const rClamped = Math.max(SUN_ORBIT_MIN_R, Math.min(SUN_ORBIT_MAX_R - 0.05, r));
+  const incClamped = Math.max(-SUN_ORBIT_TILT_RAD_MAX, Math.min(SUN_ORBIT_TILT_RAD_MAX, inc));
+  if (!mp.orbitPos) mp.orbitPos = new THREE.Vector3();
+  if (!mp.orbitVel) mp.orbitVel = new THREE.Vector3();
+  mp.orbitBaseR = rClamped;
+  mp.orbitR = rClamped;
+  mp.orbitInclination = incClamped;
+  mp.orbitPlaneNormal = null;
+  ensureSunOrbiterPlaneNormal(mp);
+  const th = mp.angle;
+  sunInclinedHelioPos(mp.orbitPos, rClamped, th, incClamped);
+  const sign = mp.orbitSpeed < 0 ? -1 : 1;
+  const tu = new THREE.Vector3();
+  sunInclinedHelioTanUnit(tu, th, incClamped);
+  const speed = Math.sqrt(SOLAR_MU / rClamped);
+  mp.orbitVel.copy(tu).multiplyScalar(speed * sign);
+  mp.obj.pivot.position.copy(mp.orbitPos);
+}
+
+function ensureSunTrail(mp) {
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun' || mp.trail) return;
+  const color = typeof mp.color === 'string' && mp.color.startsWith('#')
+    ? parseInt(mp.color.slice(1), 16)
+    : 0xffffff;
+  mp.trail = makeTrail({ len: 280, color, opacity: 0.42 });
+}
+
+function ensureMoonTrail(mp) {
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'planet' || mp.trail) return;
+  const color = typeof mp.color === 'string' && mp.color.startsWith('#')
+    ? parseInt(mp.color.slice(1), 16)
+    : 0xffffff;
+  mp.trail = makeTrail({ len: 240, color, opacity: 0.38 });
+}
+
+function reserveSolarOrbitSlot(newBaseRadius = 0.8, newSize = 1.0) {
+  const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
+  const binaryBodies = managedPlanets.filter(mp => mp.isBinary);
+  const newMass = 1.6 * Math.pow(Math.max(newBaseRadius, 0.2), 3) * Math.pow(Math.max(newSize, 0.2), 3);
+  const newClearance = Math.max(1.8, newBaseRadius * Math.max(newSize, 0.2) * 3.0, Math.cbrt(newMass) * 1.45);
+  const twoPi = Math.PI * 2;
+  const binaryComR = Math.max(Math.hypot(sysGroup.position.x, sysGroup.position.z), SUN_ORBIT_MIN_R);
+  const binaryLocalMax = binaryBodies.reduce((acc, mp) => {
+    const local = mp?.obj?.pivot?.position ? mp.obj.pivot.position.length() : 0;
+    return Math.max(acc, local);
+  }, 0);
+  // Keep new planets outside the dynamic binary annulus + safety margin.
+  const binaryAvoidRadius = binaryComR + binaryLocalMax + newClearance + 3.6;
+
+  function normalizeAngle(a) {
+    return ((a % twoPi) + twoPi) % twoPi;
+  }
+
+  function chooseLargestGapMidpoint(angles) {
+    if (!angles.length) return Math.random() * twoPi;
+    const sorted = angles.map(normalizeAngle).sort((a, b) => a - b);
+    let bestGap = -1;
+    let bestStart = sorted[0];
+    for (let i = 0; i < sorted.length; i++) {
+      const a = sorted[i];
+      const b = i === sorted.length - 1 ? sorted[0] + twoPi : sorted[i + 1];
+      const gap = b - a;
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestStart = a;
+      }
+    }
+    return normalizeAngle(bestStart + bestGap * 0.5);
+  }
+
+  let chosenRadius = null;
+  let fallbackRadius = SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1];
+  let fallbackScore = -Infinity;
+  for (const r of SOLAR_ORBIT_GRID_RADII) {
+    if (r < binaryAvoidRadius) continue;
+    let safe = true;
+    let minSlack = Infinity;
+    for (const mp of sunOrbiters) {
+      const requiredGap = newClearance + getOrbitalClearance(mp);
+      const gap = Math.abs(r - getSunOrbitRadius(mp));
+      const slack = gap - requiredGap;
+      minSlack = Math.min(minSlack, slack);
+      if (slack < 0) safe = false;
+    }
+    if (safe) {
+      chosenRadius = r;
+      break;
+    }
+    if (minSlack > fallbackScore) {
+      fallbackScore = minSlack;
+      fallbackRadius = r;
+    }
+  }
+
+  if (chosenRadius === null) {
+    const cap = SUN_ORBIT_MAX_R - 0.8;
+    const farthest = sunOrbiters.reduce((acc, mp) => Math.max(acc, getSunOrbitRadius(mp)), SOLAR_ORBIT_GRID_RADII[SOLAR_ORBIT_GRID_RADII.length - 1]);
+    const proposed = Math.max(fallbackRadius, binaryAvoidRadius, farthest + newClearance * 1.6);
+    if (proposed > cap) return null; // no safe orbit space currently available
+    chosenRadius = proposed;
+  }
+
+  const worldSample = new THREE.Vector3();
+  let chosenInc = 0;
+  let bestLaneScore = -Infinity;
+  SOLAR_ORBIT_INCLINATIONS.forEach(incLane => {
+    let minSlack = Infinity;
+    managedPlanets.forEach(mp => {
+      if (!mp?.obj?.pivot) return;
+      let otherR;
+      let otherInc;
+      if (!mp.isBinary && mp.orbitCenter === 'sun') {
+        otherR = getSunOrbitRadius(mp);
+        otherInc = getSunOrbitInclination(mp);
+      } else {
+        mp.obj.pivot.getWorldPosition(worldSample);
+        otherR = worldSample.length();
+        otherInc = 0;
+      }
+      const requiredGap = newClearance + getOrbitalClearance(mp);
+      const laneDist = Math.hypot(
+        chosenRadius - otherR,
+        chosenRadius * Math.abs(incLane - otherInc)
+      );
+      minSlack = Math.min(minSlack, laneDist - requiredGap);
+    });
+    const diversificationBonus = Math.abs(incLane) * 0.06;
+    const score = minSlack + diversificationBonus;
+    if (score > bestLaneScore) {
+      bestLaneScore = score;
+      chosenInc = incLane;
+    }
+  });
+
+  const nearbyAngles = sunOrbiters
+    .filter(mp => {
+      const requiredGap = newClearance + getOrbitalClearance(mp);
+      const laneDist = Math.hypot(
+        getSunOrbitRadius(mp) - chosenRadius,
+        chosenRadius * Math.abs(getSunOrbitInclination(mp) - chosenInc)
+      );
+      return laneDist < requiredGap;
+    })
+    .map(mp => mp.angle);
+  managedPlanets.forEach(mp => {
+    if (!mp?.obj?.pivot) return;
+    mp.obj.pivot.getWorldPosition(worldSample);
+    const worldHelioR = worldSample.length();
+    const worldInc = (!mp.isBinary && mp.orbitCenter === 'sun') ? getSunOrbitInclination(mp) : 0;
+    const requiredGap = newClearance + getOrbitalClearance(mp);
+    const laneDist = Math.hypot(
+      worldHelioR - chosenRadius,
+      chosenRadius * Math.abs(worldInc - chosenInc)
+    );
+    if (laneDist > requiredGap) return;
+    nearbyAngles.push(Math.atan2(worldSample.z, worldSample.x));
+  });
+  const chosenAngle = chooseLargestGapMidpoint(nearbyAngles);
+  const phaseIdx = Math.round((normalizeAngle(chosenAngle) / twoPi) * (SOLAR_ORBIT_GRID_PHASE_COUNT - 1));
+  return {
+    key: `${chosenRadius.toFixed(2)}:${phaseIdx}:${chosenInc.toFixed(3)}`,
+    radius: chosenRadius,
+    angle: chosenAngle,
+    inc: chosenInc,
+  };
+}
+
+function createSunOrbitPlanet({
+  orbitR,
+  orbitSpeed,
+  orbitAngle,
+  orbitInclination = 0,
+  slotKey = null,
+  spinRateBase = 0.006 + Math.random() * 0.006,
+  tilt = (Math.random() - 0.5) * 0.6,
+  baseRadius = 0.5 + Math.random() * 0.6,
+  initState,
+  name,
+}) {
+  const idx   = managedPlanets.length;
+  const seed  = Math.random() * 99;
+  const color = PLANET_COLORS[idx % PLANET_COLORS.length];
+  const newP  = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, initState);
+  scene.add(newP.pivot);
+  newP.pivot.visible = planetsRenderable;
+  newP.pivot.position.set(0, 0, 0);
+  newP.setGrid(gridOn);
+  registerPlanet(
+    newP,
+    name || `Planet ${idx+1}`,
+    color,
+    false,
+    orbitR,
+    orbitSpeed,
+    spinRateBase,
+    undefined,
+    'sun',
+    slotKey,
+    orbitAngle,
+    null,
+    orbitInclination
+  );
+  const newIdx = managedPlanets.length - 1;
+  const mp = managedPlanets[newIdx];
+  initializeSunOrbiterState(mp);
+  newP.pivot.position.copy(mp.orbitPos);
+  ensureSunTrail(mp);
+  syncTrailVisibility();
+  return newIdx;
+}
+
+const _orbitParentWorld = new THREE.Vector3();
+
+function createPlanetMoonOrbit(parentIdx) {
+  const parent = managedPlanets[parentIdx];
+  if (!parent) return null;
+  const idx = managedPlanets.length;
+  const seed = Math.random() * 99;
+  const color = PLANET_COLORS[idx % PLANET_COLORS.length];
+  const parentRadius = Math.max((parent.obj.baseRadius || 0.8) * parent.obj.state.size, 0.3);
+  const orbitR = Math.max(0.9, parentRadius * (2.0 + Math.random() * 1.8));
+  const orbitAngle = Math.random() * Math.PI * 2;
+  const moonMassProxy = Math.max(0.25, getPlanetMass(parent) * 0.045);
+  const orbitSpeed = (Math.random() < 0.5 ? -1 : 1) * Math.sqrt((0.6 + moonMassProxy) / Math.pow(orbitR, 3));
+  const spinRateBase = 0.008 + Math.random() * 0.008;
+  const tilt = (Math.random() - 0.5) * 0.6;
+  const baseRadius = Math.max(0.22, Math.min(0.65, parentRadius * (0.28 + Math.random() * 0.2)));
+  const moon = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, {
+    peakScale: parent.obj.state.peakScale,
+    waterLevel: parent.obj.state.waterLevel,
+    size: Math.max(0.25, parent.obj.state.size * (0.35 + Math.random() * 0.25)),
+  });
+  scene.add(moon.pivot);
+  moon.pivot.visible = planetsRenderable;
+  parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+  moon.pivot.position.set(
+    _orbitParentWorld.x + Math.cos(orbitAngle) * orbitR,
+    _orbitParentWorld.y,
+    _orbitParentWorld.z + Math.sin(orbitAngle) * orbitR
+  );
+  moon.setGrid(gridOn);
+  const sameParentCount = managedPlanets.filter(mp => mp.orbitCenter === 'planet' && mp.orbitParentId === parent.id).length + 1;
+  registerPlanet(
+    moon,
+    `${parent.name} Moon ${sameParentCount}`,
+    color,
+    false,
+    orbitR,
+    orbitSpeed,
+    spinRateBase,
+    undefined,
+    'planet',
+    null,
+    orbitAngle,
+    parent.id
+  );
+  const moonIdx = managedPlanets.length - 1;
+  ensureMoonTrail(managedPlanets[moonIdx]);
+  syncTrailVisibility();
+  return moonIdx;
+}
+
+function rebuildPlanetList() {
+  const list = $('planet-list');
+  list.innerHTML = '';
+  managedPlanets.forEach((mp, i) => {
+    const el = document.createElement('div');
+    el.className = 'planet-item' + (i === selectedPlanetIdx ? ' selected' : '');
+    el.innerHTML = `<span class="planet-dot" style="background:${mp.color}"></span>
+                    <span class="planet-name">${mp.name}</span>`;
+    el.addEventListener('click', () => selectPlanet(i));
+    list.appendChild(el);
+  });
+  syncPlanetCount();
+}
+
+const editPanel   = $('planet-edit-panel');
+const dialSizeE   = $('dial-size-edit'),  lblSizeE  = $('lbl-size-edit');
+const dialPeakE   = $('dial-peak-edit'),  lblPeakE  = $('lbl-peak-edit');
+const dialWaterE  = $('dial-water-edit'), lblWaterE = $('lbl-water-edit');
+const planetRadialEditorEl = $('planet-radial-editor');
+const planetRadialRingEl = $('planet-radial-ring');
+const planetRadialGuideEl = $('planet-radial-guide');
+const planetRadialCloseBtn = $('planet-radial-close');
+const planetRadialKnobEls = planetRadialEditorEl ? {
+  size: planetRadialEditorEl.querySelector('button[data-setting="size"]'),
+  peak: planetRadialEditorEl.querySelector('button[data-setting="peak"]'),
+  water: planetRadialEditorEl.querySelector('button[data-setting="water"]'),
+} : {};
+const planetRadialValueEls = {
+  size: $('prk-val-size'),
+  peak: $('prk-val-peak'),
+  water: $('prk-val-water'),
+};
+const PLANET_EDIT_CONFIG = {
+  size:  { min: 0.1, max: 5, step: 0.05, arcStart: 140, arcEnd: 260 },
+  peak:  { min: 0, max: 3, step: 0.01, arcStart: 310, arcEnd: 50 },
+  water: { min: -1, max: 1, step: 0.005, arcStart: 40, arcEnd: 140 },
+};
+const planetRadialState = {
+  visible: false,
+  centerX: 0,
+  centerY: 0,
+  knobRadius: 95,
+  dragSetting: null,
+  dragPointerId: null,
+  /** Pointer angle (deg) at drag start — maps to current value via dragValueStartDeg */
+  dragPointerStartDeg: null,
+  /** Arc angle (deg) that matches the planet value when the drag began */
+  dragValueStartDeg: null,
+  dragLastPointerDeg: null,
+  dragAngleAccum: 0,
+  /** Frozen HTML ring diameter (px) while editing this selection so size edits do not resize the UI */
+  ringSizePxLock: null,
+  ringLockSelectionIdx: null,
+};
+const sunRadialEditorEl = $('sun-radial-editor');
+const sunRadialRingEl = $('sun-radial-ring');
+const sunRadialGuideEl = $('sun-radial-guide');
+const sunRadialCloseBtn = $('sun-radial-close');
+const sunRadialKnobEls = sunRadialEditorEl ? {
+  scale: sunRadialEditorEl.querySelector('button[data-sun-setting="scale"]'),
+  warp: sunRadialEditorEl.querySelector('button[data-sun-setting="warp"]'),
+} : {};
+const sunRadialValueEls = {
+  scale: $('srk-val-scale'),
+  warp: $('srk-val-warp'),
+};
+const sunRadialState = {
+  visible: false,
+  centerX: 0,
+  centerY: 0,
+  knobRadius: 95,
+  dragSetting: null,
+  dragPointerId: null,
+  dragPointerStartDeg: null,
+  dragValueStartDeg: null,
+  dragLastPointerDeg: null,
+  dragAngleAccum: 0,
+};
+const planetPanel = $('planet-panel');
+const planetPanelToggle = $('planet-panel-toggle');
+const planetPanelHeader = $('planet-panel-header');
+const planetCountEl = $('planet-count');
+const addPlanetBtn = $('add-planet-btn');
+const addTwinBtn = $('add-twin-btn');
+const sunOrbitSlidersEl = $('sun-orbit-sliders');
+const dialSunOrbitREl = $('dial-sun-orbit-r');
+const dialSunOrbitTiltDegEl = $('dial-sun-orbit-tilt-deg');
+const lblSunOrbitREl = $('lbl-sun-orbit-r');
+const lblSunOrbitTiltEl = $('lbl-sun-orbit-tilt');
+const btnWalk = $('btn-walk');
+const walkControlsEl = $('walk-controls');
+const walkJoystickEl = $('walk-joystick');
+const walkJoystickThumbEl = $('walk-joystick-thumb');
+const walkJoystickState = { pointerId: null, rangePx: 44 };
+
+function updateWalkJoystickThumb() {
+  if (!walkJoystickThumbEl) return;
+  const xPx = walkAnalog.x * walkJoystickState.rangePx;
+  const yPx = -walkAnalog.y * walkJoystickState.rangePx;
+  walkJoystickThumbEl.style.transform = `translate(${xPx.toFixed(1)}px, ${yPx.toFixed(1)}px)`;
+}
+
+function setWalkAnalogInput(rawX, rawY) {
+  let x = Math.max(-1, Math.min(1, rawX));
+  let y = Math.max(-1, Math.min(1, rawY));
+  const mag = Math.hypot(x, y);
+  if (mag > 1e-6 && mag > 1) {
+    x /= mag;
+    y /= mag;
+  }
+  walkAnalog.x = x;
+  walkAnalog.y = y;
+  updateWalkJoystickThumb();
+}
+
+function resetWalkJoystick() {
+  walkJoystickState.pointerId = null;
+  setWalkAnalogInput(0, 0);
+}
+
+function sampleWalkJoystickPointer(clientX, clientY) {
+  if (!walkJoystickEl) return;
+  const rect = walkJoystickEl.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const centerX = rect.left + rect.width * 0.5;
+  const centerY = rect.top + rect.height * 0.5;
+  const nx = (clientX - centerX) / (rect.width * 0.5);
+  const ny = (clientY - centerY) / (rect.height * 0.5);
+  setWalkAnalogInput(nx, -ny);
+}
+
+function clampPlanetEditValue(setting, value) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return value;
+  return Math.max(cfg.min, Math.min(cfg.max, value));
+}
+
+function quantizePlanetEditValue(setting, value) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg || !cfg.step) return value;
+  return Math.round(value / cfg.step) * cfg.step;
+}
+
+function planetEditAngleSpan(cfg) {
+  const raw = cfg.arcEnd - cfg.arcStart;
+  return raw >= 0 ? raw : raw + 360;
+}
+
+function radialCircDist(a, b) {
+  const d = Math.abs(a - b);
+  return Math.min(d, 360 - d);
+}
+
+/** Widen min/max plateaus so slight overshoot at arc ends does not snap to the opposite value */
+function softenRadialT(t) {
+  const m = 0.085;
+  if (t <= m) return 0;
+  if (t >= 1 - m) return 1;
+  return (t - m) / (1 - 2 * m);
+}
+
+/** Fold an unwrapped screen angle (deg) onto the configured arc for stable t mapping */
+function foldAngleIntoCfgArc(cfg, deg, getSpan) {
+  const span = getSpan(cfg);
+  const s = cfg.arcStart;
+  const e = cfg.arcEnd;
+  if (e >= s) {
+    let a = deg;
+    for (let i = 0; i < 48; i++) {
+      if (a >= s && a <= e) return a;
+      if (a < s) a += 360;
+      else a -= 360;
+    }
+    const raw = ((deg % 360) + 360) % 360;
+    return Math.max(s, Math.min(e, raw));
+  }
+  const hi = s + span;
+  let a = deg;
+  for (let i = 0; i < 48; i++) {
+    if (a >= s && a <= hi) return a;
+    if (a < s) a += 360;
+    else a -= 360;
+  }
+  const raw = ((deg % 360) + 360) % 360;
+  if (raw >= s) return raw;
+  if (raw <= e) return raw + 360;
+  return radialCircDist(raw, s) <= radialCircDist(raw, e) ? s : e + 360;
+}
+
+function planetEditTToAngle(setting, t) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = planetEditAngleSpan(cfg);
+  return (cfg.arcStart + Math.max(0, Math.min(1, t)) * span + 360) % 360;
+}
+
+function planetEditAngleToT(setting, deg) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = planetEditAngleSpan(cfg);
+  const angle = foldAngleIntoCfgArc(cfg, deg, planetEditAngleSpan);
+  return Math.max(0, Math.min(1, (angle - cfg.arcStart) / Math.max(1e-5, span)));
+}
+
+function valueFromPlanetSetting(mp, setting) {
+  if (!mp) return 0;
+  if (setting === 'size') return mp.obj.state.size;
+  if (setting === 'peak') return mp.obj.state.peakScale;
+  if (setting === 'water') return mp.obj.state.waterLevel;
+  return 0;
+}
+
+function formatWaterCompact(wl) {
+  const pct = Math.round(Math.abs(Math.max(-1, Math.min(1, wl))) * 100);
+  if (wl > 0.0001) return `${pct}%W`;
+  if (wl < -0.0001) return `${pct}%L`;
+  return '0%';
+}
+
+function setPlanetRadialGuide(setting) {
+  if (!planetRadialGuideEl) return;
+  if (!setting || !PLANET_EDIT_CONFIG[setting]) {
+    planetRadialGuideEl.classList.remove('visible');
+    return;
+  }
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  const span = planetEditAngleSpan(cfg);
+  const start = ((cfg.arcStart % 360) + 360) % 360;
+  planetRadialGuideEl.style.setProperty('--guide-start', `${start.toFixed(2)}deg`);
+  planetRadialGuideEl.style.setProperty('--guide-span', `${span.toFixed(2)}deg`);
+  planetRadialGuideEl.classList.add('visible');
+}
+
+function updatePlanetRadialFocusVisuals() {
+  const active = planetRadialState.dragSetting;
+  if (planetRadialRingEl) {
+    planetRadialRingEl.style.opacity = active ? '0.92' : '0.78';
+  }
+  Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.classList.toggle('active', active === setting);
+    knob.classList.toggle('dim', !!active && active !== setting);
+  });
+  if (planetRadialCloseBtn) {
+    planetRadialCloseBtn.classList.toggle('dim', !!active);
+  }
+  setPlanetRadialGuide(active);
+}
+
+function syncPlanetEditReadouts(mp) {
+  if (!mp) return;
+  if (lblSizeE) lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
+  if (lblPeakE) lblPeakE.textContent = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
+  if (lblWaterE) lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
+  if (planetRadialValueEls.size) planetRadialValueEls.size.textContent = `${mp.obj.state.size.toFixed(2)}×`;
+  if (planetRadialValueEls.peak) planetRadialValueEls.peak.textContent = `${mp.obj.state.peakScale.toFixed(2)}×`;
+  if (planetRadialValueEls.water) planetRadialValueEls.water.textContent = formatWaterCompact(mp.obj.state.waterLevel);
+}
+
+function syncPlanetDialValues(mp) {
+  if (!mp) return;
+  if (dialSizeE) dialSizeE.value = mp.obj.state.size;
+  if (dialPeakE) dialPeakE.value = mp.obj.state.peakScale;
+  if (dialWaterE) dialWaterE.value = mp.obj.state.waterLevel;
+}
+
+function updateSunOrbitSliderLabels() {
+  if (lblSunOrbitREl && dialSunOrbitREl) {
+    const rv = parseFloat(dialSunOrbitREl.value);
+    lblSunOrbitREl.textContent = `Distance from sun ${Number.isFinite(rv) ? rv.toFixed(1) : '—'}`;
+  }
+  if (lblSunOrbitTiltEl && dialSunOrbitTiltDegEl) {
+    lblSunOrbitTiltEl.textContent = `Orbit tilt ${dialSunOrbitTiltDegEl.value}°`;
+  }
+}
+
+function syncSunOrbitEditorUi(mp) {
+  if (!sunOrbitSlidersEl) return;
+  const ok = mp && !mp.isBinary && mp.orbitCenter === 'sun';
+  sunOrbitSlidersEl.style.display = ok ? 'flex' : 'none';
+  if (!ok || !dialSunOrbitREl || !dialSunOrbitTiltDegEl) return;
+  initializeSunOrbiterState(mp);
+  const rNow = getSunOrbitRadius(mp);
+  const rDial = Math.max(SUN_ORBIT_SLIDER_R_MIN, Math.min(SUN_ORBIT_SLIDER_R_MAX, rNow));
+  dialSunOrbitREl.value = String(rDial);
+  const deg = Math.round((getSunOrbitInclination(mp) * 180) / Math.PI);
+  dialSunOrbitTiltDegEl.value = String(Math.max(-SUN_ORBIT_TILT_DEG_MAX, Math.min(SUN_ORBIT_TILT_DEG_MAX, deg)));
+  updateSunOrbitSliderLabels();
+}
+
+function applySunOrbitFromSliders() {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') return;
+  if (!dialSunOrbitREl || !dialSunOrbitTiltDegEl) return;
+  let r = parseFloat(dialSunOrbitREl.value);
+  let tiltDeg = parseFloat(dialSunOrbitTiltDegEl.value);
+  if (!Number.isFinite(r)) return;
+  if (!Number.isFinite(tiltDeg)) tiltDeg = 0;
+  r = Math.max(SUN_ORBIT_SLIDER_R_MIN, Math.min(SUN_ORBIT_SLIDER_R_MAX, r));
+  const tiltClamped = Math.max(-SUN_ORBIT_TILT_DEG_MAX, Math.min(SUN_ORBIT_TILT_DEG_MAX, tiltDeg));
+  const inc = (tiltClamped * Math.PI) / 180;
+  reapplySunOrbiterCircularOrbit(mp, r, inc);
+  updateSunOrbitSliderLabels();
+}
+
+function finalizePlanetSizeAfterRadialDrag() {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp) return;
+  const snapped = quantizePlanetEditValue('size', clampPlanetEditValue('size', mp.obj.state.size));
+  mp.obj.state.size = snapped;
+  if (mp.isBinary) {
+    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    refreshBinaryPairForMassChange(mass1Now, mass2Now);
+    binaryPrevMass1 = mass1Now;
+    binaryPrevMass2 = mass2Now;
+  }
+  syncPlanetDialValues(mp);
+  syncPlanetEditReadouts(mp);
+}
+
+function applyPlanetEditSetting(setting, rawValue) {
+  if (selectedPlanetIdx === null) return;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp) return;
+  const inRadialSizeDrag = setting === 'size' && planetRadialState.dragSetting === 'size';
+  const nextValue = inRadialSizeDrag
+    ? clampPlanetEditValue(setting, rawValue)
+    : quantizePlanetEditValue(setting, clampPlanetEditValue(setting, rawValue));
+  if (setting === 'size') {
+    mp.obj.state.size = nextValue;
+    if (mp.isBinary && !inRadialSizeDrag) {
+      const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+      const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+      refreshBinaryPairForMassChange(mass1Now, mass2Now);
+      binaryPrevMass1 = mass1Now;
+      binaryPrevMass2 = mass2Now;
+    }
+  } else if (setting === 'peak') {
+    mp.obj.state.peakScale = nextValue;
+    mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+  } else if (setting === 'water') {
+    mp.obj.state.waterLevel = nextValue;
+    mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+  }
+  syncPlanetDialValues(mp);
+  syncPlanetEditReadouts(mp);
+}
+
+function hidePlanetRadialEditor() {
+  const wasSizeRadialDrag = planetRadialState.dragSetting === 'size';
+  if (planetRadialEditorEl) planetRadialEditorEl.style.display = 'none';
+  planetRadialState.visible = false;
+  planetRadialState.dragSetting = null;
+  planetRadialState.dragPointerId = null;
+  planetRadialState.dragPointerStartDeg = null;
+  planetRadialState.dragValueStartDeg = null;
+  planetRadialState.dragLastPointerDeg = null;
+  planetRadialState.dragAngleAccum = 0;
+  planetRadialState.ringSizePxLock = null;
+  planetRadialState.ringLockSelectionIdx = null;
+  document.body.classList.remove('radial-edit-active');
+  updatePlanetRadialFocusVisuals();
+  if (wasSizeRadialDrag) finalizePlanetSizeAfterRadialDrag();
+}
+
+function updatePlanetRadialKnobPositions(mp) {
+  if (!planetRadialEditorEl || !mp) return;
+  const r = planetRadialState.knobRadius;
+  ['size', 'peak', 'water'].forEach(setting => {
+    const knob = planetRadialKnobEls[setting];
+    const cfg = PLANET_EDIT_CONFIG[setting];
+    if (!knob || !cfg) return;
+    const value = valueFromPlanetSetting(mp, setting);
+    const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+    const deg = planetEditTToAngle(setting, t);
+    const rad = deg * Math.PI / 180;
+    knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
+    knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
+  });
+  updatePlanetRadialFocusVisuals();
+}
+
+function updatePlanetSelectionEditor() {
+  const shouldShow =
+    selectedPlanetIdx !== null &&
+    !!managedPlanets[selectedPlanetIdx] &&
+    cameraMode === 'planet' &&
+    !walkMode.active &&
+    planetsRenderable;
+  if (!shouldShow) {
+    planetSelectionHalo.visible = false;
+    planetSelectionRing.visible = false;
+    hidePlanetRadialEditor();
+    return;
+  }
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp?.obj?.pivot) {
+    planetSelectionHalo.visible = false;
+    planetSelectionRing.visible = false;
+    hidePlanetRadialEditor();
+    return;
+  }
+  document.body.classList.add('radial-edit-active');
+  const radiusWorld = getPlanetCenterRadius(mp, _planetEditorCenterWorld);
+  planetSelectionHalo.visible = true;
+  planetSelectionHalo.position.copy(_planetEditorCenterWorld);
+  planetSelectionHalo.scale.setScalar(radiusWorld * 1.22);
+
+  planetSelectionRing.visible = true;
+  planetSelectionRing.position.copy(_planetEditorCenterWorld);
+  planetSelectionRing.quaternion.copy(camera.quaternion);
+  const ringRadius = radiusWorld * 1.38;
+  planetSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
+
+  _planetEditorNdc.copy(_planetEditorCenterWorld).project(camera);
+  const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
+  if (depthOutOfRange) {
+    hidePlanetRadialEditor();
+    return;
+  }
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
+  const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+  if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
+    hidePlanetRadialEditor();
+    return;
+  }
+  const cx = projectedCx;
+  const cy = projectedCy;
+
+  camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
+  _planetEditorEdgeWorld.copy(_planetEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
+  _planetEditorEdgeNdc.copy(_planetEditorEdgeWorld).project(camera);
+  const ex = (_planetEditorEdgeNdc.x * 0.5 + 0.5) * vw;
+  const ey = (-_planetEditorEdgeNdc.y * 0.5 + 0.5) * vh;
+  const projectedRadius = Number.isFinite(ex) && Number.isFinite(ey)
+    ? Math.max(26, Math.hypot(ex - cx, ey - cy))
+    : 64;
+  const narrow = isNarrowPlanetUI();
+  const shortSide = Math.min(vw, vh);
+  const ringMinPx = narrow ? 132 : 156;
+  const ringMaxPx = narrow
+    ? Math.min(292, shortSide * 0.54)
+    : Math.min(560, shortSide * 0.74);
+  const ringFromProjection = projectedRadius * 2.85;
+  let ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
+  if (planetRadialState.ringLockSelectionIdx !== selectedPlanetIdx) {
+    planetRadialState.ringLockSelectionIdx = selectedPlanetIdx;
+    planetRadialState.ringSizePxLock = null;
+  }
+  if (planetRadialState.ringSizePxLock === null) {
+    planetRadialState.ringSizePxLock = ringSize;
+  } else {
+    ringSize = planetRadialState.ringSizePxLock;
+  }
+
+  if (planetRadialEditorEl) {
+    planetRadialEditorEl.style.display = 'block';
+    planetRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
+    planetRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
+    planetRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+  }
+  planetRadialState.visible = true;
+  planetRadialState.centerX = cx;
+  planetRadialState.centerY = cy;
+  planetRadialState.knobRadius = ringSize * 0.5;
+  syncPlanetEditReadouts(mp);
+  updatePlanetRadialKnobPositions(mp);
+}
+
+function updatePlanetSettingFromPointer(clientX, clientY, setting) {
+  const cfg = PLANET_EDIT_CONFIG[setting];
+  if (!cfg) return;
+  const dx = clientX - planetRadialState.centerX;
+  const dy = clientY - planetRadialState.centerY;
+  if (dx * dx + dy * dy < 25) return;
+  const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  let deg;
+  if (planetRadialState.dragPointerStartDeg !== null && planetRadialState.dragValueStartDeg !== null) {
+    const step = ((pointerDeg - planetRadialState.dragLastPointerDeg + 540) % 360) - 180;
+    planetRadialState.dragLastPointerDeg = pointerDeg;
+    planetRadialState.dragAngleAccum += step;
+    deg = planetRadialState.dragValueStartDeg + planetRadialState.dragAngleAccum;
+  } else {
+    deg = pointerDeg;
+  }
+  const t = softenRadialT(planetEditAngleToT(setting, deg));
+  const value = cfg.min + t * (cfg.max - cfg.min);
+  applyPlanetEditSetting(setting, value);
+}
+
+function sunArcSpan(cfg) {
+  const raw = cfg.arcEnd - cfg.arcStart;
+  return raw >= 0 ? raw : raw + 360;
+}
+function sunEditTToAngle(setting, t) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = sunArcSpan(cfg);
+  return (cfg.arcStart + Math.max(0, Math.min(1, t)) * span + 360) % 360;
+}
+function sunEditAngleToT(setting, deg) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return 0;
+  const span = sunArcSpan(cfg);
+  const angle = foldAngleIntoCfgArc(cfg, deg, sunArcSpan);
+  return Math.max(0, Math.min(1, (angle - cfg.arcStart) / Math.max(1e-5, span)));
+}
+function valueFromSunSetting(setting) {
+  if (setting === 'scale') return targetScale;
+  if (setting === 'warp') return timeWarp;
+  return 0;
+}
+function clampSunEditValue(setting, value) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return value;
+  return Math.max(cfg.min, Math.min(cfg.max, value));
+}
+function quantizeSunEditValue(setting, value) {
+  if (setting === 'scale') {
+    const s = scaleWorldToSliderValue(value);
+    const q = Math.round(Math.max(0, Math.min(1, s)) / 0.001) * 0.001;
+    return sliderToScale(q);
+  }
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg || !cfg.step) return value;
+  return Math.round(value / cfg.step) * cfg.step;
+}
+function syncSunRadialReadouts() {
+  if (sunRadialValueEls.scale) sunRadialValueEls.scale.textContent = `${scaleWorldToUi(targetScale).toFixed(2)}×`;
+  if (sunRadialValueEls.warp) {
+    sunRadialValueEls.warp.textContent = timeWarp === 0 ? 'PAUSE' : `${timeWarp.toFixed(1)}×`;
+  }
+}
+function setSunRadialGuide(setting) {
+  if (!sunRadialGuideEl) return;
+  if (!setting || !SUN_EDIT_CONFIG[setting]) {
+    sunRadialGuideEl.classList.remove('visible');
+    return;
+  }
+  const cfg = SUN_EDIT_CONFIG[setting];
+  const span = sunArcSpan(cfg);
+  const start = ((cfg.arcStart % 360) + 360) % 360;
+  sunRadialGuideEl.style.setProperty('--guide-start', `${start.toFixed(2)}deg`);
+  sunRadialGuideEl.style.setProperty('--guide-span', `${span.toFixed(2)}deg`);
+  sunRadialGuideEl.classList.add('visible');
+}
+function updateSunRadialFocusVisuals() {
+  const active = sunRadialState.dragSetting;
+  if (sunRadialRingEl) {
+    sunRadialRingEl.style.opacity = active ? '0.92' : '0.78';
+  }
+  Object.entries(sunRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.classList.toggle('active', active === setting);
+    knob.classList.toggle('dim', !!active && active !== setting);
+  });
+  if (sunRadialCloseBtn) {
+    sunRadialCloseBtn.classList.toggle('dim', !!active);
+  }
+  setSunRadialGuide(active);
+}
+function applySunEditSetting(setting, rawValue) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return;
+  const next = quantizeSunEditValue(setting, clampSunEditValue(setting, rawValue));
+  if (setting === 'scale') {
+    targetScale = next;
+    if (dialScale) dialScale.value = String(scaleWorldToSliderValue(targetScale));
+    if (lblScale) lblScale.textContent = scaleLabelText(targetScale);
+    applyDetailForCurrentView(targetScale);
+    setPlanetsRenderable(true);
+  } else if (setting === 'warp') {
+    timeWarp = next;
+    if (dialWarp) dialWarp.value = String(timeWarp);
+    if (lblWarp) lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+  }
+  syncSunRadialReadouts();
+}
+function hideSunRadialEditor() {
+  if (sunRadialEditorEl) sunRadialEditorEl.style.display = 'none';
+  sunRadialState.visible = false;
+  sunRadialState.dragSetting = null;
+  sunRadialState.dragPointerId = null;
+  sunRadialState.dragPointerStartDeg = null;
+  sunRadialState.dragValueStartDeg = null;
+  sunRadialState.dragLastPointerDeg = null;
+  sunRadialState.dragAngleAccum = 0;
+  sunRadialDismissed = true;
+  document.body.classList.remove('sun-radial-edit-active');
+  sunSelectionHalo.visible = false;
+  sunSelectionRing.visible = false;
+  updateSunRadialFocusVisuals();
+}
+function updateSunRadialKnobPositions() {
+  if (!sunRadialEditorEl) return;
+  const r = sunRadialState.knobRadius;
+  ['scale', 'warp'].forEach(setting => {
+    const knob = sunRadialKnobEls[setting];
+    const cfg = SUN_EDIT_CONFIG[setting];
+    if (!knob || !cfg) return;
+    const value = valueFromSunSetting(setting);
+    const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+    const deg = sunEditTToAngle(setting, t);
+    const rad = deg * Math.PI / 180;
+    knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
+    knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
+  });
+  updateSunRadialFocusVisuals();
+}
+function updateSunSelectionEditor() {
+  const shouldShow =
+    cameraMode === 'sun' &&
+    !walkMode.active &&
+    !sunRadialDismissed &&
+    currentDestIndex === 0 &&
+    !isNavigating;
+  if (!shouldShow) {
+    sunSelectionHalo.visible = false;
+    sunSelectionRing.visible = false;
+    hideSunRadialEditor();
+    return;
+  }
+  document.body.classList.add('sun-radial-edit-active');
+  sunGroup.getWorldPosition(_sunEditorCenterWorld);
+  const radiusWorld = SUN_R * 5.5;
+  sunSelectionHalo.visible = true;
+  sunSelectionHalo.position.copy(_sunEditorCenterWorld);
+  sunSelectionHalo.scale.setScalar(radiusWorld * 1.12);
+
+  sunSelectionRing.visible = true;
+  sunSelectionRing.position.copy(_sunEditorCenterWorld);
+  sunSelectionRing.quaternion.copy(camera.quaternion);
+  const ringRadius = radiusWorld * 1.32;
+  sunSelectionRing.scale.set(ringRadius, ringRadius, ringRadius);
+
+  _planetEditorNdc.copy(_sunEditorCenterWorld).project(camera);
+  const depthOutOfRange = _planetEditorNdc.z < -1 || _planetEditorNdc.z > 1;
+  if (depthOutOfRange) {
+    hideSunRadialEditor();
+    return;
+  }
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
+  const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
+  if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
+    hideSunRadialEditor();
+    return;
+  }
+  const cx = projectedCx;
+  const cy = projectedCy;
+
+  camera.matrixWorld.extractBasis(_planetEditorCamRight, _planetEditorCamUp, _planetEditorCamForward);
+  _planetEditorEdgeWorld.copy(_sunEditorCenterWorld).addScaledVector(_planetEditorCamRight.normalize(), radiusWorld);
+  _planetEditorEdgeNdc.copy(_planetEditorEdgeWorld).project(camera);
+  const ex = (_planetEditorEdgeNdc.x * 0.5 + 0.5) * vw;
+  const ey = (-_planetEditorEdgeNdc.y * 0.5 + 0.5) * vh;
+  const projectedRadius = Number.isFinite(ex) && Number.isFinite(ey)
+    ? Math.max(26, Math.hypot(ex - cx, ey - cy))
+    : 64;
+  const narrow = isNarrowPlanetUI();
+  const shortSide = Math.min(vw, vh);
+  const ringMinPx = narrow ? 132 : 156;
+  const ringMaxPx = narrow
+    ? Math.min(292, shortSide * 0.54)
+    : Math.min(560, shortSide * 0.74);
+  const ringFromProjection = projectedRadius * 2.85;
+  const ringSize = Math.max(ringMinPx, Math.min(ringMaxPx, ringFromProjection));
+
+  if (sunRadialEditorEl) {
+    sunRadialEditorEl.style.display = 'block';
+    sunRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
+    sunRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
+    sunRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+  }
+  sunRadialState.visible = true;
+  sunRadialState.centerX = cx;
+  sunRadialState.centerY = cy;
+  sunRadialState.knobRadius = ringSize * 0.5;
+  syncSunRadialReadouts();
+  updateSunRadialKnobPositions();
+}
+function updateSunSettingFromPointer(clientX, clientY, setting) {
+  const cfg = SUN_EDIT_CONFIG[setting];
+  if (!cfg) return;
+  const dx = clientX - sunRadialState.centerX;
+  const dy = clientY - sunRadialState.centerY;
+  if (dx * dx + dy * dy < 25) return;
+  const pointerDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  let deg;
+  if (sunRadialState.dragPointerStartDeg !== null && sunRadialState.dragValueStartDeg !== null) {
+    const step = ((pointerDeg - sunRadialState.dragLastPointerDeg + 540) % 360) - 180;
+    sunRadialState.dragLastPointerDeg = pointerDeg;
+    sunRadialState.dragAngleAccum += step;
+    deg = sunRadialState.dragValueStartDeg + sunRadialState.dragAngleAccum;
+  } else {
+    deg = pointerDeg;
+  }
+  const t = softenRadialT(sunEditAngleToT(setting, deg));
+  const value = cfg.min + t * (cfg.max - cfg.min);
+  applySunEditSetting(setting, value);
+}
+
+function syncPlanetCount() {
+  if (planetCountEl) planetCountEl.textContent = String(managedPlanets.length);
+}
+
+function canCreateMoonFromSelection() {
+  if (selectedPlanetIdx === null) return false;
+  return !!managedPlanets[selectedPlanetIdx];
+}
+
+function addPlanetFromSelectionUi() {
+  const baseRadius = 0.5 + Math.random() * 0.6;
+  const slot = reserveSolarOrbitSlot(baseRadius, 1.0);
+  if (!slot) return;
+  const orbitSpeed = (Math.random() < 0.5 ? -1 : 1) * Math.sqrt(SOLAR_MU / Math.pow(slot.radius, 3));
+  const newIdx = createSunOrbitPlanet({
+    baseRadius,
+    orbitR: slot.radius,
+    orbitSpeed,
+    orbitAngle: slot.angle,
+    orbitInclination: slot.inc ?? 0,
+    slotKey: slot.key,
+  });
+  rebuildPlanetList();
+  selectPlanet(newIdx);
+}
+
+function addMoonFromSelectionUi() {
+  if (cameraMode !== 'planet' || !canCreateMoonFromSelection()) return;
+  const newIdx = createPlanetMoonOrbit(selectedPlanetIdx);
+  if (newIdx === null) return;
+  rebuildPlanetList();
+  selectPlanet(newIdx);
+}
+
+function updateTwinButtonVisibility() {
+  if (!addTwinBtn) return;
+  const inPlanetView = cameraMode === 'planet';
+  addTwinBtn.style.display = inPlanetView ? '' : 'none';
+  const canTwin = inPlanetView && canCreateMoonFromSelection();
+  addTwinBtn.disabled = !canTwin;
+}
+
+function canWalkFromSelection() {
+  return managedPlanets.some(mp => !!mp?.obj?.pivot);
+}
+
+function updateWalkButtonVisibility() {
+  if (!btnWalk) return;
+  const inPlanetView = cameraMode === 'planet';
+  btnWalk.style.display = inPlanetView ? '' : 'none';
+  btnWalk.disabled = !inPlanetView || !canWalkFromSelection();
+  if (walkControlsEl) walkControlsEl.style.display = walkMode.active ? 'grid' : 'none';
+  refreshWalkUi();
+}
+
+function isNarrowPlanetUI() {
+  return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 768px)').matches;
+}
+
+function setPlanetPanelOpen(open) {
+  if (!planetPanel || !isNarrowPlanetUI()) return;
+  planetPanel.classList.toggle('pp-open', open);
+  if (planetPanelToggle) planetPanelToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function waterLabelText(wl) {
+  const level = Math.max(-1, Math.min(1, wl));
+  const pct = Math.round(Math.abs(level) * 100);
+  if (level > 0.0001) return `Water ${pct}%`;
+  if (level < -0.0001) return `Lava ${pct}%`;
+  return 'Water/Lava 0%';
+}
+
+if (planetPanelToggle) {
+  planetPanelToggle.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!isNarrowPlanetUI()) return;
+    setPlanetPanelOpen(!planetPanel.classList.contains('pp-open'));
+  });
+}
+if (planetPanelHeader) {
+  planetPanelHeader.addEventListener('click', e => {
+    if (!isNarrowPlanetUI()) return;
+    if (e.target.closest('#add-planet-btn')) return;
+    if (e.target.closest('#add-twin-btn')) return;
+    if (e.target.closest('#planet-panel-toggle')) return;
+    setPlanetPanelOpen(!planetPanel.classList.contains('pp-open'));
+  });
+}
+
+function selectPlanet(idx) {
+  selectedPlanetIdx = idx;
+  panOffset.set(0, 0, 0);
+  rebuildPlanetList();
+  const mp = idx !== null && idx !== undefined ? managedPlanets[idx] : null;
+  if (editPanel) editPanel.style.display = 'none';
+  if (mp) {
+    syncPlanetDialValues(mp);
+    syncPlanetEditReadouts(mp);
+  }
+  if (!mp || mp.isBinary || mp.orbitCenter !== 'sun') syncSunOrbitEditorUi(null);
+  else syncSunOrbitEditorUi(mp);
+  setPlanetPanelOpen(false);
+  updateTwinButtonVisibility();
+  updateWalkButtonVisibility();
+  updatePlanetSelectionEditor();
+  rebuildGalaxyMenu();
+}
+
+dialSizeE.addEventListener('input', () => {
+  applyPlanetEditSetting('size', parseFloat(dialSizeE.value));
+});
+
+dialPeakE.addEventListener('input', () => {
+  applyPlanetEditSetting('peak', parseFloat(dialPeakE.value));
+});
+
+dialWaterE.addEventListener('input', () => {
+  applyPlanetEditSetting('water', parseFloat(dialWaterE.value));
+});
+
+if (dialSunOrbitREl) dialSunOrbitREl.addEventListener('input', () => { applySunOrbitFromSliders(); });
+if (dialSunOrbitTiltDegEl) dialSunOrbitTiltDegEl.addEventListener('input', () => { applySunOrbitFromSliders(); });
+
+// Add planet button (next free sun-orbit slot)
+addPlanetBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  addPlanetFromSelectionUi();
+});
+
+// Add moon button (planetary orbit around selected planet)
+addTwinBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  addMoonFromSelectionUi();
+});
+
+let lastWalkButtonPressMs = 0;
+async function onWalkButtonPressed(e) {
+  const now = performance.now();
+  if (now - lastWalkButtonPressMs < 450) return;
+  lastWalkButtonPressMs = now;
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
+  if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+  if (walkTransition.active) return;
+  if (walkMode.active) {
+    stopWalkMode();
+    updateWalkButtonVisibility();
+    return;
+  }
+  if (cameraMode !== 'planet') setCamMode('planet');
+  const resolved = resolveWalkStartPlanetAndSpawn();
+  if (!resolved) return;
+  const { idx, spawn } = resolved;
+  if (selectedPlanetIdx !== idx) selectPlanet(idx);
+  await transitionCameraToWalkSpawn(spawn);
+  startWalkMode(idx, spawn);
+  updateWalkButtonVisibility();
+}
+btnWalk.addEventListener('pointerup', onWalkButtonPressed);
+btnWalk.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') onWalkButtonPressed(e);
+});
+
+function setWalkInputFlag(key, down) {
+  if (key === 'left') walkInput.left = down;
+  if (key === 'right') walkInput.right = down;
+  if (key === 'forward') walkInput.fwd = down;
+  if (key === 'back') walkInput.back = down;
+  if (key === 'sprint') walkInput.sprint = down;
+  if (key === 'jump' && down) queueWalkJump();
+  if (key === 'view' && down) toggleWalkCameraMode();
+}
+
+if (walkControlsEl) {
+  walkControlsEl.querySelectorAll('button[data-walk]').forEach(btn => {
+    const key = btn.getAttribute('data-walk');
+    const down = e => { e.preventDefault(); setWalkInputFlag(key, true); };
+    const up = e => { e.preventDefault(); setWalkInputFlag(key, false); };
+    btn.addEventListener('pointerdown', down);
+    btn.addEventListener('pointerup', up);
+    btn.addEventListener('pointercancel', up);
+    btn.addEventListener('pointerleave', up);
+  });
+}
+if (walkJoystickEl) {
+  const onJoyDown = e => {
+    if (!walkMode.active) return;
+    e.preventDefault();
+    e.stopPropagation();
+    walkJoystickState.pointerId = e.pointerId;
+    try { walkJoystickEl.setPointerCapture(e.pointerId); } catch (err) {}
+    sampleWalkJoystickPointer(e.clientX, e.clientY);
+  };
+  const onJoyMove = e => {
+    if (!walkMode.active) return;
+    if (walkJoystickState.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    sampleWalkJoystickPointer(e.clientX, e.clientY);
+  };
+  const onJoyUp = e => {
+    if (walkJoystickState.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    try { walkJoystickEl.releasePointerCapture(e.pointerId); } catch (err) {}
+    resetWalkJoystick();
+  };
+  walkJoystickEl.addEventListener('pointerdown', onJoyDown);
+  walkJoystickEl.addEventListener('pointermove', onJoyMove);
+  walkJoystickEl.addEventListener('pointerup', onJoyUp);
+  walkJoystickEl.addEventListener('pointercancel', onJoyUp);
+  window.addEventListener('pointerup', onJoyUp);
+  window.addEventListener('pointercancel', onJoyUp);
+}
+if (planetRadialEditorEl) {
+  const onKnobDown = (e, setting) => {
+    if (selectedPlanetIdx === null || !planetRadialState.visible) return;
+    e.preventDefault();
+    e.stopPropagation();
+    planetRadialState.dragSetting = setting;
+    planetRadialState.dragPointerId = e.pointerId;
+    const mp = managedPlanets[selectedPlanetIdx];
+    const cfg = PLANET_EDIT_CONFIG[setting];
+    if (mp && cfg) {
+      const v = valueFromPlanetSetting(mp, setting);
+      const startT = (v - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      planetRadialState.dragValueStartDeg = planetEditTToAngle(setting, startT);
+      const dx = e.clientX - planetRadialState.centerX;
+      const dy = e.clientY - planetRadialState.centerY;
+      planetRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      planetRadialState.dragLastPointerDeg = planetRadialState.dragPointerStartDeg;
+      planetRadialState.dragAngleAccum = 0;
+    } else {
+      planetRadialState.dragPointerStartDeg = null;
+      planetRadialState.dragValueStartDeg = null;
+      planetRadialState.dragLastPointerDeg = null;
+      planetRadialState.dragAngleAccum = 0;
+    }
+    updatePlanetRadialFocusVisuals();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    updatePlanetSelectionEditor();
+  };
+  const onKnobMove = e => {
+    if (planetRadialState.dragPointerId !== e.pointerId || !planetRadialState.dragSetting) return;
+    e.preventDefault();
+    updatePlanetSettingFromPointer(e.clientX, e.clientY, planetRadialState.dragSetting);
+  };
+  const onKnobUp = e => {
+    if (planetRadialState.dragPointerId !== e.pointerId) return;
+    e.preventDefault();
+    const endedSetting = planetRadialState.dragSetting;
+    planetRadialState.dragSetting = null;
+    planetRadialState.dragPointerId = null;
+    planetRadialState.dragPointerStartDeg = null;
+    planetRadialState.dragValueStartDeg = null;
+    planetRadialState.dragLastPointerDeg = null;
+    planetRadialState.dragAngleAccum = 0;
+    Object.values(planetRadialKnobEls).forEach(knob => {
+      try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
+    });
+    updatePlanetRadialFocusVisuals();
+    if (endedSetting === 'size') finalizePlanetSizeAfterRadialDrag();
+  };
+  Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.addEventListener('pointerdown', e => onKnobDown(e, setting));
+    knob.addEventListener('pointermove', onKnobMove);
+    knob.addEventListener('pointerup', onKnobUp);
+    knob.addEventListener('pointercancel', onKnobUp);
+  });
+  window.addEventListener('pointerup', onKnobUp);
+  window.addEventListener('pointercancel', onKnobUp);
+  if (planetRadialCloseBtn) {
+    planetRadialCloseBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      selectPlanet(null);
+    });
+  }
+}
+if (sunRadialEditorEl) {
+  const onSunKnobDown = (e, setting) => {
+    if (!sunRadialState.visible) return;
+    e.preventDefault();
+    e.stopPropagation();
+    sunRadialState.dragSetting = setting;
+    sunRadialState.dragPointerId = e.pointerId;
+    const cfg = SUN_EDIT_CONFIG[setting];
+    if (cfg) {
+      const v = valueFromSunSetting(setting);
+      const startT = (v - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      sunRadialState.dragValueStartDeg = sunEditTToAngle(setting, startT);
+      const dx = e.clientX - sunRadialState.centerX;
+      const dy = e.clientY - sunRadialState.centerY;
+      sunRadialState.dragPointerStartDeg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      sunRadialState.dragLastPointerDeg = sunRadialState.dragPointerStartDeg;
+      sunRadialState.dragAngleAccum = 0;
+    } else {
+      sunRadialState.dragPointerStartDeg = null;
+      sunRadialState.dragValueStartDeg = null;
+      sunRadialState.dragLastPointerDeg = null;
+      sunRadialState.dragAngleAccum = 0;
+    }
+    updateSunRadialFocusVisuals();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    updateSunSelectionEditor();
+  };
+  const onSunKnobMove = e => {
+    if (sunRadialState.dragPointerId !== e.pointerId || !sunRadialState.dragSetting) return;
+    e.preventDefault();
+    updateSunSettingFromPointer(e.clientX, e.clientY, sunRadialState.dragSetting);
+  };
+  const onSunKnobUp = e => {
+    if (sunRadialState.dragPointerId !== e.pointerId) return;
+    e.preventDefault();
+    sunRadialState.dragSetting = null;
+    sunRadialState.dragPointerId = null;
+    sunRadialState.dragPointerStartDeg = null;
+    sunRadialState.dragValueStartDeg = null;
+    sunRadialState.dragLastPointerDeg = null;
+    sunRadialState.dragAngleAccum = 0;
+    Object.values(sunRadialKnobEls).forEach(knob => {
+      try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
+    });
+    updateSunRadialFocusVisuals();
+  };
+  Object.entries(sunRadialKnobEls).forEach(([setting, knob]) => {
+    if (!knob) return;
+    knob.addEventListener('pointerdown', e => onSunKnobDown(e, setting));
+    knob.addEventListener('pointermove', onSunKnobMove);
+    knob.addEventListener('pointerup', onSunKnobUp);
+    knob.addEventListener('pointercancel', onSunKnobUp);
+  });
+  window.addEventListener('pointerup', onSunKnobUp);
+  window.addEventListener('pointercancel', onSunKnobUp);
+  if (sunRadialCloseBtn) {
+    sunRadialCloseBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideSunRadialEditor();
+    });
+  }
+}
+updateWalkJoystickThumb();
+
+window.addEventListener('keydown', e => {
+  if (!walkMode.active) return;
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') walkInput.fwd = true;
+  if (k === 's' || k === 'arrowdown') walkInput.back = true;
+  if (k === 'a' || k === 'arrowleft') walkInput.left = true;
+  if (k === 'd' || k === 'arrowright') walkInput.right = true;
+  if (k === 'shift') walkInput.sprint = true;
+  if (k === ' ') queueWalkJump();
+  if (k === 'v' || k === 'c') toggleWalkCameraMode();
+  if (k === 'escape') {
+    stopWalkMode();
+    updateWalkButtonVisibility();
+  }
+  if (['w','a','s','d',' ','shift','v','c','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
+});
+
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') walkInput.fwd = false;
+  if (k === 's' || k === 'arrowdown') walkInput.back = false;
+  if (k === 'a' || k === 'arrowleft') walkInput.left = false;
+  if (k === 'd' || k === 'arrowright') walkInput.right = false;
+  if (k === 'shift') walkInput.sprint = false;
+});
+
+rebuildPlanetList();
+updateTwinButtonVisibility();
+updateWalkButtonVisibility();
+if (isNarrowPlanetUI()) setPlanetPanelOpen(false);
+
+// ── Camera view buttons (Solar / Planet views: tap sun or a planet on canvas) ──
+function setCamMode(mode) {
+  if (mode !== 'planet' && walkMode.active) stopWalkMode();
+  if (mode === 'planet') {
+    hideSunRadialEditor();
+    solGalaxyMenuRevealed = true;
+  }
+  cameraMode = mode;
+  document.body.classList.toggle('mode-planet-view', mode === 'planet');
+  applyDetailForCurrentView(targetScale);
+  setPlanetsRenderable(true);
+  updateTwinButtonVisibility();
+  updateWalkButtonVisibility();
+  galaxyList.classList.remove('open');
+  galaxyBtn.classList.remove('open');
+  rebuildGalaxyMenu();
+  syncSolGalaxyMenuVisibility();
+}
+const btnGrid = document.getElementById('btn-grid');
+let gridOn = true;
+btnGrid.addEventListener('click', () => {
+  gridOn = !gridOn;
+  btnGrid.classList.toggle('active', gridOn);
+  managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
+});
+
+// ── Camera settings panel ─────────────────────────────────────────
+const btnCamSettings = document.getElementById('btn-cam-settings');
+const camSettingsEl  = document.getElementById('cam-settings');
+btnCamSettings.addEventListener('click', () => {
+  const open = camSettingsEl.classList.toggle('open');
+  btnCamSettings.classList.toggle('active', open);
+});
+
+// FOV
+const csFov = document.getElementById('cs-fov');
+const csLblFov = document.getElementById('cs-lbl-fov');
+csFov.addEventListener('input', () => {
+  const v = parseFloat(csFov.value);
+  camera.fov = v;
+  camera.updateProjectionMatrix();
+  csLblFov.textContent = `FOV  ${v}°`;
+});
+
+// Orbit speed
+const csSpeed = document.getElementById('cs-speed');
+const csLblSpeed = document.getElementById('cs-lbl-speed');
+csSpeed.addEventListener('input', () => {
+  orbitSpeedMul = parseFloat(csSpeed.value);
+  csLblSpeed.textContent = `Orbit Speed  ${orbitSpeedMul.toFixed(1)}×`;
+});
+
+// Zoom speed
+const csZoom = document.getElementById('cs-zoom');
+const csLblZoom = document.getElementById('cs-lbl-zoom');
+csZoom.addEventListener('input', () => {
+  zoomSpeedMul = parseFloat(csZoom.value);
+  csLblZoom.textContent = `Zoom Speed  ${zoomSpeedMul.toFixed(1)}×`;
+});
+
+// Auto-rotate toggle
+const csRotOn  = document.getElementById('cs-rot-on');
+const csRotOff = document.getElementById('cs-rot-off');
+function setAutoRotate(v) {
+  autoRotate = v;
+  csRotOn.classList.toggle('on', v);
+  csRotOff.classList.toggle('on', !v);
+}
+csRotOn.addEventListener('click',  () => setAutoRotate(true));
+csRotOff.addEventListener('click', () => setAutoRotate(false));
+
+// Match Three.js + runtime to panel defaults (all devices start at minimum cam settings)
+camera.fov = parseFloat(csFov.value);
+camera.updateProjectionMatrix();
+csLblFov.textContent = `FOV  ${camera.fov}°`;
+orbitSpeedMul = parseFloat(csSpeed.value);
+csLblSpeed.textContent = `Orbit Speed  ${orbitSpeedMul.toFixed(1)}×`;
+zoomSpeedMul = parseFloat(csZoom.value);
+csLblZoom.textContent = `Zoom Speed  ${zoomSpeedMul.toFixed(1)}×`;
+setAutoRotate(true);
+
+// ── Animate ───────────────────────────────────────────────────────
+let currentDestIndex = 0;
+let isNavigating     = false;
+const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
+const BASE_DT = 1 / 60;
+const TIME_WARP_BASE_SCALE = 0.12; // New baseline: 1x is much slower than legacy behavior.
+
+function getSimulationWarp(uiWarp) {
+  return Math.max(0, uiWarp) * TIME_WARP_BASE_SCALE;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Smooth zoom toward target in log-space (perceptually uniform speed)
+  if (zoomTarget !== null) {
+    const logCur = Math.log(orbitZoom);
+    const logTgt = Math.log(zoomTarget);
+    if (Math.abs(logCur - logTgt) < 0.005) {
+      orbitZoom = zoomTarget;
+      zoomTarget = null;
+      introZoomProfile = null;
+    } else {
+      let zoomLerp = 0.008;
+      if (introZoomProfile) {
+        if (Math.abs(logTgt - introZoomProfile.targetLog) < 1e-6) {
+          // Intro request: ease in slower, stay calm mid-way, then finish faster.
+          const span = Math.max(1e-5, introZoomProfile.startLog - introZoomProfile.targetLog);
+          const progress = Math.max(0, Math.min(1, (introZoomProfile.startLog - logCur) / span));
+          const accel = Math.pow(progress, 3.2);
+          zoomLerp = 0.0048 + accel * 0.023;
+        } else {
+          introZoomProfile = null;
+        }
+      }
+      orbitZoom = Math.exp(logCur + (logTgt - logCur) * zoomLerp);
+    }
+  } else if (introZoomProfile) {
+    introZoomProfile = null;
+  }
+
+  // Smooth scale lerp (camera/universe view only; objects keep real size)
+  curScale += (targetScale - curScale) * 0.08;
+  setPlanetsRenderable(true);
+
+  // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
+  const curScaleUi = scaleWorldToUi(curScale);
+  const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScaleUi - 8) / 44);
+  const wireOpacity = 0.25 * wireFade;
+  managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
+
+  const simWarp = getSimulationWarp(timeWarp);
+  if (simWarp > 0) {
+    const dt    = BASE_DT * simWarp;
+    const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(simWarp) * 6)));
+    const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+    const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const deferBinarySizeRadial =
+      planetRadialState.dragSetting === 'size' &&
+      selectedPlanetIdx !== null &&
+      !!managedPlanets[selectedPlanetIdx]?.isBinary;
+    const massesChanged =
+      Math.abs(mass1 - binaryPrevMass1) > 1e-8 ||
+      Math.abs(mass2 - binaryPrevMass2) > 1e-8;
+    if (massesChanged && !deferBinarySizeRadial) {
+      refreshBinaryPairForMassChange(mass1, mass2);
+      binaryPrevMass1 = mass1;
+      binaryPrevMass2 = mass2;
+    }
+
+    // Binary pair orbits around its COM with mass-driven mutual pattern.
+    for (let i = 0; i < steps; i++) applyBinaryPairState(mass1, mass2, dt / steps);
+
+    // Binary heliocentric orbit remains fixed regardless of size edits.
+    comAngle += COM_OMEGA * dt;
+
+    sunSpin += 0.0004 * simWarp;
+
+    // Sun-orbiting planets: sun-only gravity (no inter-planet gravity between independent planets).
+    // Twin/moon behavior remains in their dedicated parent-orbit logic below.
+    const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
+    const subSteps = Math.max(2, Math.min(64, steps * 2));
+    const subDt = dt / subSteps;
+    for (let k = 0; k < subSteps; k++) {
+      const acc = sunOrbiters.map(() => new THREE.Vector3());
+      sunOrbiters.forEach((mp, i) => {
+        initializeSunOrbiterState(mp);
+        const pos = mp.orbitPos;
+        const r2 = pos.x*pos.x + pos.y*pos.y + pos.z*pos.z + ORBIT_SOFTENING;
+        const invR3 = 1 / (r2 * Math.sqrt(r2));
+        // Sun gravity
+        acc[i].set(
+          -SOLAR_MU * pos.x * invR3,
+          -SOLAR_MU * pos.y * invR3,
+          -SOLAR_MU * pos.z * invR3
+        );
+      });
+      sunOrbiters.forEach((mp, i) => {
+        mp.orbitVel.addScaledVector(acc[i], subDt);
+        mp.orbitPos.addScaledVector(mp.orbitVel, subDt);
+        applySunOrbiterBounds(mp);
+      });
+      enforceSunOrbiterNoOverlap(sunOrbiters);
+    }
+    sunOrbiters.forEach(mp => {
+      const r = Math.max(mp.orbitPos.length(), SUN_ORBIT_MIN_R);
+      mp.orbitR = r;
+      mp.angle = Math.atan2(mp.orbitPos.z, mp.orbitPos.x);
+      ensureSunOrbiterPlaneNormal(mp);
+      _sunHelioRxv.copy(mp.orbitPos).cross(mp.orbitVel);
+      const n = mp.orbitPlaneNormal;
+      let omegaSigned = r > 1e-7 && n ? _sunHelioRxv.dot(n) / (r * r) : 0;
+      if (!Number.isFinite(omegaSigned)) omegaSigned = 0;
+      mp.orbitSpeed = omegaSigned;
+      mp.obj.pivot.position.set(mp.orbitPos.x, mp.orbitPos.y, mp.orbitPos.z);
+    });
+
+    // Planetary orbiters (moons): orbit around parent planets but remain sun-bound via Hill limits.
+    const moonOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'planet' && mp.orbitParentId !== null);
+    moonOrbiters.forEach(mp => {
+      const parent = managedPlanets[mp.orbitParentId];
+      if (!parent) return;
+      parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+      const parentSunR = Math.max(Math.hypot(_orbitParentWorld.x, _orbitParentWorld.z), SUN_ORBIT_MIN_R);
+      const parentMass = Math.max(getPlanetMass(parent), 0.2);
+      const parentRadius = Math.max((parent.obj.baseRadius || 0.8) * parent.obj.state.size, 0.25);
+      const hillR = parentSunR * Math.cbrt(parentMass / (3 * SOLAR_MU));
+      const maxMoonR = Math.max(parentRadius * 1.6, Math.min(12, hillR * 0.45));
+      const minMoonR = Math.max(parentRadius * 1.2, 0.45);
+      mp.orbitR = Math.max(minMoonR, Math.min(maxMoonR, mp.orbitR));
+      const r = Math.max(mp.orbitR, 0.5);
+      const tideFactor = Math.max(0.62, 1 - 0.28 * (r / Math.max(maxMoonR, 0.5)));
+      const targetSpeed = Math.sign(mp.orbitSpeed || 1) * Math.sqrt((0.35 + parentMass * 0.3) / Math.pow(r, 3)) * tideFactor;
+      const blend = Math.min(1, 6 * dt);
+      mp.orbitSpeed += (targetSpeed - mp.orbitSpeed) * blend;
+      mp.angle += mp.orbitSpeed * dt;
+    });
+
+    // Spin dynamics: size, orbit distance, and sun interaction affect rotation.
+    managedPlanets.forEach(mp => {
+      let spinRate = getSpinRateFromSize(mp);
+      if (!mp.isBinary) {
+        const dist = Math.max(mp.orbitR, 4);
+        spinRate *= 1 / (1 + 0.0045 * getPlanetMass(mp) / (dist * dist));
+      }
+      mp.spinAngle += spinRate * simWarp;
+    });
+  }
+
+  // Keep the binary COM on a fixed-radius sun orbit.
+  sysGroup.position.set(SUN_ORBIT * Math.cos(comAngle), 0, SUN_ORBIT * Math.sin(comAngle));
+
+  // Planet positions are relative to binary COM (physics units in world space)
+  p1.pivot.position.copy(body[0].pos);
+  p2.pivot.position.copy(body[1].pos);
+
+  // Update moon world positions from their parent planets.
+  managedPlanets.forEach(mp => {
+    if (mp.orbitCenter !== 'planet' || mp.orbitParentId === null) return;
+    const parent = managedPlanets[mp.orbitParentId];
+    if (!parent) return;
+    parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+    mp.obj.pivot.position.set(
+      _orbitParentWorld.x + Math.cos(mp.angle) * mp.orbitR,
+      _orbitParentWorld.y,
+      _orbitParentWorld.z + Math.sin(mp.angle) * mp.orbitR
+    );
+  });
+
+  // Apply per-planet size edits only; global scale does not resize bodies.
+  managedPlanets.forEach(mp => {
+    mp.obj.pivot.scale.setScalar(mp.obj.state.size);
+    mp.obj.spin.rotation.y = mp.spinAngle;
+  });
+
+  // Trails — world-space positions so the heliocentric orbit is captured correctly
+  const cx = sysGroup.position.x, cy = sysGroup.position.y, cz = sysGroup.position.z;
+  const renderSolTrails = !isNavigating && currentDestIndex === 0;
+  if (renderSolTrails) {
+    pushTrail(trail1,
+      cx + body[0].pos.x,
+      cy + body[0].pos.y,
+      cz + body[0].pos.z);
+    pushTrail(trail2,
+      cx + body[1].pos.x,
+      cy + body[1].pos.y,
+      cz + body[1].pos.z);
+    managedPlanets.forEach(mp => {
+      if (mp.isBinary) return;
+      if (mp.orbitCenter === 'sun') {
+        if (!mp.trail) ensureSunTrail(mp);
+        if (!mp.trail) return;
+        const p = mp.obj.pivot.position;
+        pushTrail(mp.trail, p.x, p.y, p.z);
+      } else if (mp.orbitCenter === 'planet') {
+        if (!mp.trail) ensureMoonTrail(mp);
+        if (!mp.trail) return;
+        const p = mp.obj.pivot.position;
+        pushTrail(mp.trail, p.x, p.y, p.z);
+      }
+    });
+  }
+
+  // Gravity link line — world space
+  if (renderSolTrails) {
+    linkPos[0]=cx+body[0].pos.x; linkPos[1]=cy+body[0].pos.y; linkPos[2]=cz+body[0].pos.z;
+    linkPos[3]=cx+body[1].pos.x; linkPos[4]=cy+body[1].pos.y; linkPos[5]=cz+body[1].pos.z;
+    linkGeo.attributes.position.needsUpdate = true;
+  }
+
+  // Sun size stays fixed; scale slider no longer changes body size.
+  sunGroup.scale.setScalar(SUN_R);
+  sunGroup.rotation.y = sunSpin;
+  updatePlanetSelectionEditor();
+  updateSunSelectionEditor();
+  syncSolGalaxyMenuVisibility();
+
+  // Camera update runs after all planet/world transforms so walk mode stays planet-locked.
+  updateCamera(curScale);
+  updateDynamicCameraFar();
+
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Galaxy destinations ───────────────────────────────────────────
+// Per-system optional fields (forward-compatible):
+//   audioSrc     — URL to loopable music (e.g. '/audio/foo.mp3'); omit or null = no track
+//   audioVolume  — 0..1 peak gain after fade-in (default 0.78)
+//   audioLoop    — default true
+// Music ramps in/out over SOLAR_AUDIO_FADE_MS (5s) when entering/leaving a system or during hyperspace.
+// Gate → Sol: gate fades out during intro; first astra fade is timed with splash (see splash sequence).
+const GALAXY_DESTINATIONS = [
+  {
+    name: 'Sol System',
+    dist: 'Home',
+    color: 0xffffd0,
+    pos: new THREE.Vector3(0, 0, 0),
+    audioSrc: '/audio/astra.mp3',
+    audioVolume: 0.78,
+    audioLoop: true,
+  },
+  { name: 'Alpha Centauri',  dist: '4.37 ly',   color: 0xffcc88, pos: new THREE.Vector3( 1800, 220, -1300) },
+  { name: 'Sirius',          dist: '8.6 ly',    color: 0xaaddff, pos: new THREE.Vector3(-2100,-180,  900)  },
+  { name: 'Tau Ceti',        dist: '11.9 ly',   color: 0xffee99, pos: new THREE.Vector3(-700,  450, 2600)  },
+  { name: 'Kepler-442',      dist: '1,206 ly',  color: 0xff9966, pos: new THREE.Vector3( 3100,-700, 1500)  },
+  { name: "Gliese 667C",     dist: '23.6 ly',   color: 0xff6644, pos: new THREE.Vector3(-1500, 600,-2300)  },
+];
+
+/** Fade duration when entering/leaving a system's music (linear volume ramp). */
+const SOLAR_AUDIO_FADE_MS = 5000;
+
+/** One player per destination (null = no track). Uses HTMLAudioElement.volume only — no Web Audio / MediaElementSource (that path often outputs silence when the context never runs). */
+const solarSystemAudio = (function createSolarSystemAudio(destinations) {
+  const peakVolumes = new Array(destinations.length).fill(0);
+  const players = destinations.map((d, i) => {
+    if (!d.audioSrc) return null;
+    const peak = typeof d.audioVolume === 'number'
+      ? Math.min(1, Math.max(0, d.audioVolume))
+      : 0.78;
+    peakVolumes[i] = peak;
+    const el = new Audio(d.audioSrc);
+    el.preload = 'auto';
+    el.loop = d.audioLoop !== false;
+    el.volume = 0;
+
+    return { el, gain: null };
+  });
+
+  function getGain(p) {
+    if (!p) return 0;
+    return p.el.volume;
+  }
+  function setGain(p, v) {
+    const x = Math.min(1, Math.max(0, v));
+    p.el.volume = x;
+  }
+
+  const prevWantOn = destinations.map(() => false);
+  /** @type {({ kind: 'in', t0: number, v0: number, duration?: number, easeFn?: (u: number) => number } | { kind: 'out', t0: number, v0: number } | null)[]} */
+  const fadeState = destinations.map(() => null);
+  let unlocked = false;
+  let rafId = null;
+
+  function tick() {
+    const now = performance.now();
+    let needsNext = false;
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
+      const st = fadeState[i];
+      if (!p || !st) continue;
+      const peak = peakVolumes[i];
+      if (st.kind === 'in') {
+        const dur = typeof st.duration === 'number' && st.duration > 0 ? st.duration : SOLAR_AUDIO_FADE_MS;
+        const elapsed = now - st.t0;
+        const tLin = Math.min(1, elapsed / dur);
+        const t = typeof st.easeFn === 'function' ? st.easeFn(tLin) : tLin;
+        setGain(p, st.v0 + (peak - st.v0) * t);
+        if (tLin < 1) needsNext = true;
+        else {
+          setGain(p, peak);
+          fadeState[i] = null;
+        }
+      } else {
+        const elapsed = now - st.t0;
+        const t = Math.min(1, elapsed / SOLAR_AUDIO_FADE_MS);
+        setGain(p, st.v0 * (1 - t));
+        if (t < 1) needsNext = true;
+        else {
+          setGain(p, 0);
+          p.el.pause();
+          fadeState[i] = null;
+        }
+      }
+    }
+    rafId = needsNext ? requestAnimationFrame(tick) : null;
+  }
+
+  function ensureTick() {
+    if (rafId === null) rafId = requestAnimationFrame(tick);
+  }
+
+  function sync() {
+    const activeIdx = unlocked && !isNavigating ? currentDestIndex : -1;
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
+      if (!p) continue;
+      const wantOn = activeIdx === i;
+      if (wantOn === prevWantOn[i]) {
+        if (fadeState[i]) ensureTick();
+        continue;
+      }
+      prevWantOn[i] = wantOn;
+      const now = performance.now();
+      if (wantOn) {
+        const pr = p.el.play();
+        if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+        fadeState[i] = { kind: 'in', t0: now, v0: Math.min(getGain(p), peakVolumes[i]) };
+        ensureTick();
+      } else {
+        fadeState[i] = { kind: 'out', t0: now, v0: getGain(p) };
+        ensureTick();
+      }
+    }
+  }
+  return {
+    sync,
+    /** Call after first user gesture so autoplay policy allows music. */
+    unlock() {
+      unlocked = true;
+      sync();
+    },
+    /**
+     * During the start-gate user gesture: allow in-system music but keep it silent
+     * and do not start the volume ramp yet (used so gate music can finish fading first).
+     */
+    primeActiveDestinationAudioAfterGesture() {
+      unlocked = true;
+      const activeIdx = unlocked && !isNavigating ? currentDestIndex : -1;
+      for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        if (!p) continue;
+        const wantOn = activeIdx === i;
+        if (!wantOn) continue;
+        const pr = p.el.play();
+        if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+        setGain(p, 0);
+        fadeState[i] = null;
+        prevWantOn[i] = true;
+      }
+    },
+    /** Start (or restart) fade-in for the active system (e.g. Sol / astra.mp3). Optional eased / custom duration for gate handoff. */
+    beginActiveDestinationFadeIn(opts) {
+      const activeIdx = unlocked && !isNavigating ? currentDestIndex : -1;
+      const now = performance.now();
+      let easeFn = null;
+      const ease = opts && opts.ease;
+      if (ease === 'smooth') easeFn = (u) => u * u * (3 - 2 * u);
+      else if (ease === 'easeIn') easeFn = (u) => u * u * u;
+      const durationMs = opts && typeof opts.durationMs === 'number' && opts.durationMs > 0
+        ? opts.durationMs
+        : undefined;
+      for (let i = 0; i < players.length; i++) {
+        const p = players[i];
+        if (!p) continue;
+        if (activeIdx !== i) continue;
+        /** @type {{ kind: 'in', t0: number, v0: number, duration?: number, easeFn?: (u: number) => number }} */
+        const st = {
+          kind: 'in',
+          t0: now,
+          v0: Math.min(getGain(p), peakVolumes[i]),
+        };
+        if (durationMs != null) st.duration = durationMs;
+        if (easeFn) st.easeFn = easeFn;
+        fadeState[i] = st;
+        ensureTick();
+      }
+    },
+  };
+})(GALAXY_DESTINATIONS);
+
+function syncTrailVisibility() {
+  const activeDest = isNavigating ? -1 : currentDestIndex;
+  const showSolTrails = activeDest === 0;
+  trail1.line.visible = showSolTrails;
+  trail2.line.visible = showSolTrails;
+  linkLine.visible = showSolTrails;
+  managedPlanets.forEach(mp => {
+    if (!mp.trail) return;
+    mp.trail.line.visible = showSolTrails && !mp.isBinary &&
+      (mp.orbitCenter === 'sun' || mp.orbitCenter === 'planet');
+  });
+  GALAXY_DESTINATIONS.forEach((dest, i) => {
+    if (!dest._trail) return;
+    dest._trail.line.visible = i === activeDest && i !== 0;
+  });
+}
+
+// Beacon sun visual at each non-home destination
+GALAXY_DESTINATIONS.forEach((dest, i) => {
+  if (i === 0) return;
+  const grp  = new THREE.Group();
+  grp.position.copy(dest.pos);
+  // Core
+  grp.add(new THREE.Mesh(
+    new THREE.SphereGeometry(5, 16, 16),
+    new THREE.MeshBasicMaterial({ color: dest.color })
+  ));
+  // Corona glow layers
+  [10, 16, 24].forEach((r, li) => {
+    grp.add(new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 12),
+      new THREE.MeshBasicMaterial({
+        color: dest.color, side: THREE.BackSide,
+        transparent: true, opacity: 0.18 - li * 0.05,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    ));
+  });
+  // Simple orbiting planet
+  const orb = new THREE.Group();
+  const pMesh = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1.8, 2),
+    new THREE.MeshLambertMaterial({ color: 0x448844 })
+  );
+  pMesh.position.set(28, 0, 0);
+  orb.add(pMesh);
+  grp.add(orb);
+  const orbitTrail = makeTrail({ len: 220, color: dest.color, opacity: 0.45 });
+  dest._orb  = orb;
+  dest._grp  = grp;
+  dest._planetMesh = pMesh;
+  dest._trail = orbitTrail;
+  scene.add(grp);
+});
+syncTrailVisibility();
+
+// ── Galaxy navigation ─────────────────────────────────────────────
+function navigateTo(idx) {
+  if (isNavigating || idx === currentDestIndex) return;
+  if (walkMode.active) stopWalkMode();
+  isNavigating = true;
+  solarSystemAudio.sync();
+  document.body.classList.add('hud-hidden');
+  syncTrailVisibility();
+  zoomTarget = null; // cancel any splash zoom in progress
+  const dest   = GALAXY_DESTINATIONS[idx];
+  const startT = cameraTarget.clone();
+  const endT   = dest.pos.clone();
+  const startZ = orbitZoom;
+  const midZ   = Math.max(startZ, 18); // pull back mid-flight
+  const endZ   = SYSTEM_FIT_ZOOM;
+  const dur    = 3800;
+  const t0     = performance.now();
+
+  // Update menu UI to show navigating state
+  document.querySelectorAll('.gx-item').forEach(el => el.classList.add('navigating'));
+
+  function step() {
+    const p    = Math.min((performance.now() - t0) / dur, 1);
+    const ease = p < 0.5 ? 4*p*p*p : 1 - Math.pow(-2*p+2,3)/2; // cubic in-out
+
+    // Smoothly move cameraTarget
+    cameraTarget.lerpVectors(startT, endT, ease);
+    panOffset.set(0,0,0);
+
+    // Zoom arc: pull out then zoom in
+    if (p < 0.45) {
+      orbitZoom = startZ + (midZ - startZ) * (p / 0.45);
+    } else {
+      const pp = (p - 0.45) / 0.55;
+      const e2 = pp < 0.5 ? 2*pp*pp : -1+(4-2*pp)*pp;
+      orbitZoom = midZ + (endZ - midZ) * e2;
+    }
+
+    if (p < 1) {
+      requestAnimationFrame(step);
+    } else {
+      currentDestIndex = idx;
+      isNavigating     = false;
+      solGalaxyMenuRevealed = idx !== 0;
+      syncTrailVisibility();
+      rebuildGalaxyMenu();
+      document.body.classList.remove('hud-hidden');
+      solarSystemAudio.sync();
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+// ── Galaxy menu UI ────────────────────────────────────────────────
+const galaxyMenu = document.getElementById('galaxy-menu');
+const galaxyBtn  = document.getElementById('galaxy-btn');
+const galaxyList = document.getElementById('galaxy-list');
+
+function rebuildGalaxyMenu() {
+  const inPlanetView = cameraMode === 'planet';
+  if (galaxyMenu) galaxyMenu.classList.toggle('mode-planet', inPlanetView);
+  galaxyList.innerHTML = '';
+  if (inPlanetView) {
+    const moonCounts = new Map();
+    managedPlanets.forEach(mp => {
+      if (mp.orbitCenter === 'planet' && mp.orbitParentId !== null) {
+        moonCounts.set(mp.orbitParentId, (moonCounts.get(mp.orbitParentId) || 0) + 1);
+      }
+    });
+    const childrenByParent = new Map();
+    managedPlanets.forEach((mp, idx) => {
+      if (mp.orbitCenter === 'planet' && mp.orbitParentId !== null && managedPlanets[mp.orbitParentId]) {
+        if (!childrenByParent.has(mp.orbitParentId)) childrenByParent.set(mp.orbitParentId, []);
+        childrenByParent.get(mp.orbitParentId).push(idx);
+      }
+    });
+    const ordered = [];
+    const visited = new Set();
+    const pushBranch = (idx, depth) => {
+      if (!managedPlanets[idx] || visited.has(idx)) return;
+      visited.add(idx);
+      ordered.push({ idx, depth });
+      const kids = childrenByParent.get(idx) || [];
+      kids.forEach(childIdx => pushBranch(childIdx, Math.min(depth + 1, 2)));
+    };
+    managedPlanets.forEach((mp, idx) => {
+      const hasParent = mp.orbitCenter === 'planet' && mp.orbitParentId !== null && managedPlanets[mp.orbitParentId];
+      if (!hasParent) pushBranch(idx, 0);
+    });
+    managedPlanets.forEach((_, idx) => pushBranch(idx, 0));
+
+    ordered.forEach(({ idx, depth }) => {
+      const mp = managedPlanets[idx];
+      if (!mp) return;
+      const isSelected = idx === selectedPlanetIdx;
+      const el = document.createElement('div');
+      el.className = 'gx-item planet-picker-item' + (isSelected ? ' current' : '');
+      const indent = '&nbsp;'.repeat(depth * 3);
+      const orbitTag = depth > 0 ? 'Moon' : 'Planet';
+      const moonCount = moonCounts.get(mp.id) || 0;
+      const moonText = moonCount ? `${moonCount} moon${moonCount === 1 ? '' : 's'}` : orbitTag;
+      el.innerHTML = `<div class="gx-item-main">
+        <span class="gx-item-title">
+          <span class="planet-dot" style="background:${mp.color}"></span>
+          <span class="gx-item-name">${indent}${mp.name}</span>
+        </span>
+        <span class="gx-item-meta">${moonText}</span>
+      </div>`;
+      el.addEventListener('click', () => {
+        selectPlanet(idx);
+      });
+      galaxyList.appendChild(el);
+
+      if (isSelected) {
+        const actions = document.createElement('div');
+        actions.className = 'gx-inline-actions';
+        const moonBtn = document.createElement('button');
+        moonBtn.type = 'button';
+        moonBtn.className = 'gx-action-btn';
+        moonBtn.textContent = '+ Moon';
+        moonBtn.disabled = !canCreateMoonFromSelection();
+        moonBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          addMoonFromSelectionUi();
+        });
+        actions.appendChild(moonBtn);
+        galaxyList.appendChild(actions);
+      }
+    });
+
+    const footer = document.createElement('div');
+    footer.className = 'gx-list-footer';
+    const addPlanetInlineBtn = document.createElement('button');
+    addPlanetInlineBtn.type = 'button';
+    addPlanetInlineBtn.className = 'gx-action-btn';
+    addPlanetInlineBtn.textContent = '+ Add Planet';
+    addPlanetInlineBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      addPlanetFromSelectionUi();
+    });
+    footer.appendChild(addPlanetInlineBtn);
+    galaxyList.appendChild(footer);
+
+    const selectedName =
+      selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]
+        ? managedPlanets[selectedPlanetIdx].name
+        : 'Pick Planet';
+    galaxyBtn.textContent = '◉ ' + selectedName;
+    syncSolGalaxyMenuVisibility();
+    return;
+  }
+
+  GALAXY_DESTINATIONS.forEach((dest, i) => {
+    const el = document.createElement('div');
+    el.className = 'gx-item' + (i === currentDestIndex ? ' current' : '');
+    el.innerHTML = `<span>${dest.name}</span><span class="gx-dist">${dest.dist}</span>`;
+    el.addEventListener('click', () => {
+      galaxyList.classList.remove('open');
+      galaxyBtn.classList.remove('open');
+      navigateTo(i);
+    });
+    galaxyList.appendChild(el);
+  });
+  galaxyBtn.textContent = '⬡ ' + GALAXY_DESTINATIONS[currentDestIndex].name;
+  syncSolGalaxyMenuVisibility();
+}
+
+galaxyBtn.addEventListener('click', () => {
+  const open = galaxyList.classList.toggle('open');
+  galaxyBtn.classList.toggle('open', open);
+});
+
+// Tap / click outside any overlay closes it (canvas, empty space, other UI)
+document.addEventListener('click', e => {
+  if (!e.target.closest('#galaxy-menu')) {
+    galaxyList.classList.remove('open');
+    galaxyBtn.classList.remove('open');
+  }
+  if (camSettingsEl.classList.contains('open')) {
+    if (!e.target.closest('#cam-settings') && !e.target.closest('#btn-cam-settings')) {
+      camSettingsEl.classList.remove('open');
+      btnCamSettings.classList.remove('active');
+    }
+  }
+});
+
+rebuildGalaxyMenu();
+
+// Spin orbiting planets at each destination
+const _origAnimate = animate;
+(function patchAnimate() {
+  const origRender = renderer.render.bind(renderer);
+  const _destPlanetWorld = new THREE.Vector3();
+  renderer.render = (scene, camera) => {
+    const t = performance.now() * 0.001;
+    GALAXY_DESTINATIONS.forEach((dest, i) => {
+      if (!dest._orb) return;
+      dest._orb.rotation.y = t * 0.4;
+      const shouldRenderTrail = !isNavigating && i === currentDestIndex && i !== 0;
+      if (shouldRenderTrail && dest._planetMesh && dest._trail) {
+        dest._planetMesh.getWorldPosition(_destPlanetWorld);
+        pushTrail(dest._trail, _destPlanetWorld.x, _destPlanetWorld.y, _destPlanetWorld.z);
+      }
+    });
+    origRender(scene, camera);
+  };
+})();
+
+// ── Splash intro sequence ─────────────────────────────────────────
+(async function() {
+  const splash  = document.getElementById('splash');
+  const helloEl = document.getElementById('s-hello');
+  const faceEl  = document.getElementById('s-face');
+  const startScreen = document.getElementById('start-screen');
+  const startHint = document.getElementById('start-hint');
+  const INTRO_ZOOM_EPSILON = 0.02;
+  const INTRO_ZOOM_TIMEOUT_MS = 9000;
+  const INTRO_ZOOM_OVERLAP_MS = 70;
+  const SPLASH_FADE_MS = 1450;
+
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  const touchPrimary = window.matchMedia('(pointer: coarse)').matches;
+  startHint.textContent = touchPrimary
+    ? 'Tap anywhere to start'
+    : 'Click or press any key to start';
+
+  // ── Start screen only: loop until user continues (before splash) ──
+  const START_SCREEN_MUSIC_SRC = '/audio/outertaming.mp3';
+  const START_SCREEN_MUSIC_GAIN = 0.72;
+  const startScreenOuterEl = new Audio(START_SCREEN_MUSIC_SRC);
+  startScreenOuterEl.loop = true;
+  startScreenOuterEl.preload = 'auto';
+  try {
+    startScreenOuterEl.playsInline = true;
+  } catch (_) {}
+  startScreenOuterEl.setAttribute('playsinline', '');
+  startScreenOuterEl.setAttribute('webkit-playsinline', '');
+  // In-document audio is more reliable on iOS/Safari than a detached Audio node.
+  startScreenOuterEl.style.cssText =
+    'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;';
+  document.body.appendChild(startScreenOuterEl);
+  startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
+
+  function tryPlayStartScreenMusic() {
+    // After fade/stop we set volume to 0 — without this, pageshow / primers replay silent.
+    startScreenOuterEl.volume = START_SCREEN_MUSIC_GAIN;
+    const pr = startScreenOuterEl.play();
+    if (pr && typeof pr.catch === 'function') pr.catch(() => {});
+  }
+
+  const tapPrimerScreen = document.getElementById('tap-primer-screen');
+  await new Promise((resolve) => {
+    if (!tapPrimerScreen) {
+      startScreen.classList.remove('gate-behind-primer');
+      resolve();
+      return;
+    }
+    let settled = false;
+    function dismissPrimer() {
+      if (settled) return;
+      settled = true;
+      tryPlayStartScreenMusic();
+      tapPrimerScreen.style.display = 'none';
+      tapPrimerScreen.setAttribute('aria-hidden', 'true');
+      startScreen.classList.remove('gate-behind-primer');
+      tapPrimerScreen.removeEventListener('pointerdown', dismissPrimer);
+      window.removeEventListener('keydown', onPrimerKey, true);
+      resolve();
+    }
+    function onPrimerKey(e) {
+      if (e.repeat) return;
+      if (e.key === ' ' || e.key === 'Spacebar') e.preventDefault();
+      dismissPrimer();
+    }
+    tapPrimerScreen.addEventListener('pointerdown', dismissPrimer, { passive: true });
+    window.addEventListener('keydown', onPrimerKey, { capture: true, passive: true });
+    try {
+      tapPrimerScreen.focus({ preventScroll: true });
+    } catch (_) {}
+  });
+
+  const gateMotionOk = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (gateMotionOk) {
+    startHint.style.opacity = '0';
+    startHint.style.transition = 'none';
+    requestAnimationFrame(() => {
+      startHint.style.transition = 'opacity 0.95s ease';
+      setTimeout(() => {
+        startHint.style.opacity = '1';
+        startHint.addEventListener('transitionend', function gateHintFadeIn(e) {
+          if (e.propertyName !== 'opacity') return;
+          startHint.removeEventListener('transitionend', gateHintFadeIn);
+          startHint.style.transition = '';
+          startHint.classList.add('start-hint-visible');
+        });
+      }, 2000);
+    });
+    setTimeout(() => {
+      if (!startHint.classList.contains('start-hint-visible')) {
+        startHint.classList.add('start-hint-visible');
+      }
+    }, 3400);
+  } else {
+    startHint.style.opacity = '1';
+    startHint.classList.add('start-hint-visible');
+  }
+
+  // Begin title music as soon as the parser runs; retry on load/pageshow for
+  // environments that allow autoplay after navigation (still blocked until a
+  // gesture on strict browsers — tap primer / gate primers cover that).
+  window.addEventListener('load', () => { tryPlayStartScreenMusic(); }, { once: true });
+  window.addEventListener('pageshow', () => { tryPlayStartScreenMusic(); });
+
+  function stopStartScreenMusic() {
+    startScreenOuterEl.pause();
+    startScreenOuterEl.currentTime = 0;
+    startScreenOuterEl.volume = 0;
+  }
+
+  /**
+   * Same user-activation turn as the start click: start the solar track at 0 volume
+   * so autoplay policy is satisfied. First audible ramp is started with the splash (see below).
+   */
+  function handoffFromStartScreenToGameMusic() {
+    solarSystemAudio.primeActiveDestinationAudioAfterGesture();
+  }
+
+  /** First astra.mp3 ramp after leaving the gate (runs alongside splash + gate fade). */
+  const FIRST_ASTRA_FADE_IN_MS = 4000;
+  /** Gate music linear fade while splash runs (parallel with astra fade-in). */
+  const GATE_HANDOFF_FADE_OUT_MS = 2000;
+  let gateFadeOutPromise = null;
+
+  function fadeOutGateMusicDuringIntro() {
+    return new Promise((resolve) => {
+      const t0 = performance.now();
+      let fromGain = startScreenOuterEl.volume;
+      if (fromGain < START_SCREEN_MUSIC_GAIN * 0.18) {
+        fromGain = START_SCREEN_MUSIC_GAIN;
+      }
+      startScreenOuterEl.volume = fromGain;
+      function frame() {
+        const elapsed = performance.now() - t0;
+        const gateLin = Math.min(1, elapsed / GATE_HANDOFF_FADE_OUT_MS);
+        startScreenOuterEl.volume = fromGain * (1 - gateLin);
+        if (gateLin < 1) {
+          requestAnimationFrame(frame);
+          return;
+        }
+        stopStartScreenMusic();
+        resolve();
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  function beginGateFadeOutOnStartTap() {
+    if (gateFadeOutPromise) return gateFadeOutPromise;
+    gateFadeOutPromise = fadeOutGateMusicDuringIntro();
+    return gateFadeOutPromise;
+  }
+
+  /** First real gesture must start audio on strict browsers; capture runs before dismiss handlers. */
+  function attachStartScreenMusicPrimers() {
+    const prime = () => tryPlayStartScreenMusic();
+    startScreen.addEventListener('pointerdown', prime, { capture: true, passive: true });
+    window.addEventListener('keydown', prime, { capture: true, passive: true });
+    return () => {
+      startScreen.removeEventListener('pointerdown', prime, { capture: true });
+      window.removeEventListener('keydown', prime, { capture: true });
+    };
+  }
+
+  /**
+   * Runs the supplied callback synchronously inside the tap/key handler so
+   * Chrome still treats the following play() calls as user-initiated.
+   */
+  function waitForStart(onUserGestureSync) {
+    return new Promise((resolve) => {
+      let done = false;
+      const cleanup = () => {
+        window.removeEventListener('keydown', onKey);
+        startScreen.removeEventListener('pointerdown', onPointer);
+      };
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (typeof onUserGestureSync === 'function') onUserGestureSync();
+        cleanup();
+        resolve();
+      };
+      const onKey = (e) => {
+        if (touchPrimary) return;
+        if (e.repeat) return;
+        finish();
+      };
+      const onPointer = () => {
+        finish();
+      };
+      window.addEventListener('keydown', onKey);
+      startScreen.addEventListener('pointerdown', onPointer);
+    });
+  }
+
+  async function dismissStartScreen() {
+    startScreen.style.pointerEvents = 'none';
+    startScreen.style.transition = 'opacity 0.5s ease';
+    startScreen.style.opacity = '0';
+    await wait(500);
+    startScreen.style.display = 'none';
+  }
+
+  async function waitForIntroZoom() {
+    const start = performance.now();
+    while (performance.now() - start < INTRO_ZOOM_TIMEOUT_MS) {
+      const zoomSettled = zoomTarget === null;
+      const zoomDistance = Math.abs(Math.log(orbitZoom) - Math.log(SYSTEM_FIT_ZOOM));
+      if (zoomSettled && zoomDistance <= INTRO_ZOOM_EPSILON) return;
+      await wait(16);
+    }
+  }
+
+  // Start camera very far out; the animate loop will log-lerp it to 3.0
+  orbitZoom = 4000;
+
+  async function run() {
+    solarSystemAudio.beginActiveDestinationFadeIn({ durationMs: FIRST_ASTRA_FADE_IN_MS });
+    await wait(200);
+
+    // ── Phase 1: HELLO WORLD ───────────────────────────────────────
+    helloEl.style.opacity = '1';
+    await wait(1600);
+    helloEl.style.opacity = '0';
+    await wait(750);
+
+    // ── Phase 2: Type ":)" ─────────────────────────────────────────
+    faceEl.style.transition = 'none';
+    faceEl.style.transform  = 'rotate(0deg)';
+    faceEl.style.filter     = 'none';
+    faceEl.textContent = '';
+    await wait(100);
+    faceEl.textContent = ':';
+    await wait(380);
+    faceEl.textContent = ':)';
+    await wait(900);
+
+    // ── Phase 3: Rotate 90° → proper smiley face ──────────────────
+    faceEl.style.transition = 'transform 1.1s cubic-bezier(0.34, 1.26, 0.64, 1)';
+    faceEl.style.transform  = 'rotate(90deg)';
+    await wait(1300);
+
+    // ── Phase 4: zoom into the eye ────────────────────────────────────
+    await wait(500);
+    faceEl.style.transition = 'transform 1.4s cubic-bezier(0.4, 0, 1, 1), filter 1.4s ease';
+    faceEl.style.filter     = 'blur(0px) brightness(1)';
+    faceEl.style.transform  = 'rotate(90deg) scale(120)';
+    faceEl.style.filter     = 'blur(18px) brightness(8)';
+    await wait(900);
+
+    // ── Phase 5: Start zoom + scene fade, then hand opacity over to splash fade.
+    introZoomProfile = {
+      startLog: Math.log(Math.max(orbitZoom, 1e-6)),
+      targetLog: Math.log(SYSTEM_FIT_ZOOM),
+    };
+    zoomTarget = SYSTEM_FIT_ZOOM;
+    // Start scene reveal immediately so it has a longer ramp-up.
+    document.body.classList.add('scene-visible');
+    // Keep only a tiny lead so the universe is visible during splash fade.
+    await wait(INTRO_ZOOM_OVERLAP_MS);
+
+    // Smooth splash fade for a cleaner opacity transfer to the zooming scene.
+    splash.style.transition = `opacity ${SPLASH_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+    splash.style.opacity    = '0';
+    await wait(SPLASH_FADE_MS);
+    splash.style.display = 'none';
+    await waitForIntroZoom();
+    document.body.classList.remove('hud-hidden');
+    rebuildGalaxyMenu();
+    // zoom continues past the fade, settling gently near orbitZoom 3
+  }
+
+  const detachStartScreenMusicPrimers = attachStartScreenMusicPrimers();
+  await waitForStart(() => {
+    detachStartScreenMusicPrimers();
+    handoffFromStartScreenToGameMusic();
+    beginGateFadeOutOnStartTap();
+  });
+  await dismissStartScreen();
+  await Promise.all([
+    beginGateFadeOutOnStartTap(),
+    run(),
+  ]);
+})();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
