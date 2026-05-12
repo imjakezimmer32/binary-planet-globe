@@ -5356,7 +5356,7 @@ animate();
 //   audioVolume  — 0..1 peak gain after fade-in (default 0.78)
 //   audioLoop    — default true
 // Music ramps in/out over SOLAR_AUDIO_FADE_MS (5s) when entering/leaving a system or during hyperspace.
-// Gate → Sol handoff uses a short overlap crossfade + eased ramps (see crossfadeGateMusicToSolar).
+// Gate → Sol handoff: gate fades out (linear by default), then astra ramps in (see crossfadeGateMusicToSolar).
 const GALAXY_DESTINATIONS = [
   {
     name: 'Sol System',
@@ -5910,32 +5910,32 @@ const _origAnimate = animate;
     solarSystemAudio.primeActiveDestinationAudioAfterGesture();
   }
 
-  /** Gate music eases out while astra eases in on an overlapping window (no hard “silence gap”). */
-  const GATE_HANDOFF_FADE_OUT_MS = 3400;
-  const GATE_HANDOFF_SOLAR_FADE_IN_MS = 5200;
-  /** When gate fade is this far along (0–1), start raising astra volume. */
-  const GATE_HANDOFF_OVERLAP_AT = 0.32;
-
-  function gateHandoffEaseOut(p) {
-    const x = Math.min(1, Math.max(0, p));
-    return 1 - Math.pow(1 - x, 2.35);
-  }
+  /** Gate music linear fade-out duration; astra starts after (or slightly before end if overlap < 1). */
+  const GATE_HANDOFF_FADE_OUT_MS = 4800;
+  const GATE_HANDOFF_SOLAR_FADE_IN_MS = 5000;
+  /**
+   * When to start astra (0–1 of gate fade progress). 1 = no overlap (astra after gate is silent).
+   * 0.85 ≈ only the last ~15% of the gate fade overlaps the start of astra’s ramp.
+   */
+  const GATE_HANDOFF_OVERLAP_AT = 1;
 
   function crossfadeGateMusicToSolar() {
     return new Promise((resolve) => {
       const t0 = performance.now();
-      const gatePeak = Math.max(0, startScreenOuterEl.volume);
+      let fromGain = startScreenOuterEl.volume;
+      if (fromGain < START_SCREEN_MUSIC_GAIN * 0.18) {
+        fromGain = START_SCREEN_MUSIC_GAIN;
+      }
+      startScreenOuterEl.volume = fromGain;
       let solarStarted = false;
       function frame() {
         const elapsed = performance.now() - t0;
         const gateLin = Math.min(1, elapsed / GATE_HANDOFF_FADE_OUT_MS);
-        const gateP = gateHandoffEaseOut(gateLin);
-        startScreenOuterEl.volume = gatePeak * (1 - gateP);
+        startScreenOuterEl.volume = fromGain * (1 - gateLin);
         if (!solarStarted && gateLin >= GATE_HANDOFF_OVERLAP_AT) {
           solarStarted = true;
           solarSystemAudio.beginActiveDestinationFadeIn({
             durationMs: GATE_HANDOFF_SOLAR_FADE_IN_MS,
-            ease: 'smooth',
           });
         }
         if (gateLin < 1) {
@@ -5946,7 +5946,6 @@ const _origAnimate = animate;
         if (!solarStarted) {
           solarSystemAudio.beginActiveDestinationFadeIn({
             durationMs: GATE_HANDOFF_SOLAR_FADE_IN_MS,
-            ease: 'smooth',
           });
         }
         resolve();
