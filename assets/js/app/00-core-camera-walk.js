@@ -128,17 +128,27 @@ const WALK_CFG = {
   bounceAmp: 0.0012,
   bounceResponse: 8.5,
   walkFov: 62,
-  cameraDistance: 0.52,
-  cameraHeight: 0.022,
-  cameraLead: 0.3,
+  /** Default third-person pull-back (world units); zoom wheel / pinch adjust from tpDistanceMin..Max. */
+  cameraDistance: 0.32,
+  cameraHeight: 0.017,
+  cameraLead: 0.26,
   cameraTargetLift: 0.009,
   cameraLag: 12.5,
   avatarTurnLerp: 10.5,
-  tpDistanceMin: 0.14,
-  tpDistanceMax: 2.4,
-  tpZoomWheelStep: 1.10,
-  tpZoomSmooth: 7.8,
+  tpDistanceMin: 0.056,
+  tpDistanceMax: 1.75,
+  tpZoomWheelStep: 1.09,
+  tpZoomSmooth: 8.2,
   tpCollisionPadding: 0.08,
+  /** Below this pull distance, camera blends toward first-person eye (smooth, no hard mode flip). */
+  tpFpsBlendStart: 0.108,
+  /** At or below this distance, first-person blend is full (eye + slight pullback from head). */
+  tpFpsBlendEnd: 0.068,
+  /** Eye height above walk anchor along planet up (feet/anchor → eyes). */
+  fpEyeHeight: 0.0194,
+  /** Nudge camera back from eye along viewDir so near-plane does not clip the pill. */
+  fpsEyePullback: 0.0032,
+  fpsFov: 74,
   lookSensitivity: 0.0054,
   mobileLookSensitivity: 0.0135,
   gravityAccel: 0.62,
@@ -1211,7 +1221,8 @@ function refreshWalkUi() {
     badge.style.display = walkMode.active ? 'block' : 'none';
     if (walkMode.active) {
       const mediumTag = walkState.surfaceType === 'lava' ? 'LAVA' : (walkState.surfaceType === 'water' ? 'WATER' : 'LAND');
-      badge.textContent = `${mediumTag} ${walkTpDistanceTarget.toFixed(2)}x`;
+      const fpHint = walkTpDistanceTarget <= WALK_CFG.tpFpsBlendStart ? ' · FP' : '';
+      badge.textContent = `${mediumTag} ${walkTpDistanceTarget.toFixed(2)}${fpHint}`;
     }
   }
   if (viewBtn) {
@@ -1414,15 +1425,52 @@ function applyWalkLook() {
 
 function updateWalkCameraPose(dt, bounce = 0) {
   walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
-  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bounce * 0.5);
-  _walkCamPos.copy(_walkCamTarget)
-    .addScaledVector(walkState.viewDir, -walkTpDistance)
-    .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bounce);
+  const dist = walkTpDistance;
+
+  // Character-anchored rig: chest (composition) + eye (FPS) share walkState.up (gravity / planetary up).
+  const lift = WALK_CFG.cameraTargetLift + bounce * 0.5;
+  const chest = _walkTmp2.copy(walkState.position).addScaledVector(walkState.up, lift);
+  const eye = _walkTmp3.copy(walkState.position).addScaledVector(
+    walkState.up,
+    WALK_CFG.fpEyeHeight + bounce * 0.32
+  );
+
+  const d0 = WALK_CFG.tpFpsBlendEnd;
+  const d1 = WALK_CFG.tpFpsBlendStart;
+  let fpBlend = 0;
+  if (dist <= d0) fpBlend = 1;
+  else if (dist < d1) fpBlend = 1 - (dist - d0) / (d1 - d0);
+  fpBlend = fpBlend * fpBlend * (3 - 2 * fpBlend);
+
+  const camH = (WALK_CFG.cameraHeight + bounce) * (1 - fpBlend);
+  const tpPos = _walkCamPos
+    .copy(chest)
+    .addScaledVector(walkState.viewDir, -dist)
+    .addScaledVector(walkState.up, camH);
+  const fpPos = _walkSpawnToCam
+    .copy(eye)
+    .addScaledVector(walkState.viewDir, -WALK_CFG.fpsEyePullback);
+  _walkCamPos.copy(tpPos).lerp(fpPos, fpBlend);
+
+  _walkCamTarget.copy(chest).lerp(eye, fpBlend * 0.78);
   resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
+
   camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
-  _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
+
+  const lead = WALK_CFG.cameraLead * (1 - fpBlend * 0.94);
+  _walkTmp.copy(chest).addScaledVector(walkState.viewDir, lead);
+  const lookFp = _walkSpawnRadial.copy(eye).addScaledVector(walkState.viewDir, 0.16);
+  _walkTmp.lerp(lookFp, fpBlend);
+
   camera.up.lerp(walkState.up, Math.min(1, dt * 8)).normalize();
   camera.lookAt(_walkTmp);
+
+  const fov = THREE.MathUtils.lerp(WALK_CFG.walkFov, WALK_CFG.fpsFov, fpBlend);
+  if (Math.abs(camera.fov - fov) > 0.15) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+
   enforceCameraOutsidePlanetMeshes();
 }
 
