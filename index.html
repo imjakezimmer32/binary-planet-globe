@@ -5790,7 +5790,8 @@ const _origAnimate = animate;
   /** First astra.mp3 ramp after leaving the gate (runs alongside splash + gate fade). */
   const FIRST_ASTRA_FADE_IN_MS = 4000;
   /** Gate music linear fade while splash runs (parallel with astra fade-in). */
-  const GATE_HANDOFF_FADE_OUT_MS = 4800;
+  const GATE_HANDOFF_FADE_OUT_MS = 2000;
+  let gateFadeOutPromise = null;
 
   function fadeOutGateMusicDuringIntro() {
     return new Promise((resolve) => {
@@ -5813,6 +5814,12 @@ const _origAnimate = animate;
       }
       requestAnimationFrame(frame);
     });
+  }
+
+  function beginGateFadeOutOnStartTap() {
+    if (gateFadeOutPromise) return gateFadeOutPromise;
+    gateFadeOutPromise = fadeOutGateMusicDuringIntro();
+    return gateFadeOutPromise;
   }
 
   /** First real gesture must start audio on strict browsers; capture runs before dismiss handlers. */
@@ -5938,10 +5945,11 @@ const _origAnimate = animate;
   await waitForStart(() => {
     detachStartScreenMusicPrimers();
     handoffFromStartScreenToGameMusic();
+    beginGateFadeOutOnStartTap();
   });
   await dismissStartScreen();
   await Promise.all([
-    fadeOutGateMusicDuringIntro(),
+    beginGateFadeOutOnStartTap(),
     run(),
   ]);
 })();
