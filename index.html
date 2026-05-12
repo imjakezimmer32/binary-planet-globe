@@ -4827,10 +4827,10 @@ addTwinBtn.addEventListener('click', e => {
 let lastWalkButtonPressMs = 0;
 async function onWalkButtonPressed(e) {
   const now = performance.now();
-  if (now - lastWalkButtonPressMs < 220) return;
+  if (now - lastWalkButtonPressMs < 450) return;
   lastWalkButtonPressMs = now;
   if (e && typeof e.preventDefault === 'function') e.preventDefault();
-  e.stopPropagation();
+  if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
   if (walkTransition.active) return;
   if (walkMode.active) {
     stopWalkMode();
@@ -4846,8 +4846,10 @@ async function onWalkButtonPressed(e) {
   startWalkMode(idx, spawn);
   updateWalkButtonVisibility();
 }
-btnWalk.addEventListener('click', onWalkButtonPressed);
 btnWalk.addEventListener('pointerup', onWalkButtonPressed);
+btnWalk.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') onWalkButtonPressed(e);
+});
 
 function setWalkInputFlag(key, down) {
   if (key === 'left') walkInput.left = down;
