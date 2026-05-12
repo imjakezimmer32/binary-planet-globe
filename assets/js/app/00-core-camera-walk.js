@@ -107,7 +107,7 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 const walkMode = { active: false, spawnPlanetIdx: null };
-const walkInput = { left: false, right: false, fwd: false, back: false, sprint: false };
+const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
 const walkLookInput = { x: 0, y: 0 };
 const walkAnalog = { x: 0, y: 0 };
 const WALK_CFG = {
@@ -1272,7 +1272,8 @@ function clearWalkInputState() {
   walkInput.right = false;
   walkInput.fwd = false;
   walkInput.back = false;
-  walkInput.sprint = false;
+  walkInput.shiftRun = false;
+  walkInput.runLocked = false;
   resetWalkJoystick();
 }
 
@@ -1280,13 +1281,13 @@ function refreshWalkUi() {
   const btn = document.getElementById('btn-walk');
   const controls = document.getElementById('walk-controls');
   const badge = document.getElementById('walk-cam-badge');
-  const viewBtn = controls ? controls.querySelector('button[data-walk="view"]') : null;
+  const runLockBtn = controls ? controls.querySelector('button[data-walk="runLock"]') : null;
   if (btn) {
     btn.classList.toggle('active', walkMode.active);
   }
   document.body.classList.toggle('walk-touch-look-active', walkMode.active);
   if (controls) {
-    controls.style.display = walkMode.active ? 'grid' : 'none';
+    controls.style.display = walkMode.active ? 'flex' : 'none';
   }
   if (badge) {
     badge.style.display = walkMode.active ? 'block' : 'none';
@@ -1296,10 +1297,9 @@ function refreshWalkUi() {
       badge.textContent = `${mediumTag} ${walkTpDistanceTarget.toFixed(2)}${fpHint}`;
     }
   }
-  if (viewBtn) {
-    viewBtn.textContent = 'FREE';
-    viewBtn.title = 'Free drag camera is always enabled';
-    viewBtn.disabled = true;
+  if (runLockBtn) {
+    runLockBtn.classList.toggle('active', !!walkInput.runLocked);
+    runLockBtn.setAttribute('aria-pressed', walkInput.runLocked ? 'true' : 'false');
   }
 }
 
@@ -1705,7 +1705,8 @@ function updateWalkMode(dt) {
   const moveLen = _walkDesired.length();
   if (moveLen > 1) _walkDesired.multiplyScalar(1 / moveLen);
 
-  const sprinting = walkInput.sprint && moveLen > WALK_CFG.moveInputDeadzone * 1.6;
+  const runBoost = walkInput.runLocked || walkInput.shiftRun;
+  const sprinting = runBoost && moveLen > WALK_CFG.moveInputDeadzone * 1.6;
   const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
   const desiredSpeed = WALK_CFG.moveSpeed * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
   _walkDesired.projectOnPlane(currentSurface.normal);

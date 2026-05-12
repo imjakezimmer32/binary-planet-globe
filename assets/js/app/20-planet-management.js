@@ -1371,7 +1371,6 @@ function setWalkInputFlag(key, down) {
   if (key === 'right') walkInput.right = down;
   if (key === 'forward') walkInput.fwd = down;
   if (key === 'back') walkInput.back = down;
-  if (key === 'sprint') walkInput.sprint = down;
   if (key === 'jump' && down) queueWalkJump();
   if (key === 'view' && down) toggleWalkCameraMode();
 }
@@ -1379,6 +1378,7 @@ function setWalkInputFlag(key, down) {
 if (walkControlsEl) {
   walkControlsEl.querySelectorAll('button[data-walk]').forEach(btn => {
     const key = btn.getAttribute('data-walk');
+    if (key === 'runLock') return;
     const down = e => { e.preventDefault(); setWalkInputFlag(key, true); };
     const up = e => { e.preventDefault(); setWalkInputFlag(key, false); };
     btn.addEventListener('pointerdown', down);
@@ -1386,6 +1386,17 @@ if (walkControlsEl) {
     btn.addEventListener('pointercancel', up);
     btn.addEventListener('pointerleave', up);
   });
+  const runLockBtn = walkControlsEl.querySelector('button[data-walk="runLock"]');
+  if (runLockBtn) {
+    runLockBtn.addEventListener('click', e => {
+      if (!walkMode.active) return;
+      e.preventDefault();
+      e.stopPropagation();
+      walkInput.runLocked = !walkInput.runLocked;
+      runLockBtn.classList.toggle('active', walkInput.runLocked);
+      runLockBtn.setAttribute('aria-pressed', walkInput.runLocked ? 'true' : 'false');
+    });
+  }
 }
 if (walkJoystickEl) {
   const onJoyDown = e => {
@@ -1563,7 +1574,7 @@ window.addEventListener('keydown', e => {
   if (k === 's' || k === 'arrowdown') walkInput.back = true;
   if (k === 'a' || k === 'arrowleft') walkInput.left = true;
   if (k === 'd' || k === 'arrowright') walkInput.right = true;
-  if (k === 'shift') walkInput.sprint = true;
+  walkInput.shiftRun = e.shiftKey;
   if (k === ' ') queueWalkJump();
   if (k === 'v' || k === 'c') toggleWalkCameraMode();
   if (k === 'escape') {
@@ -1574,12 +1585,17 @@ window.addEventListener('keydown', e => {
 });
 
 window.addEventListener('keyup', e => {
+  if (!walkMode.active) return;
   const k = e.key.toLowerCase();
   if (k === 'w' || k === 'arrowup') walkInput.fwd = false;
   if (k === 's' || k === 'arrowdown') walkInput.back = false;
   if (k === 'a' || k === 'arrowleft') walkInput.left = false;
   if (k === 'd' || k === 'arrowright') walkInput.right = false;
-  if (k === 'shift') walkInput.sprint = false;
+  walkInput.shiftRun = e.shiftKey;
+});
+
+window.addEventListener('blur', () => {
+  walkInput.shiftRun = false;
 });
 
 rebuildPlanetList();

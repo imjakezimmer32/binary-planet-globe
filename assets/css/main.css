@@ -1236,48 +1236,84 @@ input[type=range]::-moz-range-thumb {
 #walk-controls {
   position: fixed;
   left: max(10px, env(safe-area-inset-left, 0px));
-  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 112px);
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 104px);
   z-index: 85;
   display: none;
-  grid-template-columns: auto auto;
-  align-items: end;
-  gap: 10px;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
 }
-#walk-dpad {
-  display: none;
-  grid-template-columns: repeat(3, 54px);
-  grid-template-rows: repeat(2, 44px);
+#walk-controls > * {
+  pointer-events: auto;
+}
+#walk-joystick-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 6px;
 }
-#walk-dpad button[data-walk="left"] { grid-column: 1; grid-row: 2; }
-#walk-dpad button[data-walk="forward"] { grid-column: 2; grid-row: 1; }
-#walk-dpad button[data-walk="right"] { grid-column: 3; grid-row: 2; }
-#walk-dpad button[data-walk="back"] { grid-column: 2; grid-row: 2; }
-#walk-action-buttons {
-  display: grid;
-  grid-template-columns: 54px;
-  grid-auto-rows: 44px;
-  gap: 6px;
+.walk-hint {
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  user-select: none;
 }
-#walk-controls button {
-  width: 54px;
-  height: 44px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.2);
-  background: rgba(0,0,0,0.55);
-  color: rgba(255,255,255,0.88);
-  font-family: monospace;
-  font-size: 16px;
+#walk-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 108px;
+}
+.walk-action {
+  min-height: 48px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: linear-gradient(180deg, rgba(38, 44, 58, 0.92) 0%, rgba(12, 14, 20, 0.88) 100%);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
-#walk-controls button[data-walk="jump"],
-#walk-controls button[data-walk="sprint"] {
-  font-size: 10px;
-  letter-spacing: 0.08em;
+.walk-action:active {
+  transform: scale(0.97);
 }
-#walk-controls button[data-walk="view"] {
-  font-size: 11px;
-  letter-spacing: 0.08em;
+.walk-action--jump {
+  border-color: rgba(120, 200, 255, 0.45);
+  color: #d8f0ff;
+}
+.walk-action--run {
+  font-size: 12px;
+  border-color: rgba(255, 200, 120, 0.35);
+  color: rgba(255, 235, 210, 0.95);
+}
+.walk-action--run.active {
+  border-color: rgba(255, 170, 80, 0.75);
+  background: linear-gradient(180deg, rgba(90, 55, 30, 0.95) 0%, rgba(40, 22, 12, 0.92) 100%);
+  color: #fff4e8;
+  box-shadow: 0 0 16px rgba(255, 140, 60, 0.28);
+}
+.walk-action--run.active::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: #6cff8a;
+  vertical-align: 0.1em;
+  box-shadow: 0 0 6px #6cff8a;
 }
 #walk-joystick {
   position: relative;
@@ -1318,7 +1354,7 @@ input[type=range]::-moz-range-thumb {
 #walk-cam-badge {
   position: fixed;
   left: max(10px, env(safe-area-inset-left, 0px));
-  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 78px);
+  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 70px);
   z-index: 86;
   display: none;
   min-width: 58px;
