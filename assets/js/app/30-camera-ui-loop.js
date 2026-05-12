@@ -32,6 +32,40 @@ btnCamSettings.addEventListener('click', () => {
   btnCamSettings.classList.toggle('active', open);
 });
 
+/** While walking: hide grid + cam settings, turn grid off; restore when leaving walk. */
+let _gridStateBeforeWalk = null;
+function syncWalkModeChrome(walkActive) {
+  if (!btnGrid || !btnCamSettings) return;
+  if (walkActive) {
+    btnGrid.style.display = 'none';
+    btnCamSettings.style.display = 'none';
+    if (camSettingsEl && camSettingsEl.classList.contains('open')) {
+      camSettingsEl.classList.remove('open');
+      btnCamSettings.classList.remove('active');
+    }
+    if (_gridStateBeforeWalk === null) {
+      _gridStateBeforeWalk = gridOn;
+    }
+    if (gridOn) {
+      gridOn = false;
+      btnGrid.classList.remove('active');
+      managedPlanets.forEach(mp => mp.obj.setGrid(false));
+    }
+  } else {
+    btnGrid.style.display = '';
+    btnCamSettings.style.display = '';
+    if (_gridStateBeforeWalk !== null) {
+      const restore = _gridStateBeforeWalk;
+      _gridStateBeforeWalk = null;
+      if (gridOn !== restore) {
+        gridOn = restore;
+        btnGrid.classList.toggle('active', gridOn);
+        managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
+      }
+    }
+  }
+}
+
 // FOV
 const csFov = document.getElementById('cs-fov');
 const csLblFov = document.getElementById('cs-lbl-fov');

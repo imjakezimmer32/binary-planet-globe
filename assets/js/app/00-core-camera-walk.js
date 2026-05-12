@@ -1292,6 +1292,7 @@ function refreshWalkUi() {
     runLockBtn.classList.toggle('active', !!walkInput.runLocked);
     runLockBtn.setAttribute('aria-pressed', walkInput.runLocked ? 'true' : 'false');
   }
+  if (typeof syncWalkModeChrome === 'function') syncWalkModeChrome(walkMode.active);
 }
 
 function stopWalkMode() {

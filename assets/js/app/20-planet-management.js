@@ -1253,7 +1253,6 @@ function updateWalkButtonVisibility() {
   const inPlanetView = cameraMode === 'planet';
   btnWalk.style.display = inPlanetView ? '' : 'none';
   btnWalk.disabled = !inPlanetView || !canWalkFromSelection();
-  if (walkControlsEl) walkControlsEl.style.display = walkMode.active ? 'grid' : 'none';
   refreshWalkUi();
 }
 
