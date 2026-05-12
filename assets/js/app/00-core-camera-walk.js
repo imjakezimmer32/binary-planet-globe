@@ -141,6 +141,19 @@ const WALK_CFG = {
   tpCollisionPadding: 0.08,
   lookSensitivity: 0.0054,
   mobileLookSensitivity: 0.0135,
+  gravityAccel: 0.62,
+  jumpSpeed: 0.22,
+  jumpBufferSec: 0.14,
+  jumpCooldownSec: 0.18,
+  coyoteTimeSec: 0.12,
+  airControlFactor: 0.38,
+  airDrag: 1.6,
+  maxFallSpeed: 0.5,
+  groundProbeDistance: 0.035,
+  landMaxOutwardSpeed: 0.08,
+  groundSnapIdle: 16,
+  groundSnapMove: 26,
+  groundNormalLerp: 14,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -153,6 +166,10 @@ const walkState = {
   forward: new THREE.Vector3(1, 0, 0),
   viewDir: new THREE.Vector3(1, 0, 0),
   lookPitch: 0,
+  grounded: false,
+  jumpBufferTimer: 0,
+  jumpCooldownTimer: 0,
+  coyoteTimer: 0,
   anchorPlanetIdx: null,
   surfaceType: 'land',
   surfaceSlopeDeg: 0,
@@ -186,6 +203,7 @@ const _walkSpawnCenter = new THREE.Vector3();
 const _walkSpawnNormal = new THREE.Vector3();
 const _walkSpawnRadial = new THREE.Vector3();
 const _walkSpawnToCam = new THREE.Vector3();
+const _walkGroundTarget = new THREE.Vector3();
 const _walkAnchorDelta = new THREE.Matrix4();
 const _walkAnchorInv = new THREE.Matrix4();
 const walkTransition = { active: false, token: 0, startedAt: 0 };
@@ -967,7 +985,8 @@ function setWalkTpDistanceTarget(nextValue) {
 }
 
 function queueWalkJump() {
-  // Intentional no-op in redesigned walker: movement is grounded + slope sliding only.
+  if (!walkMode.active) return;
+  walkState.jumpBufferTimer = WALK_CFG.jumpBufferSec;
 }
 
 function toggleWalkCameraMode() {
@@ -1025,6 +1044,10 @@ function stopWalkMode() {
   walkLookInput.x = 0;
   walkLookInput.y = 0;
   walkState.velocity.set(0, 0, 0);
+  walkState.grounded = false;
+  walkState.jumpBufferTimer = 0;
+  walkState.jumpCooldownTimer = 0;
+  walkState.coyoteTimer = 0;
   walkState.anchorPlanetIdx = null;
   walkState.surfaceType = 'land';
   walkState.surfaceSlopeDeg = 0;
@@ -1097,6 +1120,10 @@ function startWalkMode(idx, spawnSurface = null) {
   syncWalkPitchFromView();
 
   walkState.velocity.set(0, 0, 0);
+  walkState.grounded = true;
+  walkState.jumpBufferTimer = 0;
+  walkState.jumpCooldownTimer = 0;
+  walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
   walkState.anchorPlanetIdx = idx;
   walkState.surfaceType = startSurface ? startSurface.medium : 'land';
   walkState.surfaceSlopeDeg = startSurface ? startSurface.slopeDeg : 0;
@@ -1235,6 +1262,9 @@ function updateWalkMode(dt) {
   } else {
     walkState.anchorLastMatrixValid = false;
   }
+  walkState.jumpBufferTimer = Math.max(0, walkState.jumpBufferTimer - dt);
+  walkState.jumpCooldownTimer = Math.max(0, walkState.jumpCooldownTimer - dt);
+  walkState.coyoteTimer = Math.max(0, walkState.coyoteTimer - dt);
   applyWalkLook();
   const currentSurface = anchorMp
     ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position)
@@ -1253,6 +1283,7 @@ function updateWalkMode(dt) {
     const snapRadius = Math.max(0.25, (anchorMp.obj.baseRadius || 0.8) * anchorMp.obj.state.size) + WALK_CFG.footOffset;
     walkState.up.copy(_walkTmp);
     walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, snapRadius);
+    walkState.grounded = false;
 
     if (walkState.missedSurfaceFrames >= 4) {
       const recoveredSpawn = getWalkLandSpawnOnPlanet(anchorIdx);
@@ -1262,6 +1293,10 @@ function updateWalkMode(dt) {
         walkState.up.copy(recoveredSpawn.radialDir).normalize();
         syncWalkPitchFromView();
         walkState.velocity.set(0, 0, 0);
+        walkState.grounded = true;
+        walkState.jumpBufferTimer = 0;
+        walkState.jumpCooldownTimer = 0;
+        walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
         walkState.surfaceType = recoveredSpawn.medium || 'land';
         walkState.surfaceSlopeDeg = recoveredSpawn.slopeDeg || 0;
         walkState.sliding = false;
@@ -1281,8 +1316,18 @@ function updateWalkMode(dt) {
   walkState.anchorPlanetIdx = anchorIdx;
   walkState.surfaceType = currentSurface.medium;
   walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
-  walkState.up.copy(currentSurface.radialDir).normalize();
+  walkState.up.lerp(currentSurface.radialDir, Math.min(1, dt * WALK_CFG.groundNormalLerp)).normalize();
   syncWalkPitchFromView();
+
+  const nearGround = Math.abs(currentSurface.gap) <= WALK_CFG.groundProbeDistance;
+  const outwardSpeed = walkState.velocity.dot(walkState.up);
+  if (nearGround) walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
+  if (!walkState.grounded && nearGround && outwardSpeed <= WALK_CFG.landMaxOutwardSpeed) {
+    walkState.grounded = true;
+  }
+  if (walkState.grounded && !nearGround && walkState.coyoteTimer <= 0) {
+    walkState.grounded = false;
+  }
 
   walkState.forward.copy(walkState.viewDir).projectOnPlane(currentSurface.normal);
   if (walkState.forward.lengthSq() < 1e-8) {
@@ -1304,51 +1349,89 @@ function updateWalkMode(dt) {
   _walkDesired.projectOnPlane(currentSurface.normal);
   if (_walkDesired.lengthSq() > 1e-8) _walkDesired.setLength(desiredSpeed);
 
-  _walkTmp.copy(walkState.velocity).projectOnPlane(currentSurface.normal);
-  const accelStep = Math.min(1, WALK_CFG.acceleration * dt);
+  const radialVel = walkState.velocity.dot(walkState.up);
+  _walkTmp.copy(walkState.velocity).addScaledVector(walkState.up, -radialVel);
+  const controlAccel = walkState.grounded
+    ? WALK_CFG.acceleration
+    : WALK_CFG.acceleration * WALK_CFG.airControlFactor;
+  const accelStep = Math.min(1, controlAccel * dt);
   _walkTmp.lerp(_walkDesired, accelStep);
   if (moveLen < 0.05) {
-    _walkTmp.multiplyScalar(Math.max(0, 1 - WALK_CFG.drag * dt));
+    const dragFactor = walkState.grounded ? WALK_CFG.drag : WALK_CFG.airDrag;
+    _walkTmp.multiplyScalar(Math.max(0, 1 - dragFactor * dt));
   }
 
-  if (currentSurface.slopeDeg > WALK_CFG.slipEnterDeg) walkState.sliding = true;
-  else if (currentSurface.slopeDeg <= WALK_CFG.slipExitDeg) walkState.sliding = false;
-  if (walkState.sliding) {
-    _walkTmp2.copy(currentSurface.radialDir).multiplyScalar(-1).projectOnPlane(currentSurface.normal);
-    const downhillLen = _walkTmp2.length();
-    if (downhillLen > 1e-8) {
-      _walkTmp2.multiplyScalar(1 / downhillLen);
-      const slopeGain = Math.max(0, Math.min(1, (currentSurface.slopeDeg - WALK_CFG.slipExitDeg) / (90 - WALK_CFG.slipExitDeg)));
-      const slideImpulse = WALK_CFG.slideAccel * (0.45 + slopeGain * 1.2);
-      _walkTmp.addScaledVector(_walkTmp2, slideImpulse * dt);
+  let nextRadialVel = radialVel;
+  if (walkState.grounded) {
+    if (currentSurface.slopeDeg > WALK_CFG.slipEnterDeg) walkState.sliding = true;
+    else if (currentSurface.slopeDeg <= WALK_CFG.slipExitDeg) walkState.sliding = false;
+    if (walkState.sliding) {
+      _walkTmp2.copy(currentSurface.radialDir).multiplyScalar(-1).projectOnPlane(currentSurface.normal);
+      const downhillLen = _walkTmp2.length();
+      if (downhillLen > 1e-8) {
+        _walkTmp2.multiplyScalar(1 / downhillLen);
+        const slopeGain = Math.max(0, Math.min(1, (currentSurface.slopeDeg - WALK_CFG.slipExitDeg) / (90 - WALK_CFG.slipExitDeg)));
+        const slideImpulse = WALK_CFG.slideAccel * (0.45 + slopeGain * 1.2);
+        _walkTmp.addScaledVector(_walkTmp2, slideImpulse * dt);
+      }
     }
+    nextRadialVel = Math.min(nextRadialVel, 0);
+  } else {
+    walkState.sliding = false;
+    nextRadialVel = Math.max(-WALK_CFG.maxFallSpeed, nextRadialVel - WALK_CFG.gravityAccel * dt);
   }
 
-  _walkTmp3.copy(walkState.position).addScaledVector(_walkTmp, dt);
+  const canJump = walkState.jumpBufferTimer > 0
+    && walkState.jumpCooldownTimer <= 0
+    && (walkState.grounded || walkState.coyoteTimer > 0);
+  if (canJump) {
+    walkState.grounded = false;
+    walkState.jumpBufferTimer = 0;
+    walkState.jumpCooldownTimer = WALK_CFG.jumpCooldownSec;
+    walkState.coyoteTimer = 0;
+    nextRadialVel = WALK_CFG.jumpSpeed;
+  }
+
+  walkState.velocity.copy(_walkTmp).addScaledVector(walkState.up, nextRadialVel);
+
+  _walkTmp3.copy(walkState.position).addScaledVector(walkState.velocity, dt);
   const nextSurface = anchorMp
     ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, _walkTmp3)
     : null;
   if (!nextSurface) {
-    walkState.position.copy(currentSurface.point).addScaledVector(currentSurface.radialDir, WALK_CFG.footOffset);
-    walkState.velocity.set(0, 0, 0);
-    walkState.surfaceType = currentSurface.medium;
-    walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
+    walkState.position.copy(_walkTmp3);
+    if (walkState.grounded && walkState.coyoteTimer <= 0) walkState.grounded = false;
   } else {
-    walkState.position.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
-    _walkTmp.projectOnPlane(nextSurface.normal);
-    walkState.velocity.copy(_walkTmp);
+    const nextGapAbs = Math.abs(nextSurface.gap);
+    const nextOutwardSpeed = walkState.velocity.dot(nextSurface.radialDir);
+    if (!walkState.grounded && nextGapAbs <= WALK_CFG.groundProbeDistance && nextOutwardSpeed <= WALK_CFG.landMaxOutwardSpeed) {
+      walkState.grounded = true;
+    }
+    if (walkState.grounded) {
+      _walkGroundTarget.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
+      const snapRate = moveLen > 0.05 ? WALK_CFG.groundSnapMove : WALK_CFG.groundSnapIdle;
+      walkState.position.copy(_walkTmp3).lerp(_walkGroundTarget, Math.min(1, dt * snapRate));
+      const surfaceRadialVel = walkState.velocity.dot(nextSurface.radialDir);
+      if (surfaceRadialVel > 0) walkState.velocity.addScaledVector(nextSurface.radialDir, -surfaceRadialVel);
+      walkState.velocity.projectOnPlane(nextSurface.normal);
+      walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
+    } else {
+      walkState.position.copy(_walkTmp3);
+    }
     walkState.anchorPlanetIdx = anchorIdx;
     walkState.surfaceType = nextSurface.medium;
     walkState.surfaceSlopeDeg = nextSurface.slopeDeg;
-    walkState.up.copy(nextSurface.radialDir).normalize();
+    walkState.up.lerp(nextSurface.radialDir, Math.min(1, dt * WALK_CFG.groundNormalLerp)).normalize();
   }
 
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
-  if (moveLen < 0.05) bounceTarget = 0;
+  if (moveLen < 0.05 || !walkState.grounded) bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
   walkState.bouncePhase += dt * (WALK_CFG.bounceFreq + planarSpeed * 10);
-  const bounce = Math.abs(Math.sin(walkState.bouncePhase)) * WALK_CFG.bounceAmp * walkState.bounceBlend;
+  const bounce = walkState.grounded
+    ? Math.abs(Math.sin(walkState.bouncePhase)) * WALK_CFG.bounceAmp * walkState.bounceBlend
+    : 0;
 
   walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * 0.45);
   _walkBasisZ.crossVectors(walkState.forward, walkState.up);
