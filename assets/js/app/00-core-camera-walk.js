@@ -152,6 +152,7 @@ const walkState = {
   up: new THREE.Vector3(0, 1, 0),
   forward: new THREE.Vector3(1, 0, 0),
   viewDir: new THREE.Vector3(1, 0, 0),
+  lookPitch: 0,
   anchorPlanetIdx: null,
   surfaceType: 'land',
   surfaceSlopeDeg: 0,
@@ -188,6 +189,7 @@ const _walkSpawnToCam = new THREE.Vector3();
 const _walkAnchorDelta = new THREE.Matrix4();
 const _walkAnchorInv = new THREE.Matrix4();
 const walkTransition = { active: false, token: 0, startedAt: 0 };
+const WALK_MAX_LOOK_PITCH = Math.PI * 0.498;
 
 function makeWalkSurfaceRecord() {
   return {
@@ -205,6 +207,11 @@ function makeWalkSurfaceRecord() {
 const _walkSurfaceScratch = makeWalkSurfaceRecord();
 const _walkBestLandSurface = makeWalkSurfaceRecord();
 const _walkBestAnySurface = makeWalkSurfaceRecord();
+
+function syncWalkPitchFromView() {
+  const upDot = Math.max(-0.9999, Math.min(0.9999, walkState.viewDir.dot(walkState.up)));
+  walkState.lookPitch = Math.max(-WALK_MAX_LOOK_PITCH, Math.min(WALK_MAX_LOOK_PITCH, Math.asin(upDot)));
+}
 
 function copyWalkSurface(src, dst) {
   dst.idx = src.idx;
@@ -962,6 +969,7 @@ function stopWalkMode() {
   walkState.bouncePhase = 0;
   walkState.bounceBlend = 0;
   walkState.missedSurfaceFrames = 0;
+  walkState.lookPitch = 0;
   walkState.anchorLastMatrixValid = false;
   desktopWalkLookReady = false;
   refreshWalkUi();
@@ -1021,6 +1029,7 @@ function startWalkMode(idx, spawnSurface = null) {
     if (walkState.forward.lengthSq() < 1e-8) walkState.forward.crossVectors(_walkY, walkState.up);
   }
   walkState.forward.normalize();
+  syncWalkPitchFromView();
 
   walkState.velocity.set(0, 0, 0);
   walkState.anchorPlanetIdx = idx;
@@ -1093,35 +1102,28 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
 function applyWalkLook() {
   if (!walkMode.active) return;
   const yaw = -walkLookInput.x;
-  const pitch = -walkLookInput.y;
+  const pitchDelta = -walkLookInput.y;
   walkLookInput.x = 0;
   walkLookInput.y = 0;
 
-  if (Math.abs(yaw) > 1e-6) {
-    walkState.viewDir.applyAxisAngle(walkState.up, yaw).normalize();
-  }
-  _walkRight.crossVectors(walkState.viewDir, walkState.up);
-  if (_walkRight.lengthSq() < 1e-8) _walkRight.crossVectors(walkState.forward, walkState.up);
-  if (_walkRight.lengthSq() < 1e-8) _walkRight.crossVectors(_walkX, walkState.up);
-  if (_walkRight.lengthSq() < 1e-8) return;
-  _walkRight.normalize();
-  if (Math.abs(pitch) > 1e-6) {
-    _walkQ.setFromAxisAngle(_walkRight, pitch);
-    walkState.viewDir.applyQuaternion(_walkQ).normalize();
-  }
-  const upDot = walkState.viewDir.dot(walkState.up);
-  if (Math.abs(upDot) > 0.9985) {
-    _walkTmp.copy(walkState.forward).projectOnPlane(walkState.up);
-    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(_walkX).projectOnPlane(walkState.up);
-    if (_walkTmp.lengthSq() > 1e-8) {
-      _walkTmp.normalize();
-      const verticalSign = upDot >= 0 ? 1 : -1;
-      walkState.viewDir
-        .copy(walkState.up).multiplyScalar(verticalSign * 0.9985)
-        .addScaledVector(_walkTmp, 0.054)
-        .normalize();
-    }
-  }
+  _walkTmp.copy(walkState.viewDir).projectOnPlane(walkState.up);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(walkState.forward).projectOnPlane(walkState.up);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(_walkX).projectOnPlane(walkState.up);
+  if (_walkTmp.lengthSq() < 1e-8) return;
+  _walkTmp.normalize();
+
+  if (Math.abs(yaw) > 1e-6) _walkTmp.applyAxisAngle(walkState.up, yaw).normalize();
+
+  walkState.lookPitch = Math.max(
+    -WALK_MAX_LOOK_PITCH,
+    Math.min(WALK_MAX_LOOK_PITCH, walkState.lookPitch + pitchDelta)
+  );
+  const pitchCos = Math.cos(walkState.lookPitch);
+  const pitchSin = Math.sin(walkState.lookPitch);
+  walkState.viewDir
+    .copy(_walkTmp).multiplyScalar(pitchCos)
+    .addScaledVector(walkState.up, pitchSin)
+    .normalize();
 }
 
 function getWalkSurfaceSpeedFactor(surface) {
@@ -1162,6 +1164,7 @@ function updateWalkMode(dt) {
         walkState.anchorPlanetIdx = recovered.idx;
         walkState.position.copy(recovered.spawn.point).addScaledVector(recovered.spawn.radialDir, WALK_CFG.footOffset);
         walkState.up.copy(recovered.spawn.radialDir).normalize();
+        syncWalkPitchFromView();
         walkState.velocity.set(0, 0, 0);
         walkState.surfaceType = 'land';
         walkState.surfaceSlopeDeg = recovered.spawn.slopeDeg || 0;
@@ -1186,6 +1189,7 @@ function updateWalkMode(dt) {
   walkState.surfaceType = currentSurface.medium;
   walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
   walkState.up.copy(currentSurface.radialDir).normalize();
+  syncWalkPitchFromView();
 
   applyWalkLook();
 
