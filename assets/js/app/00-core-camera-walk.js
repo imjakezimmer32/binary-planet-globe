@@ -1130,6 +1130,48 @@ function resolveWalkCameraOcclusion(target, desiredPos, outPos) {
   return outPos;
 }
 
+/** Minimum radial clearance beyond terrain along camera spoke (world units). */
+const CAMERA_PLANET_SURFACE_PAD = 0.072;
+
+/**
+ * Keep the camera outside all planet terrain meshes (orbit + walk + transitions).
+ * Uses the same surface sampler as walk; runs a few passes so binary pairs cannot sandwich the eye.
+ */
+function enforceCameraOutsidePlanetMeshes(maxPasses = 4) {
+  for (let pass = 0; pass < maxPasses; pass++) {
+    let moved = false;
+    for (let i = 0; i < managedPlanets.length; i++) {
+      const mp = managedPlanets[i];
+      if (!mp?.obj?.pivot) continue;
+      const mesh = getWalkTerrainMesh(mp);
+      if (!mesh || mesh.visible === false) continue;
+
+      const nominalR = getPlanetCenterRadius(mp, _walkCenter);
+      _walkSpawnToCam.copy(camera.position).sub(_walkCenter);
+      const d2 = _walkSpawnToCam.lengthSq();
+      if (d2 > nominalR * nominalR * 24) continue;
+
+      let s = sampleWalkSurfaceForPlanetRobust(mp, i, camera.position);
+      if (!s) s = findWalkSurfaceRadialSweep(mp, i, camera.position);
+      if (!s) continue;
+
+      const pad = Math.max(CAMERA_PLANET_SURFACE_PAD, WALK_CFG.tpCollisionPadding * 1.08);
+      if (s.gap >= pad) continue;
+
+      _walkSpawnRadial.copy(camera.position).sub(s.center);
+      const rLen = _walkSpawnRadial.length();
+      if (rLen < 1e-7) _walkSpawnRadial.copy(s.radialDir);
+      else _walkSpawnRadial.multiplyScalar(1 / rLen);
+
+      const want = s.surfaceRadius + pad;
+      camera.position.copy(s.center).addScaledVector(_walkSpawnRadial, want);
+      camera.position.addScaledVector(s.normal, pad * 0.45);
+      moved = true;
+    }
+    if (!moved) break;
+  }
+}
+
 function setWalkTpDistanceTarget(nextValue) {
   walkTpDistanceTarget = Math.max(WALK_CFG.tpDistanceMin, Math.min(WALK_CFG.tpDistanceMax, nextValue));
   refreshWalkUi();
@@ -1330,6 +1372,7 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
       _walkTmp2.lerpVectors(startLook, endLook, eased);
       camera.up.lerpVectors(startUp, endUp, eased).normalize();
       camera.lookAt(_walkTmp2);
+      enforceCameraOutsidePlanetMeshes();
       if (p < 1) {
         requestAnimationFrame(frame);
       } else {
@@ -1380,6 +1423,7 @@ function updateWalkCameraPose(dt, bounce = 0) {
   _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
   camera.up.lerp(walkState.up, Math.min(1, dt * 8)).normalize();
   camera.lookAt(_walkTmp);
+  enforceCameraOutsidePlanetMeshes();
 }
 
 function getWalkSurfaceSpeedFactor(surface) {
@@ -1760,6 +1804,7 @@ function updateCamera(curScale) {
     );
     camera.lookAt(base);
   }
+  enforceCameraOutsidePlanetMeshes();
 }
 
 /** Expand far clip for zoom-out; keep depth usable via logarithmicDepthBuffer on the renderer. */
