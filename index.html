@@ -5356,7 +5356,7 @@ animate();
 //   audioVolume  — 0..1 peak gain after fade-in (default 0.78)
 //   audioLoop    — default true
 // Music ramps in/out over SOLAR_AUDIO_FADE_MS (5s) when entering/leaving a system or during hyperspace.
-// Gate → Sol handoff: gate fades out (linear by default), then astra ramps in (see crossfadeGateMusicToSolar).
+// Gate → Sol: gate fades out during intro; first astra fade is timed with splash (see splash sequence).
 const GALAXY_DESTINATIONS = [
   {
     name: 'Sol System',
@@ -5904,22 +5904,18 @@ const _origAnimate = animate;
 
   /**
    * Same user-activation turn as the start click: start the solar track at 0 volume
-   * so autoplay policy is satisfied. Audible blend is handled by crossfadeGateMusicToSolar().
+   * so autoplay policy is satisfied. First audible ramp is started with the splash (see below).
    */
   function handoffFromStartScreenToGameMusic() {
     solarSystemAudio.primeActiveDestinationAudioAfterGesture();
   }
 
-  /** Gate music linear fade-out duration; astra starts after (or slightly before end if overlap < 1). */
+  /** First astra.mp3 ramp after leaving the gate (runs alongside splash + gate fade). */
+  const FIRST_ASTRA_FADE_IN_MS = 4000;
+  /** Gate music linear fade while splash runs (parallel with astra fade-in). */
   const GATE_HANDOFF_FADE_OUT_MS = 4800;
-  const GATE_HANDOFF_SOLAR_FADE_IN_MS = 5000;
-  /**
-   * When to start astra (0–1 of gate fade progress). 1 = no overlap (astra after gate is silent).
-   * 0.85 ≈ only the last ~15% of the gate fade overlaps the start of astra’s ramp.
-   */
-  const GATE_HANDOFF_OVERLAP_AT = 1;
 
-  function crossfadeGateMusicToSolar() {
+  function fadeOutGateMusicDuringIntro() {
     return new Promise((resolve) => {
       const t0 = performance.now();
       let fromGain = startScreenOuterEl.volume;
@@ -5927,27 +5923,15 @@ const _origAnimate = animate;
         fromGain = START_SCREEN_MUSIC_GAIN;
       }
       startScreenOuterEl.volume = fromGain;
-      let solarStarted = false;
       function frame() {
         const elapsed = performance.now() - t0;
         const gateLin = Math.min(1, elapsed / GATE_HANDOFF_FADE_OUT_MS);
         startScreenOuterEl.volume = fromGain * (1 - gateLin);
-        if (!solarStarted && gateLin >= GATE_HANDOFF_OVERLAP_AT) {
-          solarStarted = true;
-          solarSystemAudio.beginActiveDestinationFadeIn({
-            durationMs: GATE_HANDOFF_SOLAR_FADE_IN_MS,
-          });
-        }
         if (gateLin < 1) {
           requestAnimationFrame(frame);
           return;
         }
         stopStartScreenMusic();
-        if (!solarStarted) {
-          solarSystemAudio.beginActiveDestinationFadeIn({
-            durationMs: GATE_HANDOFF_SOLAR_FADE_IN_MS,
-          });
-        }
         resolve();
       }
       requestAnimationFrame(frame);
@@ -6018,6 +6002,7 @@ const _origAnimate = animate;
   orbitZoom = 4000;
 
   async function run() {
+    solarSystemAudio.beginActiveDestinationFadeIn({ durationMs: FIRST_ASTRA_FADE_IN_MS });
     await wait(200);
 
     // ── Phase 1: HELLO WORLD ───────────────────────────────────────
@@ -6078,8 +6063,10 @@ const _origAnimate = animate;
     handoffFromStartScreenToGameMusic();
   });
   await dismissStartScreen();
-  await crossfadeGateMusicToSolar();
-  await run();
+  await Promise.all([
+    fadeOutGateMusicDuringIntro(),
+    run(),
+  ]);
 })();
 
 window.addEventListener('resize', () => {
