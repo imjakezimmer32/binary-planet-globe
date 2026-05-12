@@ -472,6 +472,7 @@ function mobPinchPair() {
 }
 
 function onMobilePointerDown(e) {
+  if (walkMode.active && typeof e.preventDefault === 'function') e.preventDefault();
   try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (mobPointers.size === 1) {
@@ -504,6 +505,7 @@ function onMobilePointerMove(e) {
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   if (walkMode.active) {
+    if (typeof e.preventDefault === 'function') e.preventDefault();
     if (prev) {
       queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
     }
@@ -634,11 +636,12 @@ window.addEventListener('pointercancel', e => {
 
 window.addEventListener('pointermove', e => {
   if (isTouchPointer(e)) {
-    if (mobPointers.has(e.pointerId)) onMobilePointerMove(e);
+    if (walkMode.active) onMobilePointerMove(e);
+    else if (mobPointers.has(e.pointerId)) onMobilePointerMove(e);
   } else {
     desktopPointerMove(e);
   }
-});
+}, { passive: false });
 
 _canvas.addEventListener('pointerdown', e => {
   tapCandidate = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
@@ -918,6 +921,7 @@ function refreshWalkUi() {
   if (btn) {
     btn.classList.toggle('active', walkMode.active);
   }
+  document.body.classList.toggle('walk-touch-look-active', walkMode.active);
   if (controls) {
     controls.style.display = walkMode.active ? 'grid' : 'none';
   }

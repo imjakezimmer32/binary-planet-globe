@@ -15,6 +15,10 @@ body {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
+body.walk-touch-look-active {
+  touch-action: none;
+  overscroll-behavior: none;
+}
 canvas:not(#start-starfield) {
   display: block;
   touch-action: none;
