@@ -2233,11 +2233,16 @@ _canvas.addEventListener('pointerdown', e => {
 });
 
 window.addEventListener('pointerdown', e => {
-  if (!walkMode.active || !isTouchPointer(e)) return;
-  if (mobPointers.has(e.pointerId)) return;
+  if (!walkMode.active) return;
   const target = e.target;
-  if (target && typeof target.closest === 'function' && target.closest('#walk-controls')) return;
-  onMobilePointerDown(e);
+  if (target && typeof target.closest === 'function'
+    && target.closest('#walk-controls, #ui, #planet-selection-editor, #primer, #splash')) return;
+  if (isTouchPointer(e)) {
+    if (mobPointers.has(e.pointerId)) return;
+    onMobilePointerDown(e);
+  } else if (!dragging) {
+    desktopPointerDown(e);
+  }
 }, { passive: false });
 
 window.addEventListener('pointerup', e => {
@@ -2892,21 +2897,25 @@ function updateWalkMode(dt) {
 }
 
 function updateCamera(curScale) {
-  if (walkTransition.active) {
-    const elapsed = performance.now() - (walkTransition.startedAt || 0);
-    if ((walkMode.active && elapsed > 50) || elapsed > 2200) {
+  if (walkMode.active) {
+    if (walkTransition.active) {
       walkTransition.active = false;
       walkTransition.startedAt = 0;
-    } else {
-      return;
     }
-  }
-  if (walkMode.active) {
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0.001, (now - walkPrevMs) / 1000));
     walkPrevMs = now;
     updateWalkMode(dt);
     return;
+  }
+  if (walkTransition.active) {
+    const elapsed = performance.now() - (walkTransition.startedAt || 0);
+    if (elapsed > 2200) {
+      walkTransition.active = false;
+      walkTransition.startedAt = 0;
+    } else {
+      return;
+    }
   }
   if (cameraMode === 'sun') {
     orbitTheta += dTheta; dTheta *= 0.88;
