@@ -180,6 +180,13 @@ const WALK_CFG = {
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
   maxAirHorizontalSpeed: 0.52,
+  /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
+  playerLightColor: 0xa6d9ff,
+  playerLightIntensity: 3.4,
+  playerLightDistance: 0.28,
+  playerLightDecay: 2,
+  /** Lamp height along local body axis (fraction of characterHeight). */
+  playerLightHeightMul: 0.4,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -307,6 +314,14 @@ const avatarStripe = new THREE.Mesh(
 );
 avatarStripe.position.y = WALK_CFG.characterHeight * 0.12;
 walkAvatar.add(avatarBody, avatarStripe);
+const walkPlayerLight = new THREE.PointLight(
+  WALK_CFG.playerLightColor,
+  WALK_CFG.playerLightIntensity,
+  WALK_CFG.playerLightDistance,
+  WALK_CFG.playerLightDecay
+);
+walkPlayerLight.position.set(0, WALK_CFG.characterHeight * WALK_CFG.playerLightHeightMul, 0);
+walkAvatar.add(walkPlayerLight);
 walkAvatar.visible = false;
 scene.add(walkAvatar);
 
