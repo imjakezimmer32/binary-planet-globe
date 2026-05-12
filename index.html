@@ -1733,9 +1733,9 @@ const walkInput = { left: false, right: false, fwd: false, back: false, sprint: 
 const walkLookInput = { x: 0, y: 0 };
 const walkAnalog = { x: 0, y: 0 };
 const WALK_CFG = {
-  characterRadius: 0.012,
-  characterHeight: 0.048,
-  footOffset: 0.024,
+  characterRadius: 0.005,
+  characterHeight: 0.018,
+  footOffset: 0.009,
   moveSpeed: 0.10,
   sprintBoost: 1.25,
   acceleration: 6.4,
@@ -1747,13 +1747,13 @@ const WALK_CFG = {
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
   bounceFreq: 8.2,
-  bounceAmp: 0.0045,
+  bounceAmp: 0.0012,
   bounceResponse: 8.5,
   walkFov: 62,
   cameraDistance: 0.86,
-  cameraHeight: 0.11,
+  cameraHeight: 0.05,
   cameraLead: 0.42,
-  cameraTargetLift: 0.055,
+  cameraTargetLift: 0.018,
   cameraLag: 12.5,
   avatarTurnLerp: 10.5,
   tpDistanceMin: 0.25,
@@ -1761,8 +1761,8 @@ const WALK_CFG = {
   tpZoomWheelStep: 1.10,
   tpZoomSmooth: 7.8,
   tpCollisionPadding: 0.08,
-  lookSensitivity: 0.0034,
-  mobileLookSensitivity: 0.0062,
+  lookSensitivity: 0.0054,
+  mobileLookSensitivity: 0.0135,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -1781,6 +1781,8 @@ const walkState = {
   bouncePhase: 0,
   bounceBlend: 0,
   missedSurfaceFrames: 0,
+  anchorLastMatrix: new THREE.Matrix4(),
+  anchorLastMatrixValid: false,
   prevFov: null,
 };
 const _walkCenter = new THREE.Vector3();
@@ -1805,6 +1807,8 @@ const _walkSpawnCenter = new THREE.Vector3();
 const _walkSpawnNormal = new THREE.Vector3();
 const _walkSpawnRadial = new THREE.Vector3();
 const _walkSpawnToCam = new THREE.Vector3();
+const _walkAnchorDelta = new THREE.Matrix4();
+const _walkAnchorInv = new THREE.Matrix4();
 const walkTransition = { active: false, token: 0 };
 
 function makeWalkSurfaceRecord() {
@@ -2201,6 +2205,14 @@ _canvas.addEventListener('pointerdown', e => {
   else desktopPointerDown(e);
 });
 
+window.addEventListener('pointerdown', e => {
+  if (!walkMode.active || !isTouchPointer(e)) return;
+  if (mobPointers.has(e.pointerId)) return;
+  const target = e.target;
+  if (target && typeof target.closest === 'function' && target.closest('#walk-controls')) return;
+  onMobilePointerDown(e);
+}, { passive: false });
+
 window.addEventListener('pointerup', e => {
   if (isTouchPointer(e)) onMobilePointerUp(e);
   else desktopPointerUp(e);
@@ -2535,6 +2547,7 @@ function stopWalkMode() {
   walkState.bouncePhase = 0;
   walkState.bounceBlend = 0;
   walkState.missedSurfaceFrames = 0;
+  walkState.anchorLastMatrixValid = false;
   refreshWalkUi();
 }
 
@@ -2599,6 +2612,9 @@ function startWalkMode(idx, spawnSurface = null) {
   walkState.bouncePhase = 0;
   walkState.bounceBlend = 0;
   walkState.missedSurfaceFrames = 0;
+  mp.obj.pivot.updateMatrixWorld(true);
+  walkState.anchorLastMatrix.copy(mp.obj.pivot.matrixWorld);
+  walkState.anchorLastMatrixValid = true;
   walkAvatar.position.copy(walkState.position);
   walkAvatar.visible = true;
   refreshWalkUi();
@@ -2685,6 +2701,21 @@ function updateWalkMode(dt) {
     ? walkState.anchorPlanetIdx
     : walkMode.spawnPlanetIdx;
   const anchorMp = anchorIdx !== null ? managedPlanets[anchorIdx] : null;
+  if (anchorMp?.obj?.pivot) {
+    anchorMp.obj.pivot.updateMatrixWorld(true);
+    if (walkState.anchorLastMatrixValid) {
+      _walkAnchorInv.copy(walkState.anchorLastMatrix).invert();
+      _walkAnchorDelta.multiplyMatrices(anchorMp.obj.pivot.matrixWorld, _walkAnchorInv);
+      walkState.position.applyMatrix4(_walkAnchorDelta);
+      walkState.up.transformDirection(_walkAnchorDelta).normalize();
+      walkState.forward.transformDirection(_walkAnchorDelta).normalize();
+      walkState.viewDir.transformDirection(_walkAnchorDelta).normalize();
+    }
+    walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
+    walkState.anchorLastMatrixValid = true;
+  } else {
+    walkState.anchorLastMatrixValid = false;
+  }
   const currentSurface = anchorMp
     ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position)
     : null;
@@ -2701,6 +2732,14 @@ function updateWalkMode(dt) {
         walkState.surfaceSlopeDeg = recovered.spawn.slopeDeg || 0;
         walkState.sliding = false;
         walkState.missedSurfaceFrames = 0;
+        const recoveredMp = managedPlanets[recovered.idx];
+        if (recoveredMp?.obj?.pivot) {
+          recoveredMp.obj.pivot.updateMatrixWorld(true);
+          walkState.anchorLastMatrix.copy(recoveredMp.obj.pivot.matrixWorld);
+          walkState.anchorLastMatrixValid = true;
+        } else {
+          walkState.anchorLastMatrixValid = false;
+        }
         refreshWalkUi();
       }
     }
