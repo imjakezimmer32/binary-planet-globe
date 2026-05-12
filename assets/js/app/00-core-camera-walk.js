@@ -154,9 +154,11 @@ const WALK_CFG = {
   groundSnapIdle: 16,
   groundSnapMove: 26,
   groundNormalLerp: 14,
-  /** Max distance from anchor planet center = nominalRadius * mult + foot slack (prevents runaway / sun drift). */
-  anchorSphereSlackMult: 2.35,
-  anchorSpherePull: 22,
+  /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
+  anchorSphereSlackMult: 1.46,
+  /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
+  anchorSphereAbsSlack: 0.14,
+  anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
   maxAirHorizontalSpeed: 0.52,
@@ -968,6 +970,7 @@ function classifyWalkSurfaceMedium(mp, hitDistanceWorld) {
 function sampleWalkSurfaceForPlanet(mp, idx, pos, out = _walkSurfaceScratch) {
   const mesh = getWalkTerrainMesh(mp);
   if (!mesh) return null;
+  mesh.updateMatrixWorld(true);
   getPlanetCenterRadius(mp, _walkCenter);
   _walkTmp.copy(pos).sub(_walkCenter);
   const radialLen = _walkTmp.length();
@@ -1002,6 +1005,27 @@ function sampleWalkSurfaceForPlanet(mp, idx, pos, out = _walkSurfaceScratch) {
   out.medium = medium;
   out.slopeDeg = Math.acos(slopeDot) * THREE.MathUtils.RAD2DEG;
   return out;
+}
+
+/** Same as sampleWalkSurfaceForPlanet but tries nearby radii when the primary ray misses (moving planets / grazing misses). */
+function sampleWalkSurfaceForPlanetRobust(mp, idx, pos, out = _walkSurfaceScratch) {
+  const first = sampleWalkSurfaceForPlanet(mp, idx, pos, out);
+  if (first) return first;
+  getPlanetCenterRadius(mp, _walkCenter);
+  _walkTmp.copy(pos).sub(_walkCenter);
+  const len = _walkTmp.length();
+  if (len < 1e-7) return null;
+  _walkTmp.multiplyScalar(1 / len);
+  const nominalR = Math.max(0.25, (mp.obj.baseRadius || 0.8) * mp.obj.state.size);
+  const scales = [1.0, 1.025, 0.975, 1.055, 0.945, 1.085, 0.915, 1.12, 0.89, 1.14];
+  for (let si = 0; si < scales.length; si++) {
+    _walkTmp2
+      .copy(_walkCenter)
+      .addScaledVector(_walkTmp, nominalR * scales[si] + WALK_CFG.footOffset);
+    const hit = sampleWalkSurfaceForPlanet(mp, idx, _walkTmp2, out);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function sampleBestWalkSurface(pos, preferredIdx = null) {
@@ -1324,25 +1348,53 @@ function getWalkSurfaceSpeedFactor(surface) {
   return 1;
 }
 
-/** Keep the walker inside a shell around the anchor planet so velocity spikes cannot drift toward the sun. */
+/** Hard cap: only limit how far you can drift *outward* from the planet center (no inward min — surface pull handles that). */
 function clampWalkPositionToAnchor(anchorMp, dt) {
   if (!anchorMp?.obj?.pivot) return;
   const nominalR = getPlanetCenterRadius(anchorMp, _walkCenter);
   const foot = WALK_CFG.footOffset;
-  const maxR = nominalR * WALK_CFG.anchorSphereSlackMult + foot * 4;
-  const minR = nominalR * 0.76 + foot * 0.2;
+  const absSlack = WALK_CFG.anchorSphereAbsSlack != null ? WALK_CFG.anchorSphereAbsSlack : 0;
+  const maxR = nominalR * WALK_CFG.anchorSphereSlackMult + foot * 3 + absSlack;
   _walkTmp.copy(walkState.position).sub(_walkCenter);
   const d = _walkTmp.length();
   if (d < 1e-10) return;
   _walkTmp.multiplyScalar(1 / d);
-  if (d <= maxR && d >= minR) return;
-  const targetD = d > maxR ? maxR : minR;
+  if (d <= maxR) return;
   const t = Math.min(1, WALK_CFG.anchorSpherePull * dt);
-  const newD = d + (targetD - d) * t;
+  const newD = d + (maxR - d) * t;
   walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, newD);
   const rv = walkState.velocity.dot(_walkTmp);
-  if ((d > maxR && rv > 0) || (d < minR && rv < 0)) {
-    walkState.velocity.addScaledVector(_walkTmp, -rv);
+  if (rv > 0) walkState.velocity.addScaledVector(_walkTmp, -rv);
+}
+
+/** Final pass: glue feet to sampled terrain so integration never leaves you floating in empty shell space. */
+function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
+  const stick = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
+  if (!stick) return;
+  const rad = stick.radialDir;
+  _walkGroundTarget.copy(stick.point).addScaledVector(rad, WALK_CFG.footOffset);
+  const gap = stick.gap;
+  const vDotOut = walkState.velocity.dot(rad);
+
+  if (gap < -0.005) {
+    walkState.position.copy(_walkGroundTarget);
+    if (vDotOut < 0) walkState.velocity.addScaledVector(rad, -vDotOut);
+    return;
+  }
+
+  if (walkState.grounded) {
+    if (Math.abs(gap) > 0.0005) {
+      let a = Math.min(1, Math.max(0.52, 16 * dt));
+      if (Math.abs(gap) > WALK_CFG.groundProbeDistance * 0.35) a = Math.min(1, Math.max(a, 0.9));
+      walkState.position.lerp(_walkGroundTarget, a);
+    }
+    return;
+  }
+
+  if (walkState.coyoteTimer > 0 && vDotOut < 0.07 && gap > 0.0008) {
+    walkState.position.lerp(_walkGroundTarget, Math.min(1, 12 * dt));
+  } else if (vDotOut <= 0.02 && gap > 0.014) {
+    walkState.position.lerp(_walkGroundTarget, Math.min(1, dt * (10 + gap * 120)));
   }
 }
 
@@ -1367,7 +1419,6 @@ function updateWalkMode(dt) {
     }
     walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
     walkState.anchorLastMatrixValid = true;
-    clampWalkPositionToAnchor(anchorMp, dt);
   } else {
     walkState.anchorLastMatrixValid = false;
   }
@@ -1376,7 +1427,7 @@ function updateWalkMode(dt) {
   walkState.coyoteTimer = Math.max(0, walkState.coyoteTimer - dt);
   applyWalkLook();
   const currentSurface = anchorMp
-    ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position)
+    ? sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position)
     : null;
   if (!currentSurface) {
     walkState.missedSurfaceFrames += 1;
@@ -1392,12 +1443,11 @@ function updateWalkMode(dt) {
     const snapRadius = Math.max(0.25, (anchorMp.obj.baseRadius || 0.8) * anchorMp.obj.state.size) + WALK_CFG.footOffset;
     walkState.up.copy(_walkTmp);
     walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, snapRadius);
-    clampWalkPositionToAnchor(anchorMp, dt);
     walkState.grounded = false;
 
     // Local-only recovery: never teleport to a "best spawn" elsewhere on the planet.
     if (walkState.missedSurfaceFrames >= 2) {
-      const localSurface = sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position);
+      const localSurface = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
       if (localSurface) {
         walkState.anchorPlanetIdx = anchorIdx;
         walkState.position.copy(localSurface.point).addScaledVector(localSurface.radialDir, WALK_CFG.footOffset);
@@ -1418,6 +1468,8 @@ function updateWalkMode(dt) {
       }
     }
     if (walkState.missedSurfaceFrames > 24) stopWalkMode();
+    applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
+    clampWalkPositionToAnchor(anchorMp, dt);
     walkAvatar.position.copy(walkState.position);
     updateWalkCameraPose(dt, 0);
     return;
@@ -1514,7 +1566,7 @@ function updateWalkMode(dt) {
 
   _walkTmp3.copy(walkState.position).addScaledVector(walkState.velocity, dt);
   const nextSurface = anchorMp
-    ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, _walkTmp3)
+    ? sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, _walkTmp3)
     : null;
   if (!nextSurface) {
     getPlanetCenterRadius(anchorMp, _walkCenter);
@@ -1526,7 +1578,7 @@ function updateWalkMode(dt) {
       const resamplePos = _walkGroundTarget
         .copy(_walkCenter)
         .addScaledVector(_walkTmp, nominalR * WALK_CFG.airResampleRadiusMult + WALK_CFG.footOffset);
-      const rescue = sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, resamplePos);
+      const rescue = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, resamplePos);
       if (rescue) {
         walkState.position.copy(rescue.point).addScaledVector(rescue.radialDir, WALK_CFG.footOffset);
         const rvRes = walkState.velocity.dot(rescue.radialDir);
@@ -1540,6 +1592,7 @@ function updateWalkMode(dt) {
     } else {
       walkState.position.copy(_walkTmp3);
     }
+    applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
     clampWalkPositionToAnchor(anchorMp, dt);
     if (walkState.grounded && walkState.coyoteTimer <= 0) walkState.grounded = false;
   } else {
@@ -1551,19 +1604,31 @@ function updateWalkMode(dt) {
     if (walkState.grounded) {
       _walkGroundTarget.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
       const snapRate = moveLen > 0.05 ? WALK_CFG.groundSnapMove : WALK_CFG.groundSnapIdle;
-      walkState.position.copy(_walkTmp3).lerp(_walkGroundTarget, Math.min(1, dt * snapRate));
+      let snapAlpha = Math.min(1, dt * snapRate);
+      if (nextGapAbs > WALK_CFG.groundProbeDistance * 0.45) snapAlpha = Math.max(snapAlpha, 0.82);
+      if (nextGapAbs > WALK_CFG.groundProbeDistance * 2.2) snapAlpha = Math.max(snapAlpha, 0.94);
+      walkState.position.copy(_walkTmp3).lerp(_walkGroundTarget, snapAlpha);
       const surfaceRadialVel = walkState.velocity.dot(nextSurface.radialDir);
       if (surfaceRadialVel > 0) walkState.velocity.addScaledVector(nextSurface.radialDir, -surfaceRadialVel);
       walkState.velocity.projectOnPlane(nextSurface.normal);
       walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
     } else {
-      walkState.position.copy(_walkTmp3);
+      _walkGroundTarget.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
+      let pull = 0;
+      if (nextGapAbs > WALK_CFG.groundProbeDistance * 1.2) pull = Math.min(1, dt * 20);
+      if (nextGapAbs > 0.07) pull = Math.max(pull, Math.min(1, dt * 28));
+      if (nextGapAbs < -0.006) pull = Math.max(pull, 0.62);
+      if (nextOutwardSpeed < -0.02 && nextGapAbs > WALK_CFG.groundProbeDistance * 0.6) {
+        pull = Math.max(pull, Math.min(1, dt * 24));
+      }
+      walkState.position.copy(_walkTmp3).lerp(_walkGroundTarget, Math.min(1, pull));
     }
     walkState.anchorPlanetIdx = anchorIdx;
     walkState.surfaceType = nextSurface.medium;
     walkState.surfaceSlopeDeg = nextSurface.slopeDeg;
     walkState.up.lerp(nextSurface.radialDir, Math.min(1, dt * WALK_CFG.groundNormalLerp)).normalize();
   }
+  applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
   clampWalkPositionToAnchor(anchorMp, dt);
 
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
