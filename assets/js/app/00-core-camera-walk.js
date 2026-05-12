@@ -1191,6 +1191,19 @@ function applyWalkLook() {
     .normalize();
 }
 
+function updateWalkCameraPose(dt, bounce = 0) {
+  walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
+  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bounce * 0.5);
+  _walkCamPos.copy(_walkCamTarget)
+    .addScaledVector(walkState.viewDir, -walkTpDistance)
+    .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bounce);
+  resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
+  camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
+  _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
+  camera.up.lerp(walkState.up, Math.min(1, dt * 8)).normalize();
+  camera.lookAt(_walkTmp);
+}
+
 function getWalkSurfaceSpeedFactor(surface) {
   if (!surface) return 1;
   if (surface.medium === 'water') return WALK_CFG.waterSpeedFactor;
@@ -1218,6 +1231,7 @@ function updateWalkMode(dt) {
   } else {
     walkState.anchorLastMatrixValid = false;
   }
+  applyWalkLook();
   const currentSurface = anchorMp
     ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position)
     : null;
@@ -1247,6 +1261,8 @@ function updateWalkMode(dt) {
       }
     }
     if (walkState.missedSurfaceFrames > 32) stopWalkMode();
+    walkAvatar.position.copy(walkState.position);
+    updateWalkCameraPose(dt, 0);
     return;
   }
   walkState.missedSurfaceFrames = 0;
@@ -1255,8 +1271,6 @@ function updateWalkMode(dt) {
   walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
   walkState.up.copy(currentSurface.radialDir).normalize();
   syncWalkPitchFromView();
-
-  applyWalkLook();
 
   walkState.forward.copy(walkState.viewDir).projectOnPlane(currentSurface.normal);
   if (walkState.forward.lengthSq() < 1e-8) {
@@ -1334,16 +1348,7 @@ function updateWalkMode(dt) {
   walkAvatar.quaternion.slerp(_walkQ, Math.min(1, dt * WALK_CFG.avatarTurnLerp));
   walkAvatar.visible = true;
 
-  walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
-  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bounce * 0.5);
-  _walkCamPos.copy(_walkCamTarget)
-    .addScaledVector(walkState.viewDir, -walkTpDistance)
-    .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bounce);
-  resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
-  camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
-  _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
-  camera.up.lerp(walkState.up, Math.min(1, dt * 8)).normalize();
-  camera.lookAt(_walkTmp);
+  updateWalkCameraPose(dt, bounce);
 }
 
 function updateCamera(curScale) {
