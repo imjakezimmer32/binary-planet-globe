@@ -1442,47 +1442,39 @@ const _planetEditorCamUp = new THREE.Vector3();
 const _planetEditorCamForward = new THREE.Vector3();
 const _sunEditorCenterWorld = new THREE.Vector3();
 
-// ── Walk mode (physics walker on spherical surfaces) ────────────────
+// ── Walk mode (redesigned pill walker) ──────────────────────────────
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, sprint: false };
 const walkLookInput = { x: 0, y: 0 };
 const walkAnalog = { x: 0, y: 0 };
 const WALK_CFG = {
+  characterRadius: 0.024,
+  characterHeight: 0.11,
   footOffset: 0.055,
-  snapDistance: 0.09,
-  groundAccel: 4.2,
-  airAccel: 1.2,
-  groundDrag: 7.2,
-  airDrag: 1.25,
-  maxGroundSpeed: 0.55,
-  maxAirSpeed: 0.72,
-  sprintBoost: 1.35,
-  jumpSpeed: 0.85,
-  jumpBuffer: 0.14,
-  coyoteTime: 0.12,
-  jumpLock: 0.11,
-  gravityScale: 1.35,
+  moveSpeed: 0.34,
+  sprintBoost: 1.45,
+  acceleration: 8.2,
+  drag: 7.5,
+  slideAccel: 2.6,
+  slipEnterDeg: 40,
+  slipExitDeg: 39,
+  landPriorityGapAllowance: 0.12,
+  waterSpeedFactor: 0.5,
+  lavaSpeedFactor: 0.2,
   walkFov: 62,
-  cameraHeight: 0.54,
-  cameraDistance: 4.6,
-  cameraLead: 0.22,
-  cameraTargetLift: 0.14,
-  fpEyeHeight: 0.13,
-  fpForwardOffset: 0.02,
-  fpLookDistance: 3.6,
-  fpBobAmp: 0.006,
-  tpDistanceMin: 2.2,
-  tpDistanceMax: 12.0,
-  tpZoomWheelStep: 1.08,
-  tpZoomSmooth: 8.5,
-  tpCollisionPadding: 0.12,
-  tpSurfaceClearance: 0.28,
-  lookSensitivity: 0.0028,
-  mobileLookSensitivity: 0.0052,
-  pitchDotLimit: 0.96,
-  upParallelLimit: 0.985,
-  sprintBobFreq: 13,
-  sprintBobAmp: 0.012,
+  cameraDistance: 0.86,
+  cameraHeight: 0.16,
+  cameraLead: 0.42,
+  cameraTargetLift: 0.08,
+  cameraLag: 12.5,
+  avatarTurnLerp: 10.5,
+  tpDistanceMin: 0.25,
+  tpDistanceMax: 2.4,
+  tpZoomWheelStep: 1.10,
+  tpZoomSmooth: 7.8,
+  tpCollisionPadding: 0.08,
+  lookSensitivity: 0.0034,
+  mobileLookSensitivity: 0.0062,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -1494,14 +1486,10 @@ const walkState = {
   up: new THREE.Vector3(0, 1, 0),
   forward: new THREE.Vector3(1, 0, 0),
   viewDir: new THREE.Vector3(1, 0, 0),
-  grounded: false,
   anchorPlanetIdx: null,
-  jumpBufferTimer: 0,
-  coyoteTimer: 0,
-  jumpLockTimer: 0,
-  sprintBobPhase: 0,
-  sprintBlend: 0,
-  stepPhase: 0,
+  surfaceType: 'land',
+  surfaceSlopeDeg: 0,
+  sliding: false,
   prevFov: null,
 };
 const _walkCenter = new THREE.Vector3();
@@ -1515,37 +1503,39 @@ const _walkTmp2 = new THREE.Vector3();
 const _walkTmp3 = new THREE.Vector3();
 const _walkX = new THREE.Vector3(1, 0, 0);
 const _walkY = new THREE.Vector3(0, 1, 0);
-const _walkGravity = new THREE.Vector3();
 const _walkDesired = new THREE.Vector3();
-const _walkNearestCenter = new THREE.Vector3();
 const _walkRight = new THREE.Vector3();
 const _walkRaycaster = new THREE.Raycaster();
 const _walkCamObstacles = [];
-const _walkContactField = {
-  gravity: new THREE.Vector3(),
-  nearestIdx: null,
-  center: new THREE.Vector3(),
-  radialDir: new THREE.Vector3(),
-  contactPoint: new THREE.Vector3(),
-  contactNormal: new THREE.Vector3(),
-  surfaceRadius: 0,
-  gap: Infinity,
-};
-const _walkSurfaceScratch = {
-  idx: null,
-  center: new THREE.Vector3(),
-  radialDir: new THREE.Vector3(),
-  point: new THREE.Vector3(),
-  normal: new THREE.Vector3(),
-  surfaceRadius: 0,
-  gap: Infinity,
-};
 
-const walkAvatar = new THREE.Group();
-const avatarSuitMat = new THREE.MeshLambertMaterial({ color: 0xe8edf9 });
-const avatarTrimMat = new THREE.MeshLambertMaterial({ color: 0x3b7dff });
-const avatarDarkMat = new THREE.MeshLambertMaterial({ color: 0x172235 });
-const avatarAccentMat = new THREE.MeshLambertMaterial({ color: 0xffc25d });
+function makeWalkSurfaceRecord() {
+  return {
+    idx: null,
+    center: new THREE.Vector3(),
+    radialDir: new THREE.Vector3(),
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    surfaceRadius: 0,
+    gap: Infinity,
+    medium: 'land',
+    slopeDeg: 0,
+  };
+}
+const _walkSurfaceScratch = makeWalkSurfaceRecord();
+const _walkBestLandSurface = makeWalkSurfaceRecord();
+const _walkBestAnySurface = makeWalkSurfaceRecord();
+
+function copyWalkSurface(src, dst) {
+  dst.idx = src.idx;
+  dst.center.copy(src.center);
+  dst.radialDir.copy(src.radialDir);
+  dst.point.copy(src.point);
+  dst.normal.copy(src.normal);
+  dst.surfaceRadius = src.surfaceRadius;
+  dst.gap = src.gap;
+  dst.medium = src.medium;
+  dst.slopeDeg = src.slopeDeg;
+}
 
 function makeCapsuleApprox(radius, midLength, radialSegments, material) {
   const capsule = new THREE.Group();
@@ -1567,54 +1557,17 @@ function makeCapsuleApprox(radius, midLength, radialSegments, material) {
   return capsule;
 }
 
-const avatarTorso = makeCapsuleApprox(0.028, 0.08, 12, avatarSuitMat);
-avatarTorso.position.y = 0.07;
-const avatarPack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.04), avatarTrimMat);
-avatarPack.position.set(-0.01, 0.07, -0.036);
-const avatarHead = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 10), avatarSuitMat);
-avatarHead.position.y = 0.145;
-const avatarVisor = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 8), avatarDarkMat);
-avatarVisor.position.set(0.018, 0.145, 0);
-const avatarChestLamp = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 8), avatarAccentMat);
-avatarChestLamp.position.set(0.03, 0.084, 0);
-
-const avatarLeftArmPivot = new THREE.Group();
-avatarLeftArmPivot.position.set(0.008, 0.1, -0.034);
-const avatarRightArmPivot = new THREE.Group();
-avatarRightArmPivot.position.set(0.008, 0.1, 0.034);
-const avatarLeftArm = makeCapsuleApprox(0.009, 0.045, 10, avatarSuitMat);
-avatarLeftArm.position.y = -0.03;
-const avatarRightArm = avatarLeftArm.clone(true);
-avatarLeftArmPivot.add(avatarLeftArm);
-avatarRightArmPivot.add(avatarRightArm);
-
-const avatarLeftLegPivot = new THREE.Group();
-avatarLeftLegPivot.position.set(0.004, 0.033, -0.014);
-const avatarRightLegPivot = new THREE.Group();
-avatarRightLegPivot.position.set(0.004, 0.033, 0.014);
-const avatarLeftLeg = makeCapsuleApprox(0.01, 0.052, 11, avatarSuitMat);
-avatarLeftLeg.position.y = -0.035;
-const avatarRightLeg = avatarLeftLeg.clone(true);
-avatarLeftLegPivot.add(avatarLeftLeg);
-avatarRightLegPivot.add(avatarRightLeg);
-
-const avatarLeftBoot = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 10, 8), avatarTrimMat);
-avatarLeftBoot.position.set(0.012, -0.06, 0);
-const avatarRightBoot = avatarLeftBoot.clone();
-avatarLeftLeg.add(avatarLeftBoot);
-avatarRightLeg.add(avatarRightBoot);
-
-walkAvatar.add(
-  avatarTorso,
-  avatarPack,
-  avatarHead,
-  avatarVisor,
-  avatarChestLamp,
-  avatarLeftArmPivot,
-  avatarRightArmPivot,
-  avatarLeftLegPivot,
-  avatarRightLegPivot
+const walkAvatar = new THREE.Group();
+const avatarBodyMat = new THREE.MeshLambertMaterial({ color: 0xe4ebfb });
+const avatarStripeMat = new THREE.MeshLambertMaterial({ color: 0x5aa6ff });
+const capsuleMidLen = Math.max(0.001, WALK_CFG.characterHeight - WALK_CFG.characterRadius * 2);
+const avatarBody = makeCapsuleApprox(WALK_CFG.characterRadius, capsuleMidLen, 16, avatarBodyMat);
+const avatarStripe = new THREE.Mesh(
+  new THREE.CylinderGeometry(WALK_CFG.characterRadius * 0.76, WALK_CFG.characterRadius * 0.76, WALK_CFG.characterHeight * 0.22, 16),
+  avatarStripeMat
 );
+avatarStripe.position.y = WALK_CFG.characterHeight * 0.12;
+walkAvatar.add(avatarBody, avatarStripe);
 walkAvatar.visible = false;
 scene.add(walkAvatar);
 
@@ -2019,7 +1972,19 @@ function getWalkTerrainMesh(mp) {
   return Array.isArray(pickables) && pickables.length ? pickables[0] : null;
 }
 
-function sampleWalkSurfaceForPlanet(mp, idx, pos) {
+function classifyWalkSurfaceMedium(mp, hitDistanceWorld) {
+  if (!mp?.obj) return 'land';
+  const liquid = getLiquidState(mp.obj.state.waterLevel, mp.obj.baseRadius || 0.8);
+  if (!liquid.hasLiquid) return 'land';
+  const scaledLiquidR = liquid.liquidR * Math.max(mp.obj.state.size, 0.05);
+  const eps = Math.max(0.004, scaledLiquidR * 0.012);
+  if (hitDistanceWorld > scaledLiquidR + eps) return 'land';
+  if (liquid.hasWater) return 'water';
+  if (liquid.hasLava) return 'lava';
+  return 'land';
+}
+
+function sampleWalkSurfaceForPlanet(mp, idx, pos, out = _walkSurfaceScratch) {
   const mesh = getWalkTerrainMesh(mp);
   if (!mesh) return null;
   getPlanetCenterRadius(mp, _walkCenter);
@@ -2039,59 +2004,54 @@ function sampleWalkSurfaceForPlanet(mp, idx, pos) {
   _walkTmp2.copy(_walkTmp);
   _walkTmp3.copy(hit.face?.normal || _walkTmp2).transformDirection(hit.object.matrixWorld).normalize();
   if (_walkTmp3.dot(_walkTmp2) < 0) _walkTmp3.multiplyScalar(-1);
-  _walkSurfaceScratch.idx = idx;
-  _walkSurfaceScratch.center.copy(_walkCenter);
-  _walkSurfaceScratch.radialDir.copy(_walkTmp2);
-  _walkSurfaceScratch.point.copy(hit.point);
-  _walkSurfaceScratch.normal.copy(_walkTmp3);
-  _walkSurfaceScratch.surfaceRadius = hit.distance;
-  _walkSurfaceScratch.gap = radialLen - hit.distance;
-  return _walkSurfaceScratch;
+  const medium = classifyWalkSurfaceMedium(mp, hit.distance);
+  const slopeDot = Math.max(-1, Math.min(1, _walkTmp3.dot(_walkTmp2)));
+  out.idx = idx;
+  out.center.copy(_walkCenter);
+  out.radialDir.copy(_walkTmp2);
+  out.point.copy(hit.point);
+  out.normal.copy(_walkTmp3);
+  out.surfaceRadius = hit.distance;
+  out.gap = radialLen - hit.distance;
+  out.medium = medium;
+  out.slopeDeg = Math.acos(slopeDot) * THREE.MathUtils.RAD2DEG;
+  return out;
 }
 
-// Phase 3 foundation: single entry point for walk gravity + surface contact.
-function sampleWalkField(pos) {
-  _walkContactField.gravity.set(0, 0, 0);
-  _walkContactField.nearestIdx = null;
-  _walkContactField.gap = Infinity;
-  let hasPlanet = false;
+function sampleBestWalkSurface(pos, preferredIdx = null) {
+  let bestLandGap = Infinity;
+  let bestAnyGap = Infinity;
+  let hasLand = false;
+  let hasAny = false;
 
+  function scoreSurface(sample) {
+    if (!sample) return;
+    const absGap = Math.abs(sample.gap);
+    if (absGap < bestAnyGap) {
+      bestAnyGap = absGap;
+      copyWalkSurface(sample, _walkBestAnySurface);
+      hasAny = true;
+    }
+    if (sample.medium !== 'land') return;
+    if (absGap < bestLandGap) {
+      bestLandGap = absGap;
+      copyWalkSurface(sample, _walkBestLandSurface);
+      hasLand = true;
+    }
+  }
+
+  if (preferredIdx !== null && preferredIdx >= 0 && preferredIdx < managedPlanets.length) {
+    scoreSurface(sampleWalkSurfaceForPlanet(managedPlanets[preferredIdx], preferredIdx, pos));
+  }
   for (let i = 0; i < managedPlanets.length; i++) {
-    const mp = managedPlanets[i];
-    if (!mp?.obj?.pivot) continue;
-    hasPlanet = true;
-    getPlanetCenterRadius(mp, _walkCenter);
-    _walkTmp.copy(_walkCenter).sub(pos);
-    const distSq = Math.max(0.0004, _walkTmp.lengthSq());
-    const dist = Math.sqrt(distSq);
-    const mass = Math.max(0.25, getPlanetMass(mp));
-    const invDist3 = 1 / (distSq * dist);
-    _walkContactField.gravity.addScaledVector(_walkTmp, WALK_CFG.gravityScale * mass * invDist3);
-
-    const surface = sampleWalkSurfaceForPlanet(mp, i, pos);
-    if (!surface) continue;
-    if (Math.abs(surface.gap) < Math.abs(_walkContactField.gap)) {
-      _walkContactField.nearestIdx = i;
-      _walkContactField.center.copy(surface.center);
-      _walkContactField.radialDir.copy(surface.radialDir);
-      _walkContactField.contactPoint.copy(surface.point);
-      _walkContactField.contactNormal.copy(surface.normal);
-      _walkContactField.surfaceRadius = surface.surfaceRadius;
-      _walkContactField.gap = surface.gap;
-      _walkNearestCenter.copy(surface.center);
-    }
+    if (i === preferredIdx) continue;
+    scoreSurface(sampleWalkSurfaceForPlanet(managedPlanets[i], i, pos));
   }
-
-  if (!hasPlanet) return false;
-  if (_walkContactField.gravity.lengthSq() < 1e-8) {
-    if (_walkContactField.nearestIdx !== null) {
-      _walkContactField.gravity.copy(_walkNearestCenter).sub(pos).normalize().multiplyScalar(0.001);
-    } else {
-      _walkContactField.gravity.set(0, -0.001, 0);
-    }
+  if (hasLand && (!hasAny || bestLandGap <= bestAnyGap + WALK_CFG.landPriorityGapAllowance)) {
+    return _walkBestLandSurface;
   }
-  _walkGravity.copy(_walkContactField.gravity);
-  return true;
+  if (hasAny) return _walkBestAnySurface;
+  return null;
 }
 
 function resolveWalkCameraOcclusion(target, desiredPos, outPos) {
@@ -2114,24 +2074,22 @@ function resolveWalkCameraOcclusion(target, desiredPos, outPos) {
 
   const hits = _walkRaycaster.intersectObjects(_walkCamObstacles, false);
   if (!hits.length) return outPos;
-  const safeDist = Math.max(0.28, hits[0].distance - WALK_CFG.tpCollisionPadding);
+  const safeDist = Math.max(0.08, hits[0].distance - WALK_CFG.tpCollisionPadding);
   outPos.copy(target).addScaledVector(_walkTmp3, safeDist);
   return outPos;
 }
 
 function setWalkTpDistanceTarget(nextValue) {
   walkTpDistanceTarget = Math.max(WALK_CFG.tpDistanceMin, Math.min(WALK_CFG.tpDistanceMax, nextValue));
-  if (walkCameraMode !== 'tp') return;
   refreshWalkUi();
 }
 
 function queueWalkJump() {
-  walkState.jumpBufferTimer = Math.max(walkState.jumpBufferTimer, WALK_CFG.jumpBuffer);
+  // Intentional no-op in redesigned walker: movement is grounded + slope sliding only.
 }
 
 function toggleWalkCameraMode() {
-  walkCameraMode = walkCameraMode === 'tp' ? 'fp' : 'tp';
-  refreshWalkUi();
+  // Intentional no-op: walk camera is always free-look third-person.
 }
 
 function clearWalkInputState() {
@@ -2157,16 +2115,14 @@ function refreshWalkUi() {
   if (badge) {
     badge.style.display = walkMode.active ? 'block' : 'none';
     if (walkMode.active) {
-      badge.textContent = walkCameraMode === 'fp'
-        ? '1st'
-        : `3rd ${walkTpDistanceTarget.toFixed(1)}x`;
+      const mediumTag = walkState.surfaceType === 'lava' ? 'LAVA' : (walkState.surfaceType === 'water' ? 'WATER' : 'LAND');
+      badge.textContent = `${mediumTag} ${walkTpDistanceTarget.toFixed(2)}x`;
     }
   }
   if (viewBtn) {
-    viewBtn.textContent = walkCameraMode === 'fp' ? 'FP' : 'TP';
-    viewBtn.title = walkCameraMode === 'fp'
-      ? 'Switch to third-person view (V/C)'
-      : 'Switch to first-person view (V/C)';
+    viewBtn.textContent = 'FREE';
+    viewBtn.title = 'Free drag camera is always enabled';
+    viewBtn.disabled = true;
   }
 }
 
@@ -2183,6 +2139,11 @@ function stopWalkMode() {
   clearWalkInputState();
   walkLookInput.x = 0;
   walkLookInput.y = 0;
+  walkState.velocity.set(0, 0, 0);
+  walkState.anchorPlanetIdx = null;
+  walkState.surfaceType = 'land';
+  walkState.surfaceSlopeDeg = 0;
+  walkState.sliding = false;
   refreshWalkUi();
 }
 
@@ -2200,38 +2161,45 @@ function startWalkMode(idx) {
   walkLookInput.x = 0;
   walkLookInput.y = 0;
   clearWalkInputState();
-  setWalkTpDistanceTarget(walkTpDistanceTarget);
+  setWalkTpDistanceTarget(WALK_CFG.cameraDistance);
   walkTpDistance = walkTpDistanceTarget;
+
   mp.obj.pivot.getWorldPosition(_walkCenter);
-  walkState.up.copy(camera.position).sub(_walkCenter);
-  if (walkState.up.lengthSq() < 1e-6) walkState.up.set(0, 1, 0);
-  walkState.up.normalize();
-  camera.getWorldDirection(_walkTmp);
-  _walkTmp.projectOnPlane(walkState.up);
-  if (_walkTmp.lengthSq() < 1e-6) _walkTmp.crossVectors(_walkX, walkState.up);
-  if (_walkTmp.lengthSq() < 1e-6) _walkTmp.crossVectors(_walkY, walkState.up);
-  walkState.forward.copy(_walkTmp).normalize();
-  walkState.viewDir.copy(walkState.forward);
   walkState.position.copy(camera.position);
-  const startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
+  let startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
   if (startSurface) {
-    walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
-    walkState.up.copy(startSurface.normal).normalize();
+    walkState.position.copy(startSurface.point).addScaledVector(startSurface.normal, WALK_CFG.footOffset);
+    walkState.up.copy(startSurface.radialDir).normalize();
   } else {
-    const fallbackR = getPlanetCenterRadius(mp, _walkCenter);
-    walkState.position.copy(_walkCenter).addScaledVector(walkState.up, fallbackR + WALK_CFG.footOffset);
+    const fallbackR = getPlanetCenterRadius(mp, _walkCenter) + WALK_CFG.footOffset;
+    walkState.up.copy(camera.position).sub(_walkCenter);
+    if (walkState.up.lengthSq() < 1e-8) walkState.up.set(0, 1, 0);
+    walkState.up.normalize();
+    walkState.position.copy(_walkCenter).addScaledVector(walkState.up, fallbackR);
+    startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
+    if (startSurface) {
+      walkState.position.copy(startSurface.point).addScaledVector(startSurface.normal, WALK_CFG.footOffset);
+      walkState.up.copy(startSurface.radialDir).normalize();
+    }
   }
+
+  camera.getWorldDirection(_walkTmp);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.set(1, 0, 0);
+  walkState.viewDir.copy(_walkTmp.normalize());
+  walkState.forward.copy(walkState.viewDir).projectOnPlane(walkState.up);
+  if (walkState.forward.lengthSq() < 1e-8) {
+    walkState.forward.copy(_walkX).projectOnPlane(walkState.up);
+    if (walkState.forward.lengthSq() < 1e-8) walkState.forward.crossVectors(_walkY, walkState.up);
+  }
+  walkState.forward.normalize();
+
   walkState.velocity.set(0, 0, 0);
-  walkState.grounded = true;
   walkState.anchorPlanetIdx = idx;
-  walkState.jumpBufferTimer = 0;
-  walkState.coyoteTimer = WALK_CFG.coyoteTime;
-  walkState.jumpLockTimer = 0;
-  walkState.sprintBobPhase = 0;
-  walkState.sprintBlend = 0;
-  walkState.stepPhase = 0;
+  walkState.surfaceType = startSurface ? startSurface.medium : 'land';
+  walkState.surfaceSlopeDeg = startSurface ? startSurface.slopeDeg : 0;
+  walkState.sliding = false;
   walkAvatar.position.copy(walkState.position);
-  walkAvatar.visible = walkCameraMode !== 'fp';
+  walkAvatar.visible = true;
   refreshWalkUi();
 }
 
@@ -2245,35 +2213,35 @@ function applyWalkLook() {
   if (Math.abs(yaw) > 1e-6) {
     walkState.viewDir.applyAxisAngle(walkState.up, yaw).normalize();
   }
-  const upDotBefore = Math.abs(walkState.viewDir.dot(walkState.up));
-  if (upDotBefore > WALK_CFG.upParallelLimit) {
-    _walkTmp.copy(walkState.viewDir).projectOnPlane(walkState.up);
-    if (_walkTmp.lengthSq() > 1e-8) walkState.viewDir.copy(_walkTmp.normalize());
-  }
   _walkRight.crossVectors(walkState.viewDir, walkState.up);
   if (_walkRight.lengthSq() < 1e-8) _walkRight.crossVectors(walkState.forward, walkState.up);
+  if (_walkRight.lengthSq() < 1e-8) _walkRight.crossVectors(_walkX, walkState.up);
   if (_walkRight.lengthSq() < 1e-8) return;
   _walkRight.normalize();
   if (Math.abs(pitch) > 1e-6) {
     _walkQ.setFromAxisAngle(_walkRight, pitch);
-    _walkTmp.copy(walkState.viewDir).applyQuaternion(_walkQ).normalize();
-    if (Math.abs(_walkTmp.dot(walkState.up)) < WALK_CFG.pitchDotLimit) {
-      walkState.viewDir.copy(_walkTmp);
-    }
+    walkState.viewDir.applyQuaternion(_walkQ).normalize();
   }
 }
 
+function getWalkSurfaceSpeedFactor(surface) {
+  if (!surface) return 1;
+  if (surface.medium === 'water') return WALK_CFG.waterSpeedFactor;
+  if (surface.medium === 'lava') return WALK_CFG.lavaSpeedFactor;
+  return 1;
+}
+
 function updateWalkMode(dt) {
-  if (!sampleWalkField(walkState.position)) { stopWalkMode(); return; }
-  walkState.up.copy(_walkGravity).multiplyScalar(-1).normalize();
-  walkState.jumpBufferTimer = Math.max(0, walkState.jumpBufferTimer - dt);
-  walkState.jumpLockTimer = Math.max(0, walkState.jumpLockTimer - dt);
-  if (walkState.grounded) walkState.coyoteTimer = WALK_CFG.coyoteTime;
-  else walkState.coyoteTimer = Math.max(0, walkState.coyoteTimer - dt);
+  const currentSurface = sampleBestWalkSurface(walkState.position, walkState.anchorPlanetIdx);
+  if (!currentSurface) { stopWalkMode(); return; }
+  walkState.anchorPlanetIdx = currentSurface.idx;
+  walkState.surfaceType = currentSurface.medium;
+  walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
+  walkState.up.copy(currentSurface.radialDir).normalize();
 
   applyWalkLook();
 
-  walkState.forward.copy(walkState.viewDir).projectOnPlane(walkState.up);
+  walkState.forward.copy(walkState.viewDir).projectOnPlane(currentSurface.normal);
   if (walkState.forward.lengthSq() < 1e-8) {
     walkState.forward.copy(_walkX).projectOnPlane(walkState.up);
     if (walkState.forward.lengthSq() < 1e-8) walkState.forward.crossVectors(_walkY, walkState.up);
@@ -2282,204 +2250,72 @@ function updateWalkMode(dt) {
   _walkRight.crossVectors(walkState.forward, walkState.up).normalize();
 
   const moveX = ((walkInput.right ? 1 : 0) - (walkInput.left ? 1 : 0)) + walkAnalog.x;
-  const moveZ = ((walkInput.fwd ? 1 : 0) - (walkInput.back ? 1 : 0)) + walkAnalog.y;
-  _walkDesired.copy(_walkRight).multiplyScalar(moveX).addScaledVector(walkState.forward, moveZ);
+  const moveY = ((walkInput.fwd ? 1 : 0) - (walkInput.back ? 1 : 0)) + walkAnalog.y;
+  _walkDesired.copy(_walkRight).multiplyScalar(moveX).addScaledVector(walkState.forward, moveY);
   const moveLen = _walkDesired.length();
   if (moveLen > 1) _walkDesired.multiplyScalar(1 / moveLen);
 
-  const sprinting = walkInput.sprint && walkState.grounded && moveLen > 0.1;
-  const maxSpeed = (walkState.grounded ? WALK_CFG.maxGroundSpeed : WALK_CFG.maxAirSpeed) * (sprinting ? WALK_CFG.sprintBoost : 1);
-  _walkDesired.multiplyScalar(maxSpeed);
+  const sprinting = walkInput.sprint && moveLen > 0.08;
+  const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
+  const desiredSpeed = WALK_CFG.moveSpeed * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
+  _walkDesired.projectOnPlane(currentSurface.normal);
+  if (_walkDesired.lengthSq() > 1e-8) _walkDesired.setLength(desiredSpeed);
 
-  const accel = walkState.grounded ? WALK_CFG.groundAccel : WALK_CFG.airAccel;
-  _walkTmp.copy(walkState.velocity);
-  const radialSpeed = _walkTmp.dot(walkState.up);
-  _walkTmp.addScaledVector(walkState.up, -radialSpeed);
-  _walkTmp2.copy(_walkDesired).sub(_walkTmp);
-  const maxAccelStep = accel * dt;
-  if (_walkTmp2.lengthSq() > maxAccelStep * maxAccelStep) _walkTmp2.setLength(maxAccelStep);
-  walkState.velocity.add(_walkTmp2);
-
-  _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up);
-  const drag = walkState.grounded ? WALK_CFG.groundDrag : WALK_CFG.airDrag;
-  walkState.velocity.addScaledVector(_walkTmp, -Math.min(1, drag * dt));
-  if (walkState.grounded && moveLen < 0.04) {
-    _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up);
-    walkState.velocity.addScaledVector(_walkTmp, -Math.min(1, 20 * dt));
+  _walkTmp.copy(walkState.velocity).projectOnPlane(currentSurface.normal);
+  const accelStep = Math.min(1, WALK_CFG.acceleration * dt);
+  _walkTmp.lerp(_walkDesired, accelStep);
+  if (moveLen < 0.05) {
+    _walkTmp.multiplyScalar(Math.max(0, 1 - WALK_CFG.drag * dt));
   }
 
-  if (walkState.jumpBufferTimer > 0 && (walkState.grounded || walkState.coyoteTimer > 0)) {
-    const outSpeed = walkState.velocity.dot(walkState.up);
-    if (outSpeed < WALK_CFG.jumpSpeed) {
-      walkState.velocity.addScaledVector(walkState.up, WALK_CFG.jumpSpeed - outSpeed);
+  if (currentSurface.slopeDeg > WALK_CFG.slipEnterDeg) walkState.sliding = true;
+  else if (currentSurface.slopeDeg <= WALK_CFG.slipExitDeg) walkState.sliding = false;
+  if (walkState.sliding) {
+    _walkTmp2.copy(currentSurface.radialDir).multiplyScalar(-1).projectOnPlane(currentSurface.normal);
+    const downhillLen = _walkTmp2.length();
+    if (downhillLen > 1e-8) {
+      _walkTmp2.multiplyScalar(1 / downhillLen);
+      const slopeGain = Math.max(0, Math.min(1, (currentSurface.slopeDeg - WALK_CFG.slipExitDeg) / (90 - WALK_CFG.slipExitDeg)));
+      const slideImpulse = WALK_CFG.slideAccel * (0.45 + slopeGain * 1.2);
+      _walkTmp.addScaledVector(_walkTmp2, slideImpulse * dt);
     }
-    walkState.grounded = false;
-    walkState.coyoteTimer = 0;
-    walkState.jumpBufferTimer = 0;
-    walkState.jumpLockTimer = WALK_CFG.jumpLock;
   }
 
-  walkState.velocity.addScaledVector(_walkGravity, dt);
-  walkState.position.addScaledVector(walkState.velocity, dt);
-
-  // Extra interior push-out keeps the walker from getting trapped where spheres overlap.
-  managedPlanets.forEach(mp => {
-    if (!mp?.obj?.pivot) return;
-    const r = getPlanetCenterRadius(mp, _walkCenter);
-    _walkTmp.copy(walkState.position).sub(_walkCenter);
-    const d = _walkTmp.length();
-    if (d < 1e-6) {
-      _walkTmp.copy(walkState.up);
-      walkState.position.addScaledVector(_walkTmp, r * 0.18);
-      return;
-    }
-    const innerLimit = r * 0.62;
-    if (d < innerLimit) {
-      const push = innerLimit - d;
-      _walkTmp.multiplyScalar(1 / d);
-      walkState.position.addScaledVector(_walkTmp, push);
-      const inward = walkState.velocity.dot(_walkTmp);
-      if (inward < 0) walkState.velocity.addScaledVector(_walkTmp, -inward);
-    }
-  });
-
-  if (!sampleWalkField(walkState.position)) { stopWalkMode(); return; }
-  walkState.up.copy(_walkGravity).multiplyScalar(-1).normalize();
-  if (_walkContactField.nearestIdx !== null) {
-    const radialDir = _walkContactField.radialDir;
-    let gap = _walkContactField.gap;
-    const targetGap = WALK_CFG.footOffset;
-    if (gap < targetGap) {
-      const pushOut = targetGap - gap;
-      walkState.position.addScaledVector(radialDir, pushOut);
-      const inward = walkState.velocity.dot(radialDir);
-      if (inward < 0) walkState.velocity.addScaledVector(radialDir, -inward);
-      gap = targetGap;
-    }
-    const approachSpeed = walkState.velocity.dot(radialDir);
-    const contactError = Math.abs(gap - targetGap);
-    const shouldSnap =
-      walkState.jumpLockTimer <= 0 &&
-      contactError <= WALK_CFG.snapDistance &&
-      approachSpeed <= 1.2;
-    if (shouldSnap) {
-      walkState.position.copy(_walkContactField.contactPoint).addScaledVector(radialDir, targetGap);
-      if (approachSpeed < 0) walkState.velocity.addScaledVector(radialDir, -approachSpeed);
-      walkState.grounded = true;
-    } else {
-      walkState.grounded = false;
-    }
-    walkState.anchorPlanetIdx = _walkContactField.nearestIdx;
-
-    _walkTmp.copy(_walkContactField.contactNormal);
-    if (_walkTmp.dot(walkState.up) < 0) _walkTmp.multiplyScalar(-1);
-    walkState.up.lerp(_walkTmp.normalize(), walkState.grounded ? 0.42 : 0.18).normalize();
-    if (walkState.grounded) {
-      const radial = walkState.velocity.dot(radialDir);
-      walkState.velocity.addScaledVector(radialDir, -radial);
-    }
+  _walkTmp3.copy(walkState.position).addScaledVector(_walkTmp, dt);
+  const nextSurface = sampleBestWalkSurface(_walkTmp3, currentSurface.idx);
+  if (!nextSurface) {
+    walkState.position.copy(currentSurface.point).addScaledVector(currentSurface.normal, WALK_CFG.footOffset);
+    walkState.velocity.set(0, 0, 0);
   } else {
-    walkState.grounded = false;
-    walkState.anchorPlanetIdx = null;
-    if (walkMode.spawnPlanetIdx !== null) {
-      const spawnPlanet = managedPlanets[walkMode.spawnPlanetIdx];
-      const fallbackSurface = spawnPlanet
-        ? sampleWalkSurfaceForPlanet(spawnPlanet, walkMode.spawnPlanetIdx, walkState.position)
-        : null;
-      if (fallbackSurface && fallbackSurface.gap <= WALK_CFG.snapDistance * 3.5) {
-        walkState.position.copy(fallbackSurface.point).addScaledVector(fallbackSurface.normal, WALK_CFG.footOffset);
-        walkState.up.copy(fallbackSurface.normal).normalize();
-        const inward = walkState.velocity.dot(fallbackSurface.normal);
-        if (inward < 0) walkState.velocity.addScaledVector(fallbackSurface.normal, -inward);
-        walkState.grounded = true;
-        walkState.anchorPlanetIdx = walkMode.spawnPlanetIdx;
-      }
-    }
+    walkState.position.copy(nextSurface.point).addScaledVector(nextSurface.normal, WALK_CFG.footOffset);
+    _walkTmp.projectOnPlane(nextSurface.normal);
+    walkState.velocity.copy(_walkTmp);
+    walkState.anchorPlanetIdx = nextSurface.idx;
+    walkState.surfaceType = nextSurface.medium;
+    walkState.surfaceSlopeDeg = nextSurface.slopeDeg;
+    walkState.up.copy(nextSurface.radialDir).normalize();
   }
-
-  walkState.sprintBlend += ((sprinting ? 1 : 0) - walkState.sprintBlend) * Math.min(1, dt * 10);
-  if (walkState.grounded && sprinting) {
-    walkState.sprintBobPhase += dt * WALK_CFG.sprintBobFreq;
-  } else {
-    walkState.sprintBobPhase += dt * 3.2;
-  }
-  const bob = Math.sin(walkState.sprintBobPhase) * WALK_CFG.sprintBobAmp * walkState.sprintBlend;
-
-  const tangentSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
-  const strideBlend = Math.min(1, tangentSpeed / Math.max(0.001, WALK_CFG.maxGroundSpeed * 0.9));
-  const groundedStride = walkState.grounded ? strideBlend : 0;
-  walkState.stepPhase += dt * (2.5 + tangentSpeed * 8.5);
-  const armSwing = Math.sin(walkState.stepPhase) * 0.5 * groundedStride;
-  const legSwing = Math.sin(walkState.stepPhase) * 0.75 * groundedStride;
-  const bodyTilt = Math.sin(walkState.stepPhase) * 0.045 * groundedStride;
-  avatarLeftArmPivot.rotation.z = -armSwing;
-  avatarRightArmPivot.rotation.z = armSwing;
-  avatarLeftLegPivot.rotation.z = legSwing;
-  avatarRightLegPivot.rotation.z = -legSwing;
-  avatarTorso.rotation.z = bodyTilt;
-  avatarHead.rotation.z = -bodyTilt * 0.35;
-  avatarPack.rotation.z = bodyTilt * 0.2;
 
   walkAvatar.position.copy(walkState.position);
-  _walkBasisZ.crossVectors(walkState.forward, walkState.up).normalize();
-  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.copy(_walkRight);
+  _walkBasisZ.crossVectors(walkState.forward, walkState.up);
+  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.crossVectors(_walkRight, walkState.up);
+  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.set(0, 0, 1);
+  _walkBasisZ.normalize();
   _walkBasisMat.makeBasis(walkState.forward, walkState.up, _walkBasisZ);
   _walkQ.setFromRotationMatrix(_walkBasisMat);
-  walkAvatar.quaternion.slerp(_walkQ, 0.35);
+  walkAvatar.quaternion.slerp(_walkQ, Math.min(1, dt * WALK_CFG.avatarTurnLerp));
+  walkAvatar.visible = true;
 
-  const fpMode = walkCameraMode === 'fp';
-  walkAvatar.visible = !fpMode;
-  if (fpMode) {
-    const fpBob = Math.sin(walkState.sprintBobPhase) * WALK_CFG.fpBobAmp * walkState.sprintBlend;
-    _walkCamPos.copy(walkState.position)
-      .addScaledVector(walkState.up, WALK_CFG.fpEyeHeight + fpBob)
-      .addScaledVector(walkState.forward, WALK_CFG.fpForwardOffset);
-    _walkCamTarget.copy(_walkCamPos).addScaledVector(walkState.viewDir, WALK_CFG.fpLookDistance);
-    camera.position.lerp(_walkCamPos, 0.42);
-    camera.up.lerp(walkState.up, 0.46).normalize();
-    camera.lookAt(_walkCamTarget);
-  } else {
-    walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
-    _walkTmp.copy(walkState.viewDir);
-    _walkTmp.projectOnPlane(walkState.up);
-    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(walkState.forward);
-    _walkTmp.projectOnPlane(walkState.up);
-    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(_walkRight);
-    _walkTmp.normalize();
-    _walkCamTarget.copy(walkState.position)
-      .addScaledVector(walkState.up, WALK_CFG.cameraTargetLift + bob)
-      .addScaledVector(_walkTmp, WALK_CFG.cameraLead * 0.35);
-    _walkCamPos.copy(walkState.position)
-      .addScaledVector(walkState.up, WALK_CFG.cameraHeight + bob)
-      .addScaledVector(_walkTmp, -walkTpDistance);
-    if (walkState.anchorPlanetIdx !== null) {
-      const anchorPlanet = managedPlanets[walkState.anchorPlanetIdx];
-      if (anchorPlanet) {
-        const anchorRadius = getPlanetCenterRadius(anchorPlanet, _walkCenter);
-        _walkTmp2.copy(_walkCamPos).sub(_walkCenter);
-        const camRadius = _walkTmp2.length();
-        const minCamRadius = anchorRadius + WALK_CFG.tpSurfaceClearance;
-        if (camRadius < minCamRadius) {
-          if (camRadius < 1e-6) _walkTmp2.copy(walkState.up);
-          else _walkTmp2.multiplyScalar(1 / camRadius);
-          _walkCamPos.copy(_walkCenter).addScaledVector(_walkTmp2, minCamRadius);
-        }
-      }
-    }
-    if (walkState.anchorPlanetIdx !== null) {
-      const anchorPlanet = managedPlanets[walkState.anchorPlanetIdx];
-      if (anchorPlanet) {
-        const camSurface = sampleWalkSurfaceForPlanet(anchorPlanet, walkState.anchorPlanetIdx, _walkCamPos);
-        if (camSurface && camSurface.gap < WALK_CFG.tpSurfaceClearance) {
-          _walkCamPos.copy(camSurface.point).addScaledVector(camSurface.normal, WALK_CFG.tpSurfaceClearance);
-        }
-      }
-    }
-    resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
-    camera.position.lerp(_walkCamPos, 0.24);
-    camera.up.lerp(walkState.up, 0.35).normalize();
-    camera.lookAt(_walkCamTarget);
-  }
+  walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
+  _walkCamTarget.copy(walkState.position).addScaledVector(walkState.up, WALK_CFG.cameraTargetLift);
+  _walkCamPos.copy(_walkCamTarget)
+    .addScaledVector(walkState.viewDir, -walkTpDistance)
+    .addScaledVector(walkState.up, WALK_CFG.cameraHeight);
+  resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
+  camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
+  _walkTmp.copy(_walkCamTarget).addScaledVector(walkState.viewDir, WALK_CFG.cameraLead);
+  camera.up.lerp(walkState.up, Math.min(1, dt * 8)).normalize();
+  camera.lookAt(_walkTmp);
 }
 
 function updateCamera(curScale) {
