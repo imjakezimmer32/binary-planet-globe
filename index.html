@@ -1733,10 +1733,10 @@ const walkInput = { left: false, right: false, fwd: false, back: false, sprint: 
 const walkLookInput = { x: 0, y: 0 };
 const walkAnalog = { x: 0, y: 0 };
 const WALK_CFG = {
-  characterRadius: 0.024,
-  characterHeight: 0.11,
-  footOffset: 0.055,
-  moveSpeed: 0.14,
+  characterRadius: 0.012,
+  characterHeight: 0.048,
+  footOffset: 0.024,
+  moveSpeed: 0.10,
   sprintBoost: 1.25,
   acceleration: 6.4,
   drag: 9.2,
@@ -1747,13 +1747,13 @@ const WALK_CFG = {
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
   bounceFreq: 8.2,
-  bounceAmp: 0.008,
+  bounceAmp: 0.0045,
   bounceResponse: 8.5,
   walkFov: 62,
   cameraDistance: 0.86,
-  cameraHeight: 0.16,
+  cameraHeight: 0.11,
   cameraLead: 0.42,
-  cameraTargetLift: 0.08,
+  cameraTargetLift: 0.055,
   cameraLag: 12.5,
   avatarTurnLerp: 10.5,
   tpDistanceMin: 0.25,
@@ -4576,14 +4576,33 @@ function updateTwinButtonVisibility() {
 }
 
 function canWalkFromSelection() {
-  return selectedPlanetIdx !== null && !!managedPlanets[selectedPlanetIdx];
+  return resolveWalkStartPlanetIdx() !== null;
+}
+
+function resolveWalkStartPlanetIdx() {
+  if (selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]?.obj?.pivot) {
+    return selectedPlanetIdx;
+  }
+  let bestIdx = null;
+  let bestDistSq = Infinity;
+  for (let i = 0; i < managedPlanets.length; i++) {
+    const mp = managedPlanets[i];
+    if (!mp?.obj?.pivot) continue;
+    mp.obj.pivot.getWorldPosition(_walkTmp);
+    const dSq = _walkTmp.distanceToSquared(camera.position);
+    if (dSq < bestDistSq) {
+      bestDistSq = dSq;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function updateWalkButtonVisibility() {
   if (!btnWalk) return;
   const inPlanetView = cameraMode === 'planet';
   btnWalk.style.display = inPlanetView ? '' : 'none';
-  btnWalk.disabled = !inPlanetView || !canWalkFromSelection();
+  btnWalk.disabled = !inPlanetView || resolveWalkStartPlanetIdx() === null;
   if (walkControlsEl) walkControlsEl.style.display = walkMode.active ? 'grid' : 'none';
   refreshWalkUi();
 }
@@ -4669,17 +4688,27 @@ addTwinBtn.addEventListener('click', e => {
   addMoonFromSelectionUi();
 });
 
-btnWalk.addEventListener('click', e => {
+let lastWalkButtonPressMs = 0;
+function onWalkButtonPressed(e) {
+  const now = performance.now();
+  if (now - lastWalkButtonPressMs < 220) return;
+  lastWalkButtonPressMs = now;
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
   e.stopPropagation();
   if (walkMode.active) {
     stopWalkMode();
     updateWalkButtonVisibility();
     return;
   }
-  if (cameraMode !== 'planet' || !canWalkFromSelection()) return;
-  startWalkMode(selectedPlanetIdx);
+  if (cameraMode !== 'planet') setCamMode('planet');
+  const startIdx = resolveWalkStartPlanetIdx();
+  if (startIdx === null) return;
+  if (selectedPlanetIdx !== startIdx) selectPlanet(startIdx);
+  startWalkMode(startIdx);
   updateWalkButtonVisibility();
-});
+}
+btnWalk.addEventListener('click', onWalkButtonPressed);
+btnWalk.addEventListener('pointerup', onWalkButtonPressed);
 
 function setWalkInputFlag(key, down) {
   if (key === 'left') walkInput.left = down;
