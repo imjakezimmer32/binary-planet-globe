@@ -2681,7 +2681,13 @@ function getWalkSurfaceSpeedFactor(surface) {
 }
 
 function updateWalkMode(dt) {
-  const currentSurface = sampleBestWalkSurface(walkState.position, walkState.anchorPlanetIdx);
+  const anchorIdx = walkState.anchorPlanetIdx !== null
+    ? walkState.anchorPlanetIdx
+    : walkMode.spawnPlanetIdx;
+  const anchorMp = anchorIdx !== null ? managedPlanets[anchorIdx] : null;
+  const currentSurface = anchorMp
+    ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position)
+    : null;
   if (!currentSurface) {
     walkState.missedSurfaceFrames += 1;
     if (walkState.missedSurfaceFrames >= 4) {
@@ -2702,7 +2708,7 @@ function updateWalkMode(dt) {
     return;
   }
   walkState.missedSurfaceFrames = 0;
-  walkState.anchorPlanetIdx = currentSurface.idx;
+  walkState.anchorPlanetIdx = anchorIdx;
   walkState.surfaceType = currentSurface.medium;
   walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
   walkState.up.copy(currentSurface.radialDir).normalize();
@@ -2750,15 +2756,19 @@ function updateWalkMode(dt) {
   }
 
   _walkTmp3.copy(walkState.position).addScaledVector(_walkTmp, dt);
-  const nextSurface = sampleBestWalkSurface(_walkTmp3, currentSurface.idx);
+  const nextSurface = anchorMp
+    ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, _walkTmp3)
+    : null;
   if (!nextSurface) {
     walkState.position.copy(currentSurface.point).addScaledVector(currentSurface.radialDir, WALK_CFG.footOffset);
     walkState.velocity.set(0, 0, 0);
+    walkState.surfaceType = currentSurface.medium;
+    walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
   } else {
     walkState.position.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
     _walkTmp.projectOnPlane(nextSurface.normal);
     walkState.velocity.copy(_walkTmp);
-    walkState.anchorPlanetIdx = nextSurface.idx;
+    walkState.anchorPlanetIdx = anchorIdx;
     walkState.surfaceType = nextSurface.medium;
     walkState.surfaceSlopeDeg = nextSurface.slopeDeg;
     walkState.up.copy(nextSurface.radialDir).normalize();
@@ -5216,10 +5226,6 @@ function animate() {
   const wireOpacity = 0.25 * wireFade;
   managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
 
-  // Camera orbits the sun (world origin), pulls back as curScale grows
-  updateCamera(curScale);
-  updateDynamicCameraFar();
-
   const simWarp = getSimulationWarp(timeWarp);
   if (simWarp > 0) {
     const dt    = BASE_DT * simWarp;
@@ -5385,6 +5391,10 @@ function animate() {
   updatePlanetSelectionEditor();
   updateSunSelectionEditor();
   syncSolGalaxyMenuVisibility();
+
+  // Camera update runs after all planet/world transforms so walk mode stays planet-locked.
+  updateCamera(curScale);
+  updateDynamicCameraFar();
 
   renderer.render(scene, camera);
 }
