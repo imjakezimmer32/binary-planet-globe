@@ -135,15 +135,16 @@ const WALK_CFG = {
   cameraTargetLift: 0.009,
   cameraLag: 12.5,
   avatarTurnLerp: 10.5,
-  tpDistanceMin: 0.056,
+  tpDistanceMin: 0.042,
   tpDistanceMax: 1.75,
   tpZoomWheelStep: 1.09,
   tpZoomSmooth: 8.2,
-  tpCollisionPadding: 0.08,
+  /** Along look-from-target ray: subtract from hit distance (stay outside mesh). */
+  tpCollisionPadding: 0.032,
   /** Below this pull distance, camera blends toward first-person eye (smooth, no hard mode flip). */
-  tpFpsBlendStart: 0.108,
+  tpFpsBlendStart: 0.095,
   /** At or below this distance, first-person blend is full (eye + slight pullback from head). */
-  tpFpsBlendEnd: 0.068,
+  tpFpsBlendEnd: 0.056,
   /** Eye height above walk anchor along planet up (feet/anchor → eyes). */
   fpEyeHeight: 0.0194,
   /** Nudge camera back from eye along viewDir so near-plane does not clip the pill. */
@@ -187,6 +188,13 @@ const WALK_CFG = {
   playerLightDecay: 2,
   /** Lamp height along local body axis (fraction of characterHeight). */
   playerLightHeightMul: 0.4,
+  /**
+   * Minimum clearance from sampled terrain when forcing the eye outside meshes (world units).
+   * Smaller = camera can hug polygons tighter; too small risks near-plane flicker.
+   */
+  cameraTerrainClearance: 0.028,
+  /** Minimum distance along target→camera spoke when ray hits terrain (occlusion pull). */
+  cameraOcclusionMinSpoke: 0.024,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -1200,13 +1208,11 @@ function resolveWalkCameraOcclusion(target, desiredPos, outPos) {
 
   const hits = _walkRaycaster.intersectObjects(_walkCamObstacles, false);
   if (!hits.length) return outPos;
-  const safeDist = Math.max(0.08, hits[0].distance - WALK_CFG.tpCollisionPadding);
+  const minSpoke = WALK_CFG.cameraOcclusionMinSpoke;
+  const safeDist = Math.max(minSpoke, hits[0].distance - WALK_CFG.tpCollisionPadding);
   outPos.copy(target).addScaledVector(_walkTmp3, safeDist);
   return outPos;
 }
-
-/** Minimum radial clearance beyond terrain along camera spoke (world units). */
-const CAMERA_PLANET_SURFACE_PAD = 0.072;
 
 /**
  * Keep the camera outside all planet terrain meshes (orbit + walk + transitions).
@@ -1230,7 +1236,7 @@ function enforceCameraOutsidePlanetMeshes(maxPasses = 4) {
       if (!s) s = findWalkSurfaceRadialSweep(mp, i, camera.position);
       if (!s) continue;
 
-      const pad = Math.max(CAMERA_PLANET_SURFACE_PAD, WALK_CFG.tpCollisionPadding * 1.08);
+      const pad = Math.max(WALK_CFG.cameraTerrainClearance, WALK_CFG.tpCollisionPadding * 1.02);
       if (s.gap >= pad) continue;
 
       _walkSpawnRadial.copy(camera.position).sub(s.center);
@@ -1240,7 +1246,7 @@ function enforceCameraOutsidePlanetMeshes(maxPasses = 4) {
 
       const want = s.surfaceRadius + pad;
       camera.position.copy(s.center).addScaledVector(_walkSpawnRadial, want);
-      camera.position.addScaledVector(s.normal, pad * 0.45);
+      camera.position.addScaledVector(s.normal, pad * 0.38);
       moved = true;
     }
     if (!moved) break;
