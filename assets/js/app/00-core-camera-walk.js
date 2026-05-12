@@ -159,6 +159,14 @@ const WALK_CFG = {
   airControlFactor: 0.38,
   airDrag: 1.6,
   maxFallSpeed: 0.5,
+  /** Keyboard + joystick combined input below this counts as "no intentional move". */
+  moveInputDeadzone: 0.05,
+  /** Extra planar velocity decay (per second) when idle on ground; stacks with `drag`. */
+  idlePlanarBrake: 28,
+  /** Same when airborne (weaker so air control still feels possible). */
+  idleAirPlanarBrake: 10,
+  /** Tangential speed below this snaps to zero when idle (world units / frame-scale). */
+  idlePlanarSnapSpeed: 0.0032,
   groundProbeDistance: 0.035,
   landMaxOutwardSpeed: 0.08,
   groundSnapIdle: 16,
@@ -1676,7 +1684,7 @@ function updateWalkMode(dt) {
   const moveLen = _walkDesired.length();
   if (moveLen > 1) _walkDesired.multiplyScalar(1 / moveLen);
 
-  const sprinting = walkInput.sprint && moveLen > 0.08;
+  const sprinting = walkInput.sprint && moveLen > WALK_CFG.moveInputDeadzone * 1.6;
   const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
   const desiredSpeed = WALK_CFG.moveSpeed * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
   _walkDesired.projectOnPlane(currentSurface.normal);
@@ -1689,10 +1697,6 @@ function updateWalkMode(dt) {
     : WALK_CFG.acceleration * WALK_CFG.airControlFactor;
   const accelStep = Math.min(1, controlAccel * dt);
   _walkTmp.lerp(_walkDesired, accelStep);
-  if (moveLen < 0.05) {
-    const dragFactor = walkState.grounded ? WALK_CFG.drag : WALK_CFG.airDrag;
-    _walkTmp.multiplyScalar(Math.max(0, 1 - dragFactor * dt));
-  }
 
   let nextRadialVel = radialVel;
   if (walkState.grounded) {
@@ -1712,6 +1716,18 @@ function updateWalkMode(dt) {
   } else {
     walkState.sliding = false;
     nextRadialVel = Math.max(-WALK_CFG.maxFallSpeed, nextRadialVel - WALK_CFG.gravityAccel * dt);
+  }
+
+  const inputIdle = moveLen < WALK_CFG.moveInputDeadzone;
+  if (inputIdle && !(walkState.grounded && walkState.sliding)) {
+    const dragFactor = walkState.grounded ? WALK_CFG.drag : WALK_CFG.airDrag;
+    const extra = walkState.grounded ? WALK_CFG.idlePlanarBrake : WALK_CFG.idleAirPlanarBrake;
+    const damp = Math.max(0, 1 - (dragFactor + extra) * dt);
+    _walkTmp.multiplyScalar(damp);
+    const eps = WALK_CFG.idlePlanarSnapSpeed;
+    if (_walkTmp.lengthSq() < eps * eps) _walkTmp.set(0, 0, 0);
+  } else if (inputIdle && walkState.grounded && walkState.sliding) {
+    _walkTmp.multiplyScalar(Math.max(0, 1 - WALK_CFG.drag * 0.42 * dt));
   }
 
   const canJump = walkState.jumpBufferTimer > 0
@@ -1781,7 +1797,7 @@ function updateWalkMode(dt) {
       walkState.position.copy(_walkIntPos);
       const sn = nextSurface.normal;
       const alongErr = _walkTmp.copy(walkState.position).sub(nextSurface.point).dot(sn) - WALK_CFG.footOffset;
-      let k = Math.min(1, dt * (moveLen > 0.05 ? WALK_CFG.groundSnapMove : WALK_CFG.groundSnapIdle));
+      let k = Math.min(1, dt * (moveLen > WALK_CFG.moveInputDeadzone ? WALK_CFG.groundSnapMove : WALK_CFG.groundSnapIdle));
       if (Math.abs(alongErr) > WALK_CFG.groundProbeDistance * 0.45) k = Math.max(k, 0.72);
       if (Math.abs(alongErr) > WALK_CFG.groundProbeDistance * 2.2) k = Math.max(k, 0.92);
       walkState.position.addScaledVector(sn, -alongErr * Math.min(1, k));
@@ -1812,7 +1828,7 @@ function updateWalkMode(dt) {
 
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
-  if (moveLen < 0.05 || !walkState.grounded) bounceTarget = 0;
+  if (moveLen < WALK_CFG.moveInputDeadzone || !walkState.grounded) bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
   walkState.bouncePhase += dt * (WALK_CFG.bounceFreq + planarSpeed * 10);
   const bounce = walkState.grounded
