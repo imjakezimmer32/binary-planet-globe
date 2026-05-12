@@ -1216,6 +1216,10 @@ function updateWalkMode(dt) {
     ? walkState.anchorPlanetIdx
     : walkMode.spawnPlanetIdx;
   const anchorMp = anchorIdx !== null ? managedPlanets[anchorIdx] : null;
+  if (!anchorMp?.obj?.pivot) {
+    stopWalkMode();
+    return;
+  }
   if (anchorMp?.obj?.pivot) {
     anchorMp.obj.pivot.updateMatrixWorld(true);
     if (walkState.anchorLastMatrixValid) {
@@ -1237,26 +1241,34 @@ function updateWalkMode(dt) {
     : null;
   if (!currentSurface) {
     walkState.missedSurfaceFrames += 1;
+
+    // Keep the walker tied to its anchor planet even when a terrain sample misses for a frame.
+    getPlanetCenterRadius(anchorMp, _walkCenter);
+    _walkTmp.copy(walkState.position).sub(_walkCenter);
+    if (_walkTmp.lengthSq() < 1e-10) {
+      _walkTmp.copy(walkState.up);
+      if (_walkTmp.lengthSq() < 1e-10) _walkTmp.set(0, 1, 0);
+    }
+    _walkTmp.normalize();
+    const snapRadius = Math.max(0.25, (anchorMp.obj.baseRadius || 0.8) * anchorMp.obj.state.size) + WALK_CFG.footOffset;
+    walkState.up.copy(_walkTmp);
+    walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, snapRadius);
+
     if (walkState.missedSurfaceFrames >= 4) {
-      const recovered = resolveWalkStartPlanetAndSpawn();
-      if (recovered?.spawn) {
-        walkState.anchorPlanetIdx = recovered.idx;
-        walkState.position.copy(recovered.spawn.point).addScaledVector(recovered.spawn.radialDir, WALK_CFG.footOffset);
-        walkState.up.copy(recovered.spawn.radialDir).normalize();
+      const recoveredSpawn = getWalkLandSpawnOnPlanet(anchorIdx);
+      if (recoveredSpawn) {
+        walkState.anchorPlanetIdx = anchorIdx;
+        walkState.position.copy(recoveredSpawn.point).addScaledVector(recoveredSpawn.radialDir, WALK_CFG.footOffset);
+        walkState.up.copy(recoveredSpawn.radialDir).normalize();
         syncWalkPitchFromView();
         walkState.velocity.set(0, 0, 0);
-        walkState.surfaceType = 'land';
-        walkState.surfaceSlopeDeg = recovered.spawn.slopeDeg || 0;
+        walkState.surfaceType = recoveredSpawn.medium || 'land';
+        walkState.surfaceSlopeDeg = recoveredSpawn.slopeDeg || 0;
         walkState.sliding = false;
         walkState.missedSurfaceFrames = 0;
-        const recoveredMp = managedPlanets[recovered.idx];
-        if (recoveredMp?.obj?.pivot) {
-          recoveredMp.obj.pivot.updateMatrixWorld(true);
-          walkState.anchorLastMatrix.copy(recoveredMp.obj.pivot.matrixWorld);
-          walkState.anchorLastMatrixValid = true;
-        } else {
-          walkState.anchorLastMatrixValid = false;
-        }
+        anchorMp.obj.pivot.updateMatrixWorld(true);
+        walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
+        walkState.anchorLastMatrixValid = true;
         refreshWalkUi();
       }
     }
