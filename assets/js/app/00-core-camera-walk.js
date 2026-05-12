@@ -525,6 +525,7 @@ function desktopPointerUp(e) {
 }
 function desktopPointerMove(e) {
   if (walkMode.active) {
+    if (walkJoystickPointerId !== null && e.pointerId === walkJoystickPointerId) return;
     let rawDX = 0;
     let rawDY = 0;
     if (dragging) {
@@ -574,6 +575,18 @@ let mobSingleReady = false;
 let walkTouchLookId = null;
 let walkTouchLookX = 0;
 let walkTouchLookY = 0;
+/** Pointer id captured by the walk joystick — must not drive camera look (other hand / mouse for look). */
+let walkJoystickPointerId = null;
+const walkJoystickTouchIds = new Set();
+
+function setWalkJoystickCapturingPointer(id) {
+  walkJoystickPointerId = id != null ? id : null;
+}
+
+function registerWalkJoystickTouch(identifier, down) {
+  if (down) walkJoystickTouchIds.add(identifier);
+  else walkJoystickTouchIds.delete(identifier);
+}
 // Split 2-finger gestures: pinch → zoom; parallel drag → pan on camera plane (like desktop right-drag)
 const MOB_SPREAD_ZOOM = 0.55;   // px finger-spacing change → pinch zoom
 const MOB_PAN_DOM = 0.48;       // plane-pan only if spacing shifts < this × travel
@@ -589,7 +602,7 @@ function clearWalkTouchLookState() {
 function isWalkLookBlockedTarget(target) {
   if (!target || typeof target.closest !== 'function') return false;
   return !!target.closest(
-    '#walk-controls, #ui, #planet-selection-editor, #planet-panel, #galaxy-menu, #cam-buttons, #cam-settings, #tap-primer-screen, #splash'
+    '#walk-controls, #walk-joystick, #walk-joystick-thumb, #ui, #planet-selection-editor, #planet-panel, #galaxy-menu, #cam-buttons, #cam-settings, #tap-primer-screen, #splash'
   );
 }
 
@@ -634,6 +647,31 @@ function onMobilePointerMove(e) {
 
   if (walkMode.active) {
     if (walkTouchLookId !== null) return;
+    if (walkJoystickPointerId !== null && e.pointerId === walkJoystickPointerId) {
+      mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (mobPointers.size >= 2) {
+        const pair = mobPinchPair();
+        if (pair) {
+          const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+          mobMidX = (pair.a.x + pair.b.x) * 0.5;
+          mobMidY = (pair.a.y + pair.b.y) * 0.5;
+          if (mobPinchDist > 10 && dist > 10 && walkCameraMode === 'tp') {
+            const ratio = mobPinchDist / dist;
+            setWalkTpDistanceTarget(walkTpDistanceTarget * Math.pow(ratio, 1.08));
+          }
+          mobPinchDist = dist;
+        }
+      } else if (mobPointers.size >= 1) {
+        const p = mobPointers.values().next().value;
+        if (p) {
+          mobSingleLX = p.x;
+          mobSingleLY = p.y;
+          mobSingleReady = true;
+        }
+      }
+      return;
+    }
     if (typeof e.preventDefault === 'function') e.preventDefault();
     if (prev) {
       queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
@@ -774,6 +812,7 @@ window.addEventListener('touchstart', e => {
   if (!walkMode.active || walkTouchLookId !== null) return;
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
+    if (walkJoystickTouchIds.has(t.identifier)) continue;
     if (isWalkLookBlockedTarget(t.target)) continue;
     walkTouchLookId = t.identifier;
     walkTouchLookX = t.clientX;
@@ -787,6 +826,7 @@ window.addEventListener('touchmove', e => {
   if (!walkMode.active || walkTouchLookId === null) return;
   for (let i = 0; i < e.touches.length; i++) {
     const t = e.touches[i];
+    if (walkJoystickTouchIds.has(t.identifier)) continue;
     if (t.identifier !== walkTouchLookId) continue;
     const dx = t.clientX - walkTouchLookX;
     const dy = t.clientY - walkTouchLookY;
@@ -1262,6 +1302,8 @@ function stopWalkMode() {
   walkState.lookPitch = 0;
   walkState.anchorLastMatrixValid = false;
   clearWalkTouchLookState();
+  walkJoystickTouchIds.clear();
+  setWalkJoystickCapturingPointer(null);
   desktopWalkLookReady = false;
   refreshWalkUi();
 }

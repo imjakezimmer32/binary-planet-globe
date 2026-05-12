@@ -610,6 +610,7 @@ function setWalkAnalogInput(rawX, rawY) {
 
 function resetWalkJoystick() {
   walkJoystickState.pointerId = null;
+  if (typeof setWalkJoystickCapturingPointer === 'function') setWalkJoystickCapturingPointer(null);
   setWalkAnalogInput(0, 0);
 }
 
@@ -1392,6 +1393,7 @@ if (walkJoystickEl) {
     e.preventDefault();
     e.stopPropagation();
     walkJoystickState.pointerId = e.pointerId;
+    if (typeof setWalkJoystickCapturingPointer === 'function') setWalkJoystickCapturingPointer(e.pointerId);
     try { walkJoystickEl.setPointerCapture(e.pointerId); } catch (err) {}
     sampleWalkJoystickPointer(e.clientX, e.clientY);
   };
@@ -1413,6 +1415,15 @@ if (walkJoystickEl) {
   walkJoystickEl.addEventListener('pointercancel', onJoyUp);
   window.addEventListener('pointerup', onJoyUp);
   window.addEventListener('pointercancel', onJoyUp);
+  const noteJoyTouch = (e, down) => {
+    if (typeof registerWalkJoystickTouch !== 'function') return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      registerWalkJoystickTouch(e.changedTouches[i].identifier, down);
+    }
+  };
+  walkJoystickEl.addEventListener('touchstart', e => noteJoyTouch(e, true), { passive: true });
+  walkJoystickEl.addEventListener('touchend', e => noteJoyTouch(e, false), { passive: true });
+  walkJoystickEl.addEventListener('touchcancel', e => noteJoyTouch(e, false), { passive: true });
 }
 if (planetRadialEditorEl) {
   const onKnobDown = (e, setting) => {
