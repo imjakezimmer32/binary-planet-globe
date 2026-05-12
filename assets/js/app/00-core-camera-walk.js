@@ -229,6 +229,8 @@ const _walkGroundTarget = new THREE.Vector3();
 const _walkAnchorDelta = new THREE.Matrix4();
 const _walkAnchorInv = new THREE.Matrix4();
 const _walkAnchorCurr = new THREE.Matrix4();
+/** Upper 3×3 of anchor frame delta — used for velocity (must preserve length; Vector3.transformDirection normalizes). */
+const _walkAnchorRot = new THREE.Matrix3();
 const walkTransition = { active: false, token: 0, startedAt: 0 };
 const WALK_MAX_LOOK_PITCH = Math.PI * 0.498;
 
@@ -1589,7 +1591,8 @@ function updateWalkMode(dt) {
       _walkAnchorInv.copy(walkState.anchorLastMatrix).invert();
       _walkAnchorDelta.multiplyMatrices(_walkAnchorCurr, _walkAnchorInv);
       walkState.position.applyMatrix4(_walkAnchorDelta);
-      walkState.velocity.transformDirection(_walkAnchorDelta);
+      _walkAnchorRot.setFromMatrix4(_walkAnchorDelta);
+      walkState.velocity.applyMatrix3(_walkAnchorRot);
       walkState.up.transformDirection(_walkAnchorDelta).normalize();
       walkState.forward.transformDirection(_walkAnchorDelta).normalize();
       walkState.viewDir.transformDirection(_walkAnchorDelta).normalize();
