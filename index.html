@@ -1780,6 +1780,7 @@ const walkState = {
   sliding: false,
   bouncePhase: 0,
   bounceBlend: 0,
+  missedSurfaceFrames: 0,
   prevFov: null,
 };
 const _walkCenter = new THREE.Vector3();
@@ -2533,6 +2534,7 @@ function stopWalkMode() {
   walkState.sliding = false;
   walkState.bouncePhase = 0;
   walkState.bounceBlend = 0;
+  walkState.missedSurfaceFrames = 0;
   refreshWalkUi();
 }
 
@@ -2556,13 +2558,13 @@ function startWalkMode(idx, spawnSurface = null) {
   let startSurface = spawnSurface;
   mp.obj.pivot.getWorldPosition(_walkCenter);
   if (startSurface) {
-    walkState.position.copy(startSurface.point).addScaledVector(startSurface.normal, WALK_CFG.footOffset);
+    walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
     walkState.up.copy(startSurface.radialDir).normalize();
   } else {
     walkState.position.copy(camera.position);
     startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
     if (startSurface) {
-      walkState.position.copy(startSurface.point).addScaledVector(startSurface.normal, WALK_CFG.footOffset);
+      walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
       walkState.up.copy(startSurface.radialDir).normalize();
     }
     const fallbackR = getPlanetCenterRadius(mp, _walkCenter) + WALK_CFG.footOffset;
@@ -2573,7 +2575,7 @@ function startWalkMode(idx, spawnSurface = null) {
       walkState.position.copy(_walkCenter).addScaledVector(walkState.up, fallbackR);
       startSurface = sampleWalkSurfaceForPlanet(mp, idx, walkState.position);
       if (startSurface) {
-        walkState.position.copy(startSurface.point).addScaledVector(startSurface.normal, WALK_CFG.footOffset);
+        walkState.position.copy(startSurface.point).addScaledVector(startSurface.radialDir, WALK_CFG.footOffset);
         walkState.up.copy(startSurface.radialDir).normalize();
       }
     }
@@ -2596,6 +2598,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkState.sliding = false;
   walkState.bouncePhase = 0;
   walkState.bounceBlend = 0;
+  walkState.missedSurfaceFrames = 0;
   walkAvatar.position.copy(walkState.position);
   walkAvatar.visible = true;
   refreshWalkUi();
@@ -2679,7 +2682,26 @@ function getWalkSurfaceSpeedFactor(surface) {
 
 function updateWalkMode(dt) {
   const currentSurface = sampleBestWalkSurface(walkState.position, walkState.anchorPlanetIdx);
-  if (!currentSurface) { stopWalkMode(); return; }
+  if (!currentSurface) {
+    walkState.missedSurfaceFrames += 1;
+    if (walkState.missedSurfaceFrames >= 4) {
+      const recovered = resolveWalkStartPlanetAndSpawn();
+      if (recovered?.spawn) {
+        walkState.anchorPlanetIdx = recovered.idx;
+        walkState.position.copy(recovered.spawn.point).addScaledVector(recovered.spawn.radialDir, WALK_CFG.footOffset);
+        walkState.up.copy(recovered.spawn.radialDir).normalize();
+        walkState.velocity.set(0, 0, 0);
+        walkState.surfaceType = 'land';
+        walkState.surfaceSlopeDeg = recovered.spawn.slopeDeg || 0;
+        walkState.sliding = false;
+        walkState.missedSurfaceFrames = 0;
+        refreshWalkUi();
+      }
+    }
+    if (walkState.missedSurfaceFrames > 32) stopWalkMode();
+    return;
+  }
+  walkState.missedSurfaceFrames = 0;
   walkState.anchorPlanetIdx = currentSurface.idx;
   walkState.surfaceType = currentSurface.medium;
   walkState.surfaceSlopeDeg = currentSurface.slopeDeg;
@@ -2730,10 +2752,10 @@ function updateWalkMode(dt) {
   _walkTmp3.copy(walkState.position).addScaledVector(_walkTmp, dt);
   const nextSurface = sampleBestWalkSurface(_walkTmp3, currentSurface.idx);
   if (!nextSurface) {
-    walkState.position.copy(currentSurface.point).addScaledVector(currentSurface.normal, WALK_CFG.footOffset);
+    walkState.position.copy(currentSurface.point).addScaledVector(currentSurface.radialDir, WALK_CFG.footOffset);
     walkState.velocity.set(0, 0, 0);
   } else {
-    walkState.position.copy(nextSurface.point).addScaledVector(nextSurface.normal, WALK_CFG.footOffset);
+    walkState.position.copy(nextSurface.point).addScaledVector(nextSurface.radialDir, WALK_CFG.footOffset);
     _walkTmp.projectOnPlane(nextSurface.normal);
     walkState.velocity.copy(_walkTmp);
     walkState.anchorPlanetIdx = nextSurface.idx;
