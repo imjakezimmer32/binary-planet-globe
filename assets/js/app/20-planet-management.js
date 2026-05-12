@@ -1387,13 +1387,17 @@ if (walkControlsEl) {
   });
   const runLockBtn = walkControlsEl.querySelector('button[data-walk="runLock"]');
   if (runLockBtn) {
-    runLockBtn.addEventListener('click', e => {
+    const toggleRunLock = e => {
       if (!walkMode.active) return;
       e.preventDefault();
       e.stopPropagation();
       walkInput.runLocked = !walkInput.runLocked;
       runLockBtn.classList.toggle('active', walkInput.runLocked);
       runLockBtn.setAttribute('aria-pressed', walkInput.runLocked ? 'true' : 'false');
+    };
+    runLockBtn.addEventListener('pointerup', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      toggleRunLock(e);
     });
   }
 }

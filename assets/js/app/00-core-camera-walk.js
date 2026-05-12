@@ -115,7 +115,7 @@ const WALK_CFG = {
   characterHeight: 0.013,
   footOffset: 0.0065,
   moveSpeed: 0.10,
-  sprintBoost: 1.25,
+  sprintBoost: 1.82,
   acceleration: 6.4,
   drag: 9.2,
   slideAccel: 2.6,
@@ -160,6 +160,8 @@ const WALK_CFG = {
   airControlFactor: 0.38,
   airDrag: 1.6,
   maxFallSpeed: 0.5,
+  /** Run (Shift / run lock) needs at least this input magnitude to apply faster top speed. */
+  runInputMin: 0.018,
   /** Keyboard + joystick combined input below this counts as "no intentional move". */
   moveInputDeadzone: 0.05,
   /** Extra planar velocity decay (per second) when idle on ground; stacks with `drag`. */
@@ -1698,7 +1700,7 @@ function updateWalkMode(dt) {
   if (moveLen > 1) _walkDesired.multiplyScalar(1 / moveLen);
 
   const runBoost = walkInput.runLocked || walkInput.shiftRun;
-  const sprinting = runBoost && moveLen > WALK_CFG.moveInputDeadzone * 1.6;
+  const sprinting = runBoost && moveLen > WALK_CFG.runInputMin;
   const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
   const desiredSpeed = WALK_CFG.moveSpeed * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
   _walkDesired.projectOnPlane(currentSurface.normal);
