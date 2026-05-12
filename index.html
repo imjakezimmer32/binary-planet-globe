@@ -1707,6 +1707,7 @@ let orbitSpeedMul = 0.1;
 let zoomSpeedMul  = 0.1;
 let dragButton = 0;
 let dragging = false, lastPX = 0, lastPY = 0;
+let desktopWalkLookReady = false, desktopWalkLookX = 0, desktopWalkLookY = 0;
 
 // cameraTarget — the world point the camera orbits.  Normally the sun (origin)
 // but animates smoothly when navigating to another star system.
@@ -1809,7 +1810,7 @@ const _walkSpawnRadial = new THREE.Vector3();
 const _walkSpawnToCam = new THREE.Vector3();
 const _walkAnchorDelta = new THREE.Matrix4();
 const _walkAnchorInv = new THREE.Matrix4();
-const walkTransition = { active: false, token: 0 };
+const walkTransition = { active: false, token: 0, startedAt: 0 };
 
 function makeWalkSurfaceRecord() {
   return {
@@ -2023,16 +2024,33 @@ function desktopPointerDown(e) {
   dragButton = e.button;
   lastPX = e.clientX;
   lastPY = e.clientY;
+  desktopWalkLookX = e.clientX;
+  desktopWalkLookY = e.clientY;
+  desktopWalkLookReady = true;
   try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
 }
 function desktopPointerUp(e) {
   dragging = false;
+  desktopWalkLookReady = false;
   try { _canvas.releasePointerCapture(e.pointerId); } catch (err) {}
 }
 function desktopPointerMove(e) {
   if (walkMode.active) {
-    const rawDX = dragging ? (e.clientX - lastPX) : (e.movementX || 0);
-    const rawDY = dragging ? (e.clientY - lastPY) : (e.movementY || 0);
+    let rawDX = 0;
+    let rawDY = 0;
+    if (dragging) {
+      rawDX = e.clientX - lastPX;
+      rawDY = e.clientY - lastPY;
+    } else if (Math.abs(e.movementX || 0) > 0 || Math.abs(e.movementY || 0) > 0) {
+      rawDX = e.movementX || 0;
+      rawDY = e.movementY || 0;
+    } else if (desktopWalkLookReady) {
+      rawDX = e.clientX - desktopWalkLookX;
+      rawDY = e.clientY - desktopWalkLookY;
+    }
+    desktopWalkLookX = e.clientX;
+    desktopWalkLookY = e.clientY;
+    desktopWalkLookReady = true;
     if (dragging) {
       lastPX = e.clientX;
       lastPY = e.clientY;
@@ -2095,7 +2113,16 @@ function onMobilePointerDown(e) {
 }
 
 function onMobilePointerMove(e) {
-  if (!mobPointers.has(e.pointerId)) return;
+  if (!mobPointers.has(e.pointerId)) {
+    if (!walkMode.active) return;
+    mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (mobPointers.size === 1) {
+      mobSingleLX = e.clientX;
+      mobSingleLY = e.clientY;
+      mobSingleReady = true;
+    }
+    return;
+  }
   const prev = mobPointers.get(e.pointerId);
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -2528,6 +2555,8 @@ function refreshWalkUi() {
 
 function stopWalkMode() {
   if (!walkMode.active) return;
+  walkTransition.active = false;
+  walkTransition.startedAt = 0;
   walkMode.active = false;
   walkMode.spawnPlanetIdx = null;
   if (walkState.prevFov !== null) {
@@ -2548,6 +2577,7 @@ function stopWalkMode() {
   walkState.bounceBlend = 0;
   walkState.missedSurfaceFrames = 0;
   walkState.anchorLastMatrixValid = false;
+  desktopWalkLookReady = false;
   refreshWalkUi();
 }
 
@@ -2555,6 +2585,8 @@ function startWalkMode(idx, spawnSurface = null) {
   if (idx === null || idx === undefined) return;
   const mp = managedPlanets[idx];
   if (!mp) return;
+  walkTransition.active = false;
+  walkTransition.startedAt = 0;
   walkMode.active = true;
   walkMode.spawnPlanetIdx = idx;
   walkCameraMode = 'tp';
@@ -2612,6 +2644,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkState.bouncePhase = 0;
   walkState.bounceBlend = 0;
   walkState.missedSurfaceFrames = 0;
+  desktopWalkLookReady = false;
   mp.obj.pivot.updateMatrixWorld(true);
   walkState.anchorLastMatrix.copy(mp.obj.pivot.matrixWorld);
   walkState.anchorLastMatrixValid = true;
@@ -2624,6 +2657,7 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
   return new Promise((resolve) => {
     const token = ++walkTransition.token;
     walkTransition.active = true;
+    walkTransition.startedAt = performance.now();
 
     const startPos = camera.position.clone();
     const startUp = camera.up.clone();
@@ -2648,6 +2682,7 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
     function frame(now) {
       if (token !== walkTransition.token) {
         walkTransition.active = false;
+        walkTransition.startedAt = 0;
         resolve();
         return;
       }
@@ -2661,6 +2696,7 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
         requestAnimationFrame(frame);
       } else {
         walkTransition.active = false;
+        walkTransition.startedAt = 0;
         resolve();
       }
     }
@@ -2686,6 +2722,19 @@ function applyWalkLook() {
   if (Math.abs(pitch) > 1e-6) {
     _walkQ.setFromAxisAngle(_walkRight, pitch);
     walkState.viewDir.applyQuaternion(_walkQ).normalize();
+  }
+  const upDot = walkState.viewDir.dot(walkState.up);
+  if (Math.abs(upDot) > 0.9985) {
+    _walkTmp.copy(walkState.forward).projectOnPlane(walkState.up);
+    if (_walkTmp.lengthSq() < 1e-8) _walkTmp.copy(_walkX).projectOnPlane(walkState.up);
+    if (_walkTmp.lengthSq() > 1e-8) {
+      _walkTmp.normalize();
+      const verticalSign = upDot >= 0 ? 1 : -1;
+      walkState.viewDir
+        .copy(walkState.up).multiplyScalar(verticalSign * 0.9985)
+        .addScaledVector(_walkTmp, 0.054)
+        .normalize();
+    }
   }
 }
 
@@ -2843,7 +2892,15 @@ function updateWalkMode(dt) {
 }
 
 function updateCamera(curScale) {
-  if (walkTransition.active) return;
+  if (walkTransition.active) {
+    const elapsed = performance.now() - (walkTransition.startedAt || 0);
+    if ((walkMode.active && elapsed > 50) || elapsed > 2200) {
+      walkTransition.active = false;
+      walkTransition.startedAt = 0;
+    } else {
+      return;
+    }
+  }
   if (walkMode.active) {
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0.001, (now - walkPrevMs) / 1000));
