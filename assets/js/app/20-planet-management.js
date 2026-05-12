@@ -1351,6 +1351,7 @@ async function onWalkButtonPressed(e) {
     return;
   }
   if (cameraMode !== 'planet') setCamMode('planet');
+  if (typeof trySelectPlanetForWalkStart === 'function') trySelectPlanetForWalkStart();
   const resolved = resolveWalkStartPlanetAndSpawn();
   if (!resolved) return;
   const { idx, spawn } = resolved;

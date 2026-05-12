@@ -154,6 +154,12 @@ const WALK_CFG = {
   groundSnapIdle: 16,
   groundSnapMove: 26,
   groundNormalLerp: 14,
+  /** Max distance from anchor planet center = nominalRadius * mult + foot slack (prevents runaway / sun drift). */
+  anchorSphereSlackMult: 2.35,
+  anchorSpherePull: 22,
+  /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
+  airResampleRadiusMult: 1.08,
+  maxAirHorizontalSpeed: 0.52,
 };
 let walkCameraMode = 'tp';
 let walkTpDistance = WALK_CFG.cameraDistance;
@@ -348,6 +354,70 @@ function syncSolGalaxyMenuVisibility() {
     currentDestIndex === 0 &&
     (!solGalaxyMenuRevealed || isNavigating);
   gm.classList.toggle('galaxy-await-sun-tap', hide);
+}
+
+/**
+ * If nothing is selected in the planet list, infer a planet from what you are looking at
+ * (screen center ray, then camera-forward cone toward nearest planet pivot).
+ * Mutates selection via global `selectPlanet` (defined in a later script bundle).
+ */
+function trySelectPlanetForWalkStart() {
+  if (typeof selectedPlanetIdx === 'undefined') return;
+  if (selectedPlanetIdx !== null) return;
+
+  const rect = _canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const cx = rect.left + rect.width * 0.5;
+  const cy = rect.top + rect.height * 0.5;
+  _pickNdc.x = ((cx - rect.left) / rect.width) * 2 - 1;
+  _pickNdc.y = -((cy - rect.top) / rect.height) * 2 + 1;
+  _pickRay.setFromCamera(_pickNdc, camera);
+
+  const pickObjects = [];
+  const metaByUuid = new Map();
+  managedPlanets.forEach((mp, idx) => {
+    const targets = mp.obj.getPickables ? mp.obj.getPickables() : [];
+    targets.forEach(obj => {
+      if (!obj || !obj.visible) return;
+      pickObjects.push(obj);
+      metaByUuid.set(obj.uuid, { kind: 'planet', idx });
+    });
+  });
+
+  if (pickObjects.length) {
+    const hits = _pickRay.intersectObjects(pickObjects, false);
+    for (let hi = 0; hi < hits.length; hi++) {
+      let obj = hits[hi].object;
+      while (obj) {
+        const tag = metaByUuid.get(obj.uuid);
+        if (tag?.kind === 'planet' && typeof selectPlanet === 'function') {
+          selectPlanet(tag.idx);
+          return;
+        }
+        obj = obj.parent;
+      }
+    }
+  }
+
+  camera.getWorldDirection(_walkTmp);
+  if (_walkTmp.lengthSq() < 1e-8) return;
+  _walkTmp.normalize();
+  let bestIdx = -1;
+  let bestDot = 0.32;
+  managedPlanets.forEach((mp, idx) => {
+    if (!mp?.obj?.pivot) return;
+    mp.obj.pivot.getWorldPosition(_walkTmp2);
+    _walkTmp3.copy(_walkTmp2).sub(camera.position);
+    const dist = _walkTmp3.length();
+    if (dist < 1e-4) return;
+    _walkTmp3.multiplyScalar(1 / dist);
+    const dot = _walkTmp.dot(_walkTmp3);
+    if (dot > bestDot) {
+      bestDot = dot;
+      bestIdx = idx;
+    }
+  });
+  if (bestIdx >= 0 && typeof selectPlanet === 'function') selectPlanet(bestIdx);
 }
 
 function pickSolarSystemFromScreen(clientX, clientY) {
@@ -1254,6 +1324,28 @@ function getWalkSurfaceSpeedFactor(surface) {
   return 1;
 }
 
+/** Keep the walker inside a shell around the anchor planet so velocity spikes cannot drift toward the sun. */
+function clampWalkPositionToAnchor(anchorMp, dt) {
+  if (!anchorMp?.obj?.pivot) return;
+  const nominalR = getPlanetCenterRadius(anchorMp, _walkCenter);
+  const foot = WALK_CFG.footOffset;
+  const maxR = nominalR * WALK_CFG.anchorSphereSlackMult + foot * 4;
+  const minR = nominalR * 0.76 + foot * 0.2;
+  _walkTmp.copy(walkState.position).sub(_walkCenter);
+  const d = _walkTmp.length();
+  if (d < 1e-10) return;
+  _walkTmp.multiplyScalar(1 / d);
+  if (d <= maxR && d >= minR) return;
+  const targetD = d > maxR ? maxR : minR;
+  const t = Math.min(1, WALK_CFG.anchorSpherePull * dt);
+  const newD = d + (targetD - d) * t;
+  walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, newD);
+  const rv = walkState.velocity.dot(_walkTmp);
+  if ((d > maxR && rv > 0) || (d < minR && rv < 0)) {
+    walkState.velocity.addScaledVector(_walkTmp, -rv);
+  }
+}
+
 function updateWalkMode(dt) {
   const anchorIdx = walkState.anchorPlanetIdx !== null
     ? walkState.anchorPlanetIdx
@@ -1275,6 +1367,7 @@ function updateWalkMode(dt) {
     }
     walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
     walkState.anchorLastMatrixValid = true;
+    clampWalkPositionToAnchor(anchorMp, dt);
   } else {
     walkState.anchorLastMatrixValid = false;
   }
@@ -1299,6 +1392,7 @@ function updateWalkMode(dt) {
     const snapRadius = Math.max(0.25, (anchorMp.obj.baseRadius || 0.8) * anchorMp.obj.state.size) + WALK_CFG.footOffset;
     walkState.up.copy(_walkTmp);
     walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, snapRadius);
+    clampWalkPositionToAnchor(anchorMp, dt);
     walkState.grounded = false;
 
     // Local-only recovery: never teleport to a "best spawn" elsewhere on the planet.
@@ -1409,13 +1503,44 @@ function updateWalkMode(dt) {
   }
 
   walkState.velocity.copy(_walkTmp).addScaledVector(walkState.up, nextRadialVel);
+  if (!walkState.grounded) {
+    const rvAir = walkState.velocity.dot(walkState.up);
+    _walkTmp.copy(walkState.velocity).addScaledVector(walkState.up, -rvAir);
+    const planar = _walkTmp.length();
+    const cap = WALK_CFG.maxAirHorizontalSpeed;
+    if (planar > cap) _walkTmp.multiplyScalar(cap / planar);
+    walkState.velocity.copy(_walkTmp).addScaledVector(walkState.up, rvAir);
+  }
 
   _walkTmp3.copy(walkState.position).addScaledVector(walkState.velocity, dt);
   const nextSurface = anchorMp
     ? sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, _walkTmp3)
     : null;
   if (!nextSurface) {
-    walkState.position.copy(_walkTmp3);
+    getPlanetCenterRadius(anchorMp, _walkCenter);
+    const nominalR = Math.max(0.25, (anchorMp.obj.baseRadius || 0.8) * anchorMp.obj.state.size);
+    _walkTmp.copy(_walkTmp3).sub(_walkCenter);
+    const dist = _walkTmp.length();
+    if (dist > 1e-8) {
+      _walkTmp.multiplyScalar(1 / dist);
+      const resamplePos = _walkGroundTarget
+        .copy(_walkCenter)
+        .addScaledVector(_walkTmp, nominalR * WALK_CFG.airResampleRadiusMult + WALK_CFG.footOffset);
+      const rescue = sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, resamplePos);
+      if (rescue) {
+        walkState.position.copy(rescue.point).addScaledVector(rescue.radialDir, WALK_CFG.footOffset);
+        const rvRes = walkState.velocity.dot(rescue.radialDir);
+        if (rvRes < 0) walkState.velocity.addScaledVector(rescue.radialDir, -rvRes);
+      } else {
+        const shellR = Math.min(dist, nominalR * 1.06 + WALK_CFG.footOffset);
+        walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, shellR);
+        const rvShell = walkState.velocity.dot(_walkTmp);
+        if (rvShell > 0) walkState.velocity.addScaledVector(_walkTmp, -rvShell);
+      }
+    } else {
+      walkState.position.copy(_walkTmp3);
+    }
+    clampWalkPositionToAnchor(anchorMp, dt);
     if (walkState.grounded && walkState.coyoteTimer <= 0) walkState.grounded = false;
   } else {
     const nextGapAbs = Math.abs(nextSurface.gap);
@@ -1439,6 +1564,7 @@ function updateWalkMode(dt) {
     walkState.surfaceSlopeDeg = nextSurface.slopeDeg;
     walkState.up.lerp(nextSurface.radialDir, Math.min(1, dt * WALK_CFG.groundNormalLerp)).normalize();
   }
+  clampWalkPositionToAnchor(anchorMp, dt);
 
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
