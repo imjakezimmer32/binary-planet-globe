@@ -466,11 +466,27 @@ let mobPinchDist = 0;
 let mobMidX = 0, mobMidY = 0;
 let mobSingleLX = 0, mobSingleLY = 0;
 let mobSingleReady = false;
+let walkTouchLookId = null;
+let walkTouchLookX = 0;
+let walkTouchLookY = 0;
 // Split 2-finger gestures: pinch → zoom; parallel drag → pan on camera plane (like desktop right-drag)
 const MOB_SPREAD_ZOOM = 0.55;   // px finger-spacing change → pinch zoom
 const MOB_PAN_DOM = 0.48;       // plane-pan only if spacing shifts < this × travel
 const MOB_PAN_MIN = 0.45;       // min midpoint motion (px) for plane pan
 const MOB_ZOOM_VS_PAN = 0.28;   // zoom wins if spacing shift > this × pan motion
+
+function clearWalkTouchLookState() {
+  walkTouchLookId = null;
+  walkTouchLookX = 0;
+  walkTouchLookY = 0;
+}
+
+function isWalkLookBlockedTarget(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  return !!target.closest(
+    '#walk-controls, #ui, #planet-selection-editor, #planet-panel, #galaxy-menu, #cam-buttons, #cam-settings, #tap-primer-screen, #splash'
+  );
+}
 
 function mobPinchPair() {
   const pts = Array.from(mobPointers.values());
@@ -512,6 +528,7 @@ function onMobilePointerMove(e) {
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   if (walkMode.active) {
+    if (walkTouchLookId !== null) return;
     if (typeof e.preventDefault === 'function') e.preventDefault();
     if (prev) {
       queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
@@ -620,9 +637,7 @@ _canvas.addEventListener('pointerdown', e => {
 
 window.addEventListener('pointerdown', e => {
   if (!walkMode.active) return;
-  const target = e.target;
-  if (target && typeof target.closest === 'function'
-    && target.closest('#walk-controls, #ui, #planet-selection-editor, #primer, #splash')) return;
+  if (isWalkLookBlockedTarget(e.target)) return;
   if (isTouchPointer(e)) {
     if (mobPointers.has(e.pointerId)) return;
     onMobilePointerDown(e);
@@ -649,6 +664,54 @@ window.addEventListener('pointermove', e => {
     desktopPointerMove(e);
   }
 }, { passive: false });
+
+window.addEventListener('touchstart', e => {
+  if (!walkMode.active || walkTouchLookId !== null) return;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    if (isWalkLookBlockedTarget(t.target)) continue;
+    walkTouchLookId = t.identifier;
+    walkTouchLookX = t.clientX;
+    walkTouchLookY = t.clientY;
+    e.preventDefault();
+    break;
+  }
+}, { passive: false });
+
+window.addEventListener('touchmove', e => {
+  if (!walkMode.active || walkTouchLookId === null) return;
+  for (let i = 0; i < e.touches.length; i++) {
+    const t = e.touches[i];
+    if (t.identifier !== walkTouchLookId) continue;
+    const dx = t.clientX - walkTouchLookX;
+    const dy = t.clientY - walkTouchLookY;
+    walkTouchLookX = t.clientX;
+    walkTouchLookY = t.clientY;
+    queueWalkLook(dx, dy, true);
+    e.preventDefault();
+    break;
+  }
+}, { passive: false });
+
+window.addEventListener('touchend', e => {
+  if (walkTouchLookId === null) return;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === walkTouchLookId) {
+      clearWalkTouchLookState();
+      break;
+    }
+  }
+}, { passive: true });
+
+window.addEventListener('touchcancel', e => {
+  if (walkTouchLookId === null) return;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === walkTouchLookId) {
+      clearWalkTouchLookState();
+      break;
+    }
+  }
+}, { passive: true });
 
 _canvas.addEventListener('pointerdown', e => {
   tapCandidate = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
@@ -971,6 +1034,7 @@ function stopWalkMode() {
   walkState.missedSurfaceFrames = 0;
   walkState.lookPitch = 0;
   walkState.anchorLastMatrixValid = false;
+  clearWalkTouchLookState();
   desktopWalkLookReady = false;
   refreshWalkUi();
 }
@@ -990,6 +1054,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkPrevMs = performance.now();
   walkLookInput.x = 0;
   walkLookInput.y = 0;
+  clearWalkTouchLookState();
   clearWalkInputState();
   setWalkTpDistanceTarget(WALK_CFG.cameraDistance);
   walkTpDistance = walkTpDistanceTarget;
