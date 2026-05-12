@@ -851,12 +851,24 @@ function getWalkLandSpawnOnPlanet(idx) {
 }
 
 function resolveWalkStartPlanetAndSpawn() {
-  const ordered = [];
+  const tryPlanetSpawn = (idx) => {
+    if (!managedPlanets[idx]?.obj?.pivot) return null;
+    const spawn = getWalkLandSpawnOnPlanet(idx);
+    return spawn ? { idx, spawn } : null;
+  };
+
+  // Always honor explicit selection first. Do NOT sort the selected index in with
+  // fallbacks — a previous bug sorted the whole list by camera distance, which often
+  // picked the nearer binary body (commonly "Planet 2") even when another was selected.
   if (selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]?.obj?.pivot) {
-    ordered.push(selectedPlanetIdx);
+    const primary = tryPlanetSpawn(selectedPlanetIdx);
+    if (primary) return primary;
   }
+
+  const ordered = [];
   for (let i = 0; i < managedPlanets.length; i++) {
-    if (!managedPlanets[i]?.obj?.pivot || i === selectedPlanetIdx) continue;
+    if (!managedPlanets[i]?.obj?.pivot) continue;
+    if (i === selectedPlanetIdx) continue;
     ordered.push(i);
   }
   ordered.sort((a, b) => {
@@ -865,9 +877,8 @@ function resolveWalkStartPlanetAndSpawn() {
     return _walkTmp.distanceToSquared(camera.position) - _walkTmp2.distanceToSquared(camera.position);
   });
   for (let i = 0; i < ordered.length; i++) {
-    const idx = ordered[i];
-    const spawn = getWalkLandSpawnOnPlanet(idx);
-    if (spawn) return { idx, spawn };
+    const hit = tryPlanetSpawn(ordered[i]);
+    if (hit) return hit;
   }
   return null;
 }
