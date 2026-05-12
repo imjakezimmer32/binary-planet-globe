@@ -152,14 +152,25 @@ const WALK_CFG = {
   fpsFov: 74,
   lookSensitivity: 0.0054,
   mobileLookSensitivity: 0.0135,
-  gravityAccel: 0.62,
-  jumpSpeed: 0.22,
+  /**
+   * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
+   * Current planet lerps between them by (baseRadius × size) metric.
+   */
+  walkGravityMin: 0.17,
+  walkGravityMax: 0.42,
+  /** Terminal radial fall speed at smallest vs largest planet. */
+  walkMaxFallMin: 0.32,
+  walkMaxFallMax: 0.56,
+  /**
+   * Jump always reaches this height above the feet (same on every world).
+   * Launch speed = sqrt(2 × g × height) so apex is fixed while fall curve follows g.
+   */
+  jumpApexHeight: 0.037,
   jumpBufferSec: 0.14,
   jumpCooldownSec: 0.18,
   coyoteTimeSec: 0.12,
   airControlFactor: 0.38,
   airDrag: 1.6,
-  maxFallSpeed: 0.5,
   /** Run (Shift / run lock) needs at least this input magnitude to apply faster top speed. */
   runInputMin: 0.018,
   /** Keyboard + joystick combined input below this counts as "no intentional move". */
@@ -1567,6 +1578,42 @@ function clampWalkPositionToAnchor(anchorMp, dt) {
   if (rv > 0) walkState.velocity.addScaledVector(_walkTmp, -rv);
 }
 
+/**
+ * Characteristic radius for gravity tuning: baseRadius × size (no collision floor),
+ * so tiny moons vs big planets produce a real min/max spread.
+ */
+function getWalkPlanetRadiusMetric(mp) {
+  if (!mp?.obj) return 0.8;
+  return (mp.obj.baseRadius || 0.8) * Math.max(mp.obj.state?.size ?? 1, 0.05);
+}
+
+function computeWalkPlanetRadiusBounds() {
+  let rMin = Infinity;
+  let rMax = -Infinity;
+  for (let i = 0; i < managedPlanets.length; i++) {
+    const mp = managedPlanets[i];
+    if (!mp?.obj?.pivot) continue;
+    const r = getWalkPlanetRadiusMetric(mp);
+    if (r < rMin) rMin = r;
+    if (r > rMax) rMax = r;
+  }
+  if (!Number.isFinite(rMin) || rMax < rMin + 1e-6) {
+    return { rMin: 0.42, rMax: 1.2 };
+  }
+  return { rMin, rMax };
+}
+
+/** Smallest worlds → walkGravityMin; largest → walkGravityMax. Jump apex uses same g for v0 = sqrt(2gH). */
+function getWalkGravityForPlanet(anchorMp) {
+  const { rMin, rMax } = computeWalkPlanetRadiusBounds();
+  const R = anchorMp ? getWalkPlanetRadiusMetric(anchorMp) : (rMin + rMax) * 0.5;
+  const span = Math.max(1e-5, rMax - rMin);
+  const t = Math.max(0, Math.min(1, (R - rMin) / span));
+  const g = THREE.MathUtils.lerp(WALK_CFG.walkGravityMin, WALK_CFG.walkGravityMax, t);
+  const maxFall = THREE.MathUtils.lerp(WALK_CFG.walkMaxFallMin, WALK_CFG.walkMaxFallMax, t);
+  return { g, maxFall, R, rMin, rMax, t };
+}
+
 /** Light mesh-only correction along face normal (does not fight horizontal walking). */
 function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
   const stick = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
@@ -1605,6 +1652,9 @@ function updateWalkMode(dt) {
     stopWalkMode();
     return;
   }
+  const walkGrav = getWalkGravityForPlanet(anchorMp);
+  const walkG = walkGrav.g;
+  const walkMaxFall = walkGrav.maxFall;
   if (anchorMp?.obj?.pivot) {
     if (!getWalkAnchorFrameWorldMatrix(anchorMp, _walkAnchorCurr)) {
       stopWalkMode();
@@ -1731,7 +1781,7 @@ function updateWalkMode(dt) {
     nextRadialVel = Math.min(nextRadialVel, 0);
   } else {
     walkState.sliding = false;
-    nextRadialVel = Math.max(-WALK_CFG.maxFallSpeed, nextRadialVel - WALK_CFG.gravityAccel * dt);
+    nextRadialVel = Math.max(-walkMaxFall, nextRadialVel - walkG * dt);
   }
 
   const inputIdle = moveLen < WALK_CFG.moveInputDeadzone;
@@ -1754,7 +1804,7 @@ function updateWalkMode(dt) {
     walkState.jumpBufferTimer = 0;
     walkState.jumpCooldownTimer = WALK_CFG.jumpCooldownSec;
     walkState.coyoteTimer = 0;
-    nextRadialVel = WALK_CFG.jumpSpeed;
+    nextRadialVel = Math.sqrt(Math.max(0, 2 * walkG * WALK_CFG.jumpApexHeight));
   }
 
   walkState.velocity.copy(_walkTmp).addScaledVector(walkState.up, nextRadialVel);
