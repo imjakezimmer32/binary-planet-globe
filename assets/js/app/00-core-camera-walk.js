@@ -218,6 +218,7 @@ const _walkSpawnToCam = new THREE.Vector3();
 const _walkGroundTarget = new THREE.Vector3();
 const _walkAnchorDelta = new THREE.Matrix4();
 const _walkAnchorInv = new THREE.Matrix4();
+const _walkAnchorCurr = new THREE.Matrix4();
 const walkTransition = { active: false, token: 0, startedAt: 0 };
 const WALK_MAX_LOOK_PITCH = Math.PI * 0.498;
 
@@ -849,6 +850,18 @@ function getPlanetCenterRadius(mp, centerOut) {
   return Math.max(0.25, (mp.obj.baseRadius || 0.8) * mp.obj.state.size);
 }
 
+/**
+ * World matrix of the rigid frame that carries the terrain mesh (spin group).
+ * Using pivot alone misses mp.obj.spin.rotation (day spin), so the ground slides under the walker.
+ */
+function getWalkAnchorFrameWorldMatrix(mp, out) {
+  if (!mp?.obj?.pivot) return false;
+  mp.obj.pivot.updateMatrixWorld(true);
+  const frame = mp.obj.spin || mp.obj.pivot;
+  out.copy(frame.matrixWorld);
+  return true;
+}
+
 function getWalkTerrainMesh(mp) {
   if (!mp?.obj) return null;
   const direct = mp.obj.getTerrainMesh ? mp.obj.getTerrainMesh() : null;
@@ -1271,8 +1284,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkState.bounceBlend = 0;
   walkState.missedSurfaceFrames = 0;
   desktopWalkLookReady = false;
-  mp.obj.pivot.updateMatrixWorld(true);
-  walkState.anchorLastMatrix.copy(mp.obj.pivot.matrixWorld);
+  getWalkAnchorFrameWorldMatrix(mp, walkState.anchorLastMatrix);
   walkState.anchorLastMatrixValid = true;
   walkAvatar.position.copy(walkState.position);
   walkAvatar.visible = true;
@@ -1435,16 +1447,20 @@ function updateWalkMode(dt) {
     return;
   }
   if (anchorMp?.obj?.pivot) {
-    anchorMp.obj.pivot.updateMatrixWorld(true);
+    if (!getWalkAnchorFrameWorldMatrix(anchorMp, _walkAnchorCurr)) {
+      stopWalkMode();
+      return;
+    }
     if (walkState.anchorLastMatrixValid) {
       _walkAnchorInv.copy(walkState.anchorLastMatrix).invert();
-      _walkAnchorDelta.multiplyMatrices(anchorMp.obj.pivot.matrixWorld, _walkAnchorInv);
+      _walkAnchorDelta.multiplyMatrices(_walkAnchorCurr, _walkAnchorInv);
       walkState.position.applyMatrix4(_walkAnchorDelta);
+      walkState.velocity.transformDirection(_walkAnchorDelta);
       walkState.up.transformDirection(_walkAnchorDelta).normalize();
       walkState.forward.transformDirection(_walkAnchorDelta).normalize();
       walkState.viewDir.transformDirection(_walkAnchorDelta).normalize();
     }
-    walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
+    walkState.anchorLastMatrix.copy(_walkAnchorCurr);
     walkState.anchorLastMatrixValid = true;
   } else {
     walkState.anchorLastMatrixValid = false;
@@ -1476,8 +1492,7 @@ function updateWalkMode(dt) {
       walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
       walkState.missedSurfaceFrames = 0;
       walkState.anchorPlanetIdx = anchorIdx;
-      anchorMp.obj.pivot.updateMatrixWorld(true);
-      walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
+      getWalkAnchorFrameWorldMatrix(anchorMp, walkState.anchorLastMatrix);
       walkState.anchorLastMatrixValid = true;
       applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
       clampWalkPositionToAnchor(anchorMp, dt);
