@@ -1285,29 +1285,29 @@ function updateWalkMode(dt) {
     walkState.position.copy(_walkCenter).addScaledVector(_walkTmp, snapRadius);
     walkState.grounded = false;
 
-    if (walkState.missedSurfaceFrames >= 4) {
-      const recoveredSpawn = getWalkLandSpawnOnPlanet(anchorIdx);
-      if (recoveredSpawn) {
+    // Local-only recovery: never teleport to a "best spawn" elsewhere on the planet.
+    if (walkState.missedSurfaceFrames >= 2) {
+      const localSurface = sampleWalkSurfaceForPlanet(anchorMp, anchorIdx, walkState.position);
+      if (localSurface) {
         walkState.anchorPlanetIdx = anchorIdx;
-        walkState.position.copy(recoveredSpawn.point).addScaledVector(recoveredSpawn.radialDir, WALK_CFG.footOffset);
-        walkState.up.copy(recoveredSpawn.radialDir).normalize();
+        walkState.position.copy(localSurface.point).addScaledVector(localSurface.radialDir, WALK_CFG.footOffset);
+        walkState.up.copy(localSurface.radialDir).normalize();
         syncWalkPitchFromView();
         walkState.velocity.set(0, 0, 0);
         walkState.grounded = true;
         walkState.jumpBufferTimer = 0;
         walkState.jumpCooldownTimer = 0;
         walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
-        walkState.surfaceType = recoveredSpawn.medium || 'land';
-        walkState.surfaceSlopeDeg = recoveredSpawn.slopeDeg || 0;
+        walkState.surfaceType = localSurface.medium || 'land';
+        walkState.surfaceSlopeDeg = localSurface.slopeDeg || 0;
         walkState.sliding = false;
         walkState.missedSurfaceFrames = 0;
         anchorMp.obj.pivot.updateMatrixWorld(true);
         walkState.anchorLastMatrix.copy(anchorMp.obj.pivot.matrixWorld);
         walkState.anchorLastMatrixValid = true;
-        refreshWalkUi();
       }
     }
-    if (walkState.missedSurfaceFrames > 32) stopWalkMode();
+    if (walkState.missedSurfaceFrames > 24) stopWalkMode();
     walkAvatar.position.copy(walkState.position);
     updateWalkCameraPose(dt, 0);
     return;
