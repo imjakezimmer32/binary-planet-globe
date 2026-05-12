@@ -1280,7 +1280,6 @@ function clearWalkInputState() {
 function refreshWalkUi() {
   const btn = document.getElementById('btn-walk');
   const controls = document.getElementById('walk-controls');
-  const badge = document.getElementById('walk-cam-badge');
   const runLockBtn = controls ? controls.querySelector('button[data-walk="runLock"]') : null;
   if (btn) {
     btn.classList.toggle('active', walkMode.active);
@@ -1288,14 +1287,6 @@ function refreshWalkUi() {
   document.body.classList.toggle('walk-touch-look-active', walkMode.active);
   if (controls) {
     controls.style.display = walkMode.active ? 'flex' : 'none';
-  }
-  if (badge) {
-    badge.style.display = walkMode.active ? 'block' : 'none';
-    if (walkMode.active) {
-      const mediumTag = walkState.surfaceType === 'lava' ? 'LAVA' : (walkState.surfaceType === 'water' ? 'WATER' : 'LAND');
-      const fpHint = walkTpDistanceTarget <= WALK_CFG.tpFpsBlendStart ? ' · FP' : '';
-      badge.textContent = `${mediumTag} ${walkTpDistanceTarget.toFixed(2)}${fpHint}`;
-    }
   }
   if (runLockBtn) {
     runLockBtn.classList.toggle('active', !!walkInput.runLocked);

@@ -228,8 +228,7 @@ body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
 #planet-radial-editor,
 #sun-radial-editor,
 #galaxy-menu,
-#walk-controls,
-#walk-cam-badge {
+#walk-controls {
   transition: opacity 0.55s ease;
 }
 body.hud-hidden #ui,
@@ -239,8 +238,7 @@ body.hud-hidden #planet-panel,
 body.hud-hidden #planet-radial-editor,
 body.hud-hidden #sun-radial-editor,
 body.hud-hidden #galaxy-menu,
-body.hud-hidden #walk-controls,
-body.hud-hidden #walk-cam-badge {
+body.hud-hidden #walk-controls {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -1351,22 +1349,3 @@ input[type=range]::-moz-range-thumb {
   background: rgba(255,255,255,0.18);
   transform: translate(0px, 0px);
 }
-#walk-cam-badge {
-  position: fixed;
-  left: max(10px, env(safe-area-inset-left, 0px));
-  bottom: calc(max(10px, env(safe-area-inset-bottom, 0px)) + 70px);
-  z-index: 86;
-  display: none;
-  min-width: 58px;
-  padding: 4px 8px;
-  border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.25);
-  background: rgba(0,0,0,0.58);
-  color: rgba(255,255,255,0.92);
-  font-family: monospace;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  text-align: center;
-}
-
