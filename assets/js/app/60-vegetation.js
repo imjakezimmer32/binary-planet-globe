@@ -1,5 +1,5 @@
 // ── Vegetation ─────────────────────────────────────────────────────
-// Low-poly grass (3 variants) + 5 tree variants for planet surfaces.
+// Turf grass + 5 tree variants for planet surfaces.
 // Depends on: THREE (global).
 // Exposes: VEG.spawnVegetationOnPlanet, VEG.clearVegetation, VEG.refreshVisibility
 const VEG = (() => {
@@ -130,53 +130,28 @@ const VEG = (() => {
 
   const BUILDERS = [v0Pine, v1Round, v2Spire, v3Bush, v4Palm];
 
-  // ── 3 grass variants ──────────────────────────────────────────────
-
-  // Variant 0: Clump — 3 crossed wide double-sided blades with slight lean.
-  function buildGrassClump(pos, col, h, rng) {
-    const w = h * 2.8;
-    for (let i = 0; i < 3; i++) {
-      const a    = (i / 3) * Math.PI + rng() * 0.4;
-      const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
-      const lean = (rng() - 0.5) * h * 0.5;
-      const c    = [GS_A, GS_B, GS_C][i];
-      pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, h, lean*0.5], c);
-      pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, h, lean*0.5], c);
+  // ── Turf grass ───────────────────────────────────────────────
+  // Dense cluster of thin, straight, uniform-height blades — no lean, no spread variation.
+  function buildGrassTurf(pos, col, h, rng) {
+    const N      = 9;          // blades per instance
+    const spread = h * 1.0;    // tight footprint so instances merge into carpet
+    const hw     = h * 0.18;   // thin blade half-width
+    for (let i = 0; i < N; i++) {
+      const a  = rng() * Math.PI * 2;
+      const r  = Math.sqrt(rng()) * spread; // uniform distribution within circle
+      const bx = Math.cos(a) * r;
+      const bz = Math.sin(a) * r;
+      const oa = rng() * Math.PI; // blade face angle
+      const tx = Math.cos(oa) * hw;
+      const tz = Math.sin(oa) * hw;
+      const c  = i % 3 === 0 ? GS_C : i % 3 === 1 ? GS_A : GS_B;
+      // Blade: base spans +-hw, tip is straight up at exactly h — no lean.
+      pushTri(pos, col, [bx-tx, 0, bz-tz], [bx+tx, 0, bz+tz], [bx, h, bz], c);
+      pushTri(pos, col, [bx+tx, 0, bz+tz], [bx-tx, 0, bz-tz], [bx, h, bz], c);
     }
   }
 
-  // Variant 1: Tuft — 5 short upright blades radiating outward in a ring.
-  function buildGrassTuft(pos, col, h, rng) {
-    const th = h * 0.75;
-    for (let i = 0; i < 5; i++) {
-      const a  = (i / 5) * Math.PI * 2 + rng() * 0.25;
-      const sr = h * 0.14;
-      const bx = Math.cos(a) * sr,  bz = Math.sin(a) * sr;
-      const hw = h * 0.28;
-      const tx = Math.cos(a + Math.PI * 0.5) * hw;
-      const tz = Math.sin(a + Math.PI * 0.5) * hw;
-      const lx = Math.cos(a) * h * 0.18, lz = Math.sin(a) * h * 0.18;
-      const c  = i % 2 === 0 ? G_MID : G_LT;
-      pushTri(pos, col, [bx-tx, 0, bz-tz], [bx+tx, 0, bz+tz], [bx+lx, th, bz+lz], c);
-      pushTri(pos, col, [bx+tx, 0, bz+tz], [bx-tx, 0, bz-tz], [bx+lx, th, bz+lz], c);
-    }
-  }
-
-  // Variant 2: Wispy — 2 tall thin blades with strong lean for wind-blown look.
-  function buildGrassWispy(pos, col, h, rng) {
-    const th = h * 1.5;
-    const w  = h * 0.9;
-    for (let i = 0; i < 2; i++) {
-      const a    = (i / 2) * Math.PI + rng() * 0.5;
-      const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
-      const lean = (rng() - 0.5) * h * 1.1;
-      const c    = i === 0 ? GS_A : G_DARK;
-      pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, th, lean * 0.4], c);
-      pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, th, lean * 0.4], c);
-    }
-  }
-
-  const GRASS_BUILDERS = [buildGrassClump, buildGrassTuft, buildGrassWispy];
+  const GRASS_BUILDERS = [buildGrassTurf];
 
   // ── Helpers ───────────────────────────────────────────────────────
   function makeMat(doubleSide) {
@@ -216,7 +191,7 @@ const VEG = (() => {
     const ps  = Math.max(peakScale, 0.001);
     const sz  = Math.max(planetSize || 1, 0.05);
 
-    // Heights in spin-local space (world height = local × sz via pivot.scale)
+    // Heights in spin-local space (world height = local x sz via pivot.scale)
     const treeSc = TREE_H / sz;
     const grassH = GRASS_H / sz;
 
@@ -228,15 +203,13 @@ const VEG = (() => {
 
     const treePosArr = [[], [], [], [], []];
     const treeColArr = [[], [], [], [], []];
-    // Separate geometry per grass variant for visual batching.
-    const grassPos = [[], [], []], grassCol = [[], [], []];
+    const grassPos = [[]], grassCol = [[]];
 
     const TREE_MAX        = 180;
     const GRASS_MAX       = 4000;
     const CLUMPS_PER_FACE = 3; // multiple placements per green polygon for full coverage
     let   nTrees = 0, nGrass = 0;
 
-    // Visit every terrain face; place CLUMPS_PER_FACE clumps per eligible grass face.
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
 
@@ -318,7 +291,7 @@ const VEG = (() => {
         treePosArr[v].push(...applyMat4(lp, _m));
         treeColArr[v].push(...lc);
       } else if (wantGrass) {
-        // Place multiple clumps at random barycentric positions within this face.
+        // Place multiple turf instances at random barycentric positions within this face.
         const n   = Math.min(CLUMPS_PER_FACE, GRASS_MAX - nGrass);
         const eps = grassH * 0.05;
         for (let k = 0; k < n; k++) {
@@ -330,11 +303,10 @@ const VEG = (() => {
           _m.makeRotationFromQuaternion(_q);
           _m.setPosition(px + fnx*eps, py + fny*eps, pz + fnz*eps);
           nGrass++;
-          const gv = Math.floor(rng() * 3);
           const lp = [], lc = [];
-          GRASS_BUILDERS[gv](lp, lc, grassH, rng);
-          grassPos[gv].push(...applyMat4(lp, _m));
-          grassCol[gv].push(...lc);
+          GRASS_BUILDERS[0](lp, lc, grassH, rng);
+          grassPos[0].push(...applyMat4(lp, _m));
+          grassCol[0].push(...lc);
         }
       }
     }
@@ -350,9 +322,8 @@ const VEG = (() => {
     }
 
     const grassMat = makeMat(true);
-    for (let gv = 0; gv < 3; gv++) {
-      if (!grassPos[gv].length) continue;
-      const mesh = new THREE.Mesh(toGeo(grassPos[gv], grassCol[gv]), grassMat);
+    if (grassPos[0].length) {
+      const mesh = new THREE.Mesh(toGeo(grassPos[0], grassCol[0]), grassMat);
       mesh.frustumCulled = false;
       mesh.visible = false;
       spinGroup.add(mesh);
