@@ -721,12 +721,12 @@ function terrainDetailForManagedPlanet(mp) {
   return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
-function rebuildManagedPlanetTerrain(mp, maxDetail) {
+function rebuildManagedPlanetTerrain(mp, maxDetail, skipVeg) {
   if (!mp?.obj?.rebuild) return;
   let d = terrainDetailForManagedPlanet(mp);
   if (maxDetail !== undefined) d = Math.min(d, maxDetail);
   if (d > 0) {
-    mp.obj.rebuild(d, maxDetail !== undefined ? { skipVeg: true } : undefined);
+    mp.obj.rebuild(d, (maxDetail !== undefined || skipVeg) ? { skipVeg: true } : undefined);
     mp.obj.syncGrid();
   }
 }
