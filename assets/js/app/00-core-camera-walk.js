@@ -150,8 +150,8 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 /** Capsule height in world units (must match avatar geometry). */
 const WALK_CAPSULE_HEIGHT = 0.013;
-/** Jump apex ≈ this × capsule height — ~22 → ~0.29 world units (big hop, not moon-jump). */
-const WALK_JUMP_APEX_CAPSULE_MUL = 22;
+/** Jump apex ≈ this × capsule height — 44 → ~0.57 world units (2× the prior 22× tuning). */
+const WALK_JUMP_APEX_CAPSULE_MUL = 44;
 
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
@@ -254,7 +254,7 @@ const WALK_CFG = {
   /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
-  anchorSphereAbsSlack: 0.24,
+  anchorSphereAbsSlack: 0.48,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -263,7 +263,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 0.38,
+  airLandingAssistEndGap: 0.76,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
