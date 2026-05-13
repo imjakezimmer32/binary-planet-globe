@@ -1447,7 +1447,10 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
       .addScaledVector(_walkTmp, -walkTpDistanceTarget)
       .addScaledVector(spawn.radialDir, WALK_CFG.cameraHeight);
     resolveWalkCameraOcclusion(endLook, endPos, endPos);
+    // Occlusion pulls along target→eye spoke and was collapsing the radial height offset.
     const endUp = spawn.radialDir.clone();
+    _walkTmp2.copy(endPos).sub(endLook);
+    endPos.addScaledVector(endUp, WALK_CFG.cameraHeight - _walkTmp2.dot(endUp));
 
     const t0 = performance.now();
     function frame(now) {
@@ -1523,17 +1526,29 @@ function updateWalkCameraPose(dt, bounce = 0) {
   fpBlend = fpBlend * fpBlend * (3 - 2 * fpBlend);
 
   const camH = (WALK_CFG.cameraHeight + bounce) * (1 - fpBlend);
+  // Pull back in the tangent plane (perpendicular to body/planet up) so cameraHeight is
+  // purely along `up` and orbit/occlusion does not dip the rig when view pitches or
+  // when resolveWalkCameraOcclusion shortens the target→camera spoke.
+  _walkTmp.copy(walkState.viewDir);
+  _walkTmp.addScaledVector(walkState.up, -_walkTmp.dot(walkState.up));
+  if (_walkTmp.lengthSq() < 1e-10) _walkTmp.copy(walkState.forward);
+  else _walkTmp.normalize();
   const tpPos = _walkCamPos
     .copy(chest)
-    .addScaledVector(walkState.viewDir, -dist)
-    .addScaledVector(walkState.up, camH);
+    .addScaledVector(walkState.up, camH)
+    .addScaledVector(_walkTmp, -dist);
   const fpPos = _walkSpawnToCam
     .copy(eye)
     .addScaledVector(walkState.viewDir, -WALK_CFG.fpsEyePullback);
   _walkCamPos.copy(tpPos).lerp(fpPos, fpBlend);
 
   _walkCamTarget.copy(chest).lerp(eye, fpBlend * 0.78);
+
+  _walkSpawnRadial.copy(_walkCamPos).sub(chest);
+  const keepAlongUp = _walkSpawnRadial.dot(walkState.up);
   resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
+  _walkSpawnRadial.copy(_walkCamPos).sub(chest);
+  _walkCamPos.addScaledVector(walkState.up, keepAlongUp - _walkSpawnRadial.dot(walkState.up));
 
   camera.position.lerp(_walkCamPos, Math.min(1, dt * WALK_CFG.cameraLag));
 
@@ -1552,6 +1567,14 @@ function updateWalkCameraPose(dt, bounce = 0) {
   }
 
   enforceCameraOutsidePlanetMeshes();
+
+  if (walkMode.active) {
+    _walkSpawnRadial.copy(camera.position).sub(chest);
+    camera.position.addScaledVector(
+      walkState.up,
+      keepAlongUp - _walkSpawnRadial.dot(walkState.up)
+    );
+  }
 }
 
 function getWalkSurfaceSpeedFactor(surface) {
