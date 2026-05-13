@@ -12,7 +12,8 @@ const GALAXY_DESTINATIONS = [
     color: 0xffffd0,
     pos: new THREE.Vector3(0, 0, 0),
     audioSrc: '/audio/astra.mp3',
-    audioVolume: 0.78,
+    /** Peak gain after fade-in (~30% quieter than former 0.78). */
+    audioVolume: 0.546,
     audioLoop: true,
   },
   { name: 'Alpha Centauri',  dist: '4.37 ly',   color: 0xffcc88, pos: new THREE.Vector3( 1800, 220, -1300) },
