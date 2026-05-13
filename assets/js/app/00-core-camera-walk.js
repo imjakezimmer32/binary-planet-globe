@@ -127,9 +127,21 @@ const WALK_CFG = {
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
-  bounceFreq: 8.2,
-  bounceAmp: 0.0012,
-  bounceResponse: 8.5,
+  /** Walk bob frequency (rad/s); run uses a faster bob. */
+  bounceFreqWalk: 9.8,
+  bounceFreqRun: 14.2,
+  /** Vertical bob amplitude (world units) at full blend; run slightly stronger. */
+  bounceAmpWalk: 0.00185,
+  bounceAmpRun: 0.00245,
+  /** Extra bob frequency from planar speed (rad per unit speed). */
+  bounceFreqFromSpeed: 12,
+  bounceResponse: 9.8,
+  /** Foot dust: min planar speed (world) before puffs spawn on land. */
+  dustMinPlanarSpeed: 0.0026,
+  /** Seconds until a dust puff is fully faded and recycled. */
+  dustLifetimeSec: 3,
+  dustSpawnIntervalWalk: 0.07,
+  dustSpawnIntervalRun: 0.036,
   walkFov: 62,
   /** Default third-person pull-back (world units); zoom wheel / pinch adjust from tpDistanceMin..Max. */
   cameraDistance: 0.32,
@@ -349,6 +361,127 @@ walkPlayerLight.position.set(0, WALK_CFG.characterHeight * WALK_CFG.playerLightH
 walkAvatar.add(walkPlayerLight);
 walkAvatar.visible = false;
 scene.add(walkAvatar);
+
+// ── Walk foot dust (soft puffs, world space, fade over dustLifetimeSec) ──
+const WALK_DUST_POOL_N = 56;
+const walkDustSharedGeometry = new THREE.SphereGeometry(1, 5, 5);
+/** @type {THREE.Mesh[]|null} */
+let walkDustMeshes = null;
+let walkDustSpawnAcc = 0;
+
+function ensureWalkDustPool() {
+  if (walkDustMeshes) return;
+  walkDustMeshes = [];
+  for (let i = 0; i < WALK_DUST_POOL_N; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xcfc1ae,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const m = new THREE.Mesh(walkDustSharedGeometry, mat);
+    m.visible = false;
+    m.userData.active = false;
+    m.userData.age = 0;
+    m.userData.baseOpacity = 0;
+    m.userData.baseScale = 1;
+    m.userData.vel = new THREE.Vector3();
+    scene.add(m);
+    walkDustMeshes.push(m);
+  }
+}
+
+function resetWalkDustPool() {
+  walkDustSpawnAcc = 0;
+  if (!walkDustMeshes) return;
+  for (let i = 0; i < walkDustMeshes.length; i++) {
+    const m = walkDustMeshes[i];
+    m.userData.active = false;
+    m.visible = false;
+    m.material.opacity = 0;
+  }
+}
+
+function spawnWalkDustPuff(surface, speedScale, sprinting, planarSpeed, desiredSpeed) {
+  ensureWalkDustPool();
+  let m = null;
+  for (let i = 0; i < walkDustMeshes.length; i++) {
+    if (!walkDustMeshes[i].userData.active) {
+      m = walkDustMeshes[i];
+      break;
+    }
+  }
+  if (!m) return;
+  const up = walkState.up;
+  _walkSpawnV1.copy(walkState.velocity).projectOnPlane(up);
+  if (_walkSpawnV1.lengthSq() < 1e-14) {
+    _walkSpawnV1.copy(walkState.forward).multiplyScalar(-1);
+  } else {
+    _walkSpawnV1.multiplyScalar(-1 / _walkSpawnV1.length());
+  }
+  const speedRatio = Math.min(1.85, planarSpeed / Math.max(desiredSpeed, 1e-6));
+  const kick = WALK_CFG.characterRadius * speedScale * (sprinting ? 1.12 : 0.76)
+    * (0.0085 + 0.015 * speedRatio);
+  m.userData.vel.copy(_walkSpawnV1).multiplyScalar(kick);
+  _walkSpawnV2.copy(up).cross(_walkSpawnV1);
+  if (_walkSpawnV2.lengthSq() < 1e-12) _walkSpawnV2.set(1, 0, 0);
+  else _walkSpawnV2.normalize();
+  m.userData.vel.addScaledVector(_walkSpawnV2, (Math.random() - 0.5) * kick * 0.7);
+  m.userData.vel.addScaledVector(surface.normal, kick * (0.28 + Math.random() * 0.55));
+
+  m.position.copy(surface.point);
+  m.position.addScaledVector(surface.normal, WALK_CFG.characterRadius * (0.07 + Math.random() * 0.11));
+  m.position.addScaledVector(_walkSpawnV2, (Math.random() - 0.5) * WALK_CFG.characterRadius * 0.52);
+
+  const rs = WALK_CFG.characterRadius * speedScale * (0.38 + Math.random() * 0.42);
+  m.userData.baseScale = rs;
+  m.userData.baseOpacity = 0.32 + Math.random() * 0.14;
+  m.userData.age = 0;
+  m.userData.active = true;
+  m.visible = true;
+  m.material.opacity = m.userData.baseOpacity;
+  m.scale.setScalar(rs);
+  m.material.color.setHex(0xc8baa8 + Math.floor(Math.random() * 0x080808));
+}
+
+function updateWalkDustParticles(dt, surface, grounded, planarSpeed, sprinting, inputActive, speedScale, desiredSpeed) {
+  ensureWalkDustPool();
+  const life = WALK_CFG.dustLifetimeSec;
+  for (let i = 0; i < walkDustMeshes.length; i++) {
+    const mesh = walkDustMeshes[i];
+    if (!mesh.userData.active) continue;
+    const ud = mesh.userData;
+    ud.age += dt;
+    if (ud.age >= life) {
+      ud.active = false;
+      mesh.visible = false;
+      mesh.material.opacity = 0;
+      continue;
+    }
+    const u = ud.age / life;
+    const fade = (1 - u) * (1 - u);
+    mesh.material.opacity = ud.baseOpacity * fade;
+    mesh.position.addScaledVector(ud.vel, dt);
+    ud.vel.multiplyScalar(Math.max(0, 1 - dt * 2.35));
+    mesh.scale.setScalar(ud.baseScale * (1 + u * 2.25));
+  }
+
+  const land = surface && surface.medium === 'land';
+  const want = land && grounded && inputActive
+    && planarSpeed > WALK_CFG.dustMinPlanarSpeed * Math.max(speedScale, 0.08);
+  if (want) {
+    const interval = sprinting ? WALK_CFG.dustSpawnIntervalRun : WALK_CFG.dustSpawnIntervalWalk;
+    walkDustSpawnAcc += dt;
+    let bursts = 0;
+    while (walkDustSpawnAcc >= interval && bursts < 4) {
+      walkDustSpawnAcc -= interval;
+      spawnWalkDustPuff(surface, speedScale, sprinting, planarSpeed, desiredSpeed);
+      bursts += 1;
+    }
+  } else {
+    walkDustSpawnAcc = 0;
+  }
+}
 
 const planetSelectionHalo = new THREE.Mesh(
   new THREE.SphereGeometry(1, 36, 24),
@@ -1387,6 +1520,7 @@ function stopWalkMode() {
   mobPointers.clear();
   mobSingleReady = false;
   refreshWalkUi();
+  resetWalkDustPool();
   syncOrbitStateFromActualCamera();
 }
 
@@ -1398,6 +1532,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkTransition.startedAt = 0;
   walkMode.active = true;
   walkMode.spawnPlanetIdx = idx;
+  resetWalkDustPool();
   walkCameraMode = 'tp';
   if (walkState.prevFov === null) walkState.prevFov = camera.fov;
   camera.fov = WALK_CFG.walkFov;
@@ -1974,12 +2109,25 @@ function updateWalkMode(dt) {
   clampWalkPositionToAnchor(anchorMp, dt);
 
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
+  updateWalkDustParticles(
+    dt,
+    nextSurface,
+    walkState.grounded,
+    planarSpeed,
+    sprinting,
+    !inputIdle,
+    speedScale,
+    desiredSpeed
+  );
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
   if (moveLen < WALK_CFG.moveInputDeadzone || !walkState.grounded) bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
-  walkState.bouncePhase += dt * (WALK_CFG.bounceFreq + planarSpeed * 10);
+  const bounceFreq = (sprinting ? WALK_CFG.bounceFreqRun : WALK_CFG.bounceFreqWalk)
+    + planarSpeed * WALK_CFG.bounceFreqFromSpeed;
+  walkState.bouncePhase += dt * bounceFreq;
+  const bounceAmp = sprinting ? WALK_CFG.bounceAmpRun : WALK_CFG.bounceAmpWalk;
   const bounce = walkState.grounded
-    ? Math.abs(Math.sin(walkState.bouncePhase)) * WALK_CFG.bounceAmp * walkState.bounceBlend
+    ? Math.abs(Math.sin(walkState.bouncePhase)) * bounceAmp * walkState.bounceBlend
     : 0;
 
   walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * 0.45);
