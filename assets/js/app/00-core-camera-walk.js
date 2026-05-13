@@ -114,6 +114,7 @@ const WALK_CFG = {
   characterRadius: 0.0036,
   characterHeight: 0.013,
   footOffset: 0.0065,
+  /** Tangential top speed at WALK_SPEED_REF_RADIUS; scaled per-planet in updateWalkMode. */
   moveSpeed: 0.10,
   sprintBoost: 1.82,
   acceleration: 6.4,
@@ -1614,6 +1615,18 @@ function getWalkGravityForPlanet(anchorMp) {
   return { g, maxFall, R, rMin, rMax, t };
 }
 
+/**
+ * WALK_CFG planar speeds are tuned at a reference shell radius. Scale by R_ref / R so similar
+ * angular motion across tiny moons and huge worlds (uses physics radius, not mesh tessellation).
+ */
+const WALK_SPEED_REF_RADIUS = 0.62;
+
+function getWalkSurfaceSpeedScale(anchorMp) {
+  const R = getWalkPlanetRadiusMetric(anchorMp);
+  const mul = WALK_SPEED_REF_RADIUS / Math.max(R, 1e-5);
+  return Math.max(0.22, Math.min(7.5, mul));
+}
+
 /** Light mesh-only correction along face normal (does not fight horizontal walking). */
 function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
   const stick = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
@@ -1655,6 +1668,8 @@ function updateWalkMode(dt) {
   const walkGrav = getWalkGravityForPlanet(anchorMp);
   const walkG = walkGrav.g;
   const walkMaxFall = walkGrav.maxFall;
+  const speedScale = getWalkSurfaceSpeedScale(anchorMp);
+  const landOutRad = WALK_CFG.landMaxOutwardSpeed * speedScale;
   if (anchorMp?.obj?.pivot) {
     if (!getWalkAnchorFrameWorldMatrix(anchorMp, _walkAnchorCurr)) {
       stopWalkMode();
@@ -1728,7 +1743,7 @@ function updateWalkMode(dt) {
   const nearGround = Math.abs(currentSurface.gap) <= WALK_CFG.groundProbeDistance;
   const outwardSpeed = walkState.velocity.dot(walkState.up);
   if (nearGround) walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
-  if (!walkState.grounded && nearGround && outwardSpeed <= WALK_CFG.landMaxOutwardSpeed) {
+  if (!walkState.grounded && nearGround && outwardSpeed <= landOutRad) {
     walkState.grounded = true;
   }
   if (walkState.grounded && !nearGround && walkState.coyoteTimer <= 0) {
@@ -1752,15 +1767,15 @@ function updateWalkMode(dt) {
   const runBoost = walkInput.runLocked || walkInput.shiftRun;
   const sprinting = runBoost && moveLen > WALK_CFG.runInputMin;
   const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
-  const desiredSpeed = WALK_CFG.moveSpeed * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
+  const desiredSpeed = WALK_CFG.moveSpeed * speedScale * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
   _walkDesired.projectOnPlane(currentSurface.normal);
   if (_walkDesired.lengthSq() > 1e-8) _walkDesired.setLength(desiredSpeed);
 
   const radialVel = walkState.velocity.dot(walkState.up);
   _walkTmp.copy(walkState.velocity).addScaledVector(walkState.up, -radialVel);
-  const controlAccel = walkState.grounded
+  const controlAccel = (walkState.grounded
     ? WALK_CFG.acceleration
-    : WALK_CFG.acceleration * WALK_CFG.airControlFactor;
+    : WALK_CFG.acceleration * WALK_CFG.airControlFactor) * speedScale;
   const accelStep = Math.min(1, controlAccel * dt);
   _walkTmp.lerp(_walkDesired, accelStep);
 
@@ -1774,7 +1789,7 @@ function updateWalkMode(dt) {
       if (downhillLen > 1e-8) {
         _walkTmp2.multiplyScalar(1 / downhillLen);
         const slopeGain = Math.max(0, Math.min(1, (currentSurface.slopeDeg - WALK_CFG.slipExitDeg) / (90 - WALK_CFG.slipExitDeg)));
-        const slideImpulse = WALK_CFG.slideAccel * (0.45 + slopeGain * 1.2);
+        const slideImpulse = WALK_CFG.slideAccel * speedScale * (0.45 + slopeGain * 1.2);
         _walkTmp.addScaledVector(_walkTmp2, slideImpulse * dt);
       }
     }
@@ -1790,7 +1805,7 @@ function updateWalkMode(dt) {
     const extra = walkState.grounded ? WALK_CFG.idlePlanarBrake : WALK_CFG.idleAirPlanarBrake;
     const damp = Math.max(0, 1 - (dragFactor + extra) * dt);
     _walkTmp.multiplyScalar(damp);
-    const eps = WALK_CFG.idlePlanarSnapSpeed;
+    const eps = WALK_CFG.idlePlanarSnapSpeed * speedScale;
     if (_walkTmp.lengthSq() < eps * eps) _walkTmp.set(0, 0, 0);
   } else if (inputIdle && walkState.grounded && walkState.sliding) {
     _walkTmp.multiplyScalar(Math.max(0, 1 - WALK_CFG.drag * 0.42 * dt));
@@ -1812,7 +1827,7 @@ function updateWalkMode(dt) {
     const rvAir = walkState.velocity.dot(walkState.up);
     _walkTmp.copy(walkState.velocity).addScaledVector(walkState.up, -rvAir);
     const planar = _walkTmp.length();
-    const cap = WALK_CFG.maxAirHorizontalSpeed;
+    const cap = WALK_CFG.maxAirHorizontalSpeed * speedScale;
     if (planar > cap) _walkTmp.multiplyScalar(cap / planar);
     walkState.velocity.copy(_walkTmp).addScaledVector(walkState.up, rvAir);
   }
@@ -1855,7 +1870,7 @@ function updateWalkMode(dt) {
   } else {
     const nextGapAbs = Math.abs(nextSurface.gap);
     const nextOutwardSpeed = walkState.velocity.dot(nextSurface.radialDir);
-    if (!walkState.grounded && nextGapAbs <= WALK_CFG.groundProbeDistance && nextOutwardSpeed <= WALK_CFG.landMaxOutwardSpeed) {
+    if (!walkState.grounded && nextGapAbs <= WALK_CFG.groundProbeDistance && nextOutwardSpeed <= landOutRad) {
       walkState.grounded = true;
     }
     if (walkState.grounded) {
