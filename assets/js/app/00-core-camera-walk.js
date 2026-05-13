@@ -127,23 +127,27 @@ const WALK_CFG = {
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
-  /** Walk bob frequency (rad/s); run is moderately faster, not frantic. */
-  bounceFreqWalk: 5.4,
-  bounceFreqRun: 7.2,
+  /** Walk bob frequency (rad/s); run is faster. */
+  bounceFreqWalk: 8.4,
+  bounceFreqRun: 11.2,
   /** Vertical bob amplitude (world units, ≈ fraction of characterHeight); was too small to see on screen. */
   bounceAmpWalk: 0.0055,
   bounceAmpRun: 0.0072,
   /** Portion of bob offset applied to the pill along planet up (camera still uses full `bounce`). */
   bobAvatarUpFactor: 0.92,
-  /** Small extra bob rate from planar speed (keeps bob tied to motion without speeding up too much). */
-  bounceFreqFromSpeed: 3.2,
+  /** Extra bob rate from planar speed (rad per unit speed). */
+  bounceFreqFromSpeed: 5.8,
   bounceResponse: 11,
-  /** Foot dust: min planar speed (world) before puffs spawn on land. */
+  /** Foot dust: min planar speed (world) before touchdown can emit puffs on land. */
   dustMinPlanarSpeed: 0.0026,
   /** Seconds until a dust puff is fully faded and recycled. */
   dustLifetimeSec: 3,
-  dustSpawnIntervalWalk: 0.07,
-  dustSpawnIntervalRun: 0.036,
+  /** Bob |sin| must exceed this before we arm a touchdown (one hop cycle). */
+  dustBobPeakThreshold: 0.62,
+  /** When |sin| drops below this after a peak, we treat it as foot touchdown and emit a small burst. */
+  dustBobTouchdownThreshold: 0.12,
+  dustTouchdownPuffsWalk: 2,
+  dustTouchdownPuffsRun: 3,
   walkFov: 62,
   /** Default third-person pull-back (world units); zoom wheel / pinch adjust from tpDistanceMin..Max. */
   cameraDistance: 0.32,
@@ -369,7 +373,8 @@ const WALK_DUST_POOL_N = 56;
 const walkDustSharedGeometry = new THREE.SphereGeometry(1, 5, 5);
 /** @type {THREE.Mesh[]|null} */
 let walkDustMeshes = null;
-let walkDustSpawnAcc = 0;
+/** True after bob |sin| passed dustBobPeakThreshold; cleared after touchdown burst or when idle. */
+let walkDustBobPrimed = false;
 
 function ensureWalkDustPool() {
   if (walkDustMeshes) return;
@@ -394,7 +399,7 @@ function ensureWalkDustPool() {
 }
 
 function resetWalkDustPool() {
-  walkDustSpawnAcc = 0;
+  walkDustBobPrimed = false;
   if (!walkDustMeshes) return;
   for (let i = 0; i < walkDustMeshes.length; i++) {
     const m = walkDustMeshes[i];
@@ -474,19 +479,21 @@ function updateWalkDustParticles(dt, surface, grounded, planarSpeed, sprinting, 
   }
 
   const land = surface && surface.medium === 'land';
-  const want = land && grounded && inputActive
+  const moving = land && grounded && inputActive
     && planarSpeed > WALK_CFG.dustMinPlanarSpeed * Math.max(speedScale, 0.08);
-  if (want) {
-    const interval = sprinting ? WALK_CFG.dustSpawnIntervalRun : WALK_CFG.dustSpawnIntervalWalk;
-    walkDustSpawnAcc += dt;
-    let bursts = 0;
-    while (walkDustSpawnAcc >= interval && bursts < 4) {
-      walkDustSpawnAcc -= interval;
-      spawnWalkDustPuff(surface, speedScale, sprinting, planarSpeed, desiredSpeed);
-      bursts += 1;
-    }
+
+  if (!moving) {
+    walkDustBobPrimed = false;
   } else {
-    walkDustSpawnAcc = 0;
+    const bobS = Math.abs(Math.sin(walkState.bouncePhase));
+    if (!walkDustBobPrimed && bobS > WALK_CFG.dustBobPeakThreshold) walkDustBobPrimed = true;
+    else if (walkDustBobPrimed && bobS < WALK_CFG.dustBobTouchdownThreshold) {
+      walkDustBobPrimed = false;
+      const n = sprinting ? WALK_CFG.dustTouchdownPuffsRun : WALK_CFG.dustTouchdownPuffsWalk;
+      for (let k = 0; k < n; k++) {
+        spawnWalkDustPuff(surface, speedScale, sprinting, planarSpeed, desiredSpeed);
+      }
+    }
   }
 }
 
@@ -2116,16 +2123,6 @@ function updateWalkMode(dt) {
   clampWalkPositionToAnchor(anchorMp, dt);
 
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
-  updateWalkDustParticles(
-    dt,
-    nextSurface,
-    walkState.grounded,
-    planarSpeed,
-    sprinting,
-    !inputIdle,
-    speedScale,
-    desiredSpeed
-  );
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
   if (moveLen < WALK_CFG.moveInputDeadzone || !walkState.grounded) bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
@@ -2136,6 +2133,17 @@ function updateWalkMode(dt) {
   const bounce = walkState.grounded
     ? Math.abs(Math.sin(walkState.bouncePhase)) * bounceAmp * walkState.bounceBlend
     : 0;
+
+  updateWalkDustParticles(
+    dt,
+    nextSurface,
+    walkState.grounded,
+    planarSpeed,
+    sprinting,
+    !inputIdle,
+    speedScale,
+    desiredSpeed
+  );
 
   walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * WALK_CFG.bobAvatarUpFactor);
   _walkBasisZ.crossVectors(walkState.forward, walkState.up);
