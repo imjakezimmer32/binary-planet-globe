@@ -184,6 +184,15 @@ function animate() {
     _prevWireOpacity = wireOpacity;
   }
 
+  // Planet radius is baked into the mesh; pivot uniform scale would stretch facets.
+  if (typeof managedPlanets !== 'undefined') {
+    managedPlanets.forEach(mp => {
+      if (mp?.obj?.pivot) mp.obj.pivot.scale.setScalar(1);
+    });
+  }
+  if (typeof p1 !== 'undefined' && p1?.pivot) p1.pivot.scale.setScalar(1);
+  if (typeof p2 !== 'undefined' && p2?.pivot) p2.pivot.scale.setScalar(1);
+
   const simWarp = getSimulationWarp(timeWarp);
   if (simWarp > 0) {
     const dt    = BASE_DT * simWarp;

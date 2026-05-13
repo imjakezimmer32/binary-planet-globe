@@ -689,7 +689,8 @@ const PLANET_MESH_DETAIL_MIN = 4;
 /**
  * Icosahedron detail tracks world shell radius R = baseRadius x size so mean triangle
  * edge length stays ~constant when resizing: each ~2x larger R adds one subdivision
- * (d ~ round(d_ref + log2(R/R_ref))). Size stays continuous; only mesh resolution steps.
+ * (d ~ ceil(d_ref + log2(R/R_ref))). Ceil (vs round) bumps LOD slightly sooner so facets
+ * grow less between integer subdivision levels. Size stays continuous; only mesh steps.
  */
 const PLANET_MESH_REF_SHELL_R = 1.0;
 const PLANET_MESH_REF_DETAIL = 7;
@@ -703,7 +704,7 @@ function getPlanetWorldShellRadius(mp) {
 function terrainDetailForManagedPlanet(mp) {
   const R = getPlanetWorldShellRadius(mp);
   const idealD = PLANET_MESH_REF_DETAIL + Math.log2(Math.max(R, 1e-6) / PLANET_MESH_REF_SHELL_R);
-  const d = Math.round(idealD);
+  const d = Math.ceil(idealD - 1e-9);
   return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
