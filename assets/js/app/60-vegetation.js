@@ -231,30 +231,27 @@ const VEG = (() => {
     // Separate geometry per grass variant for visual batching.
     const grassPos = [[], [], []], grassCol = [[], [], []];
 
-    const TREE_MAX  = 180;
-    const GRASS_MAX = 4000; // dense grass coverage across green terrain
+    const TREE_MAX        = 180;
+    const GRASS_MAX       = 4000;
+    const CLUMPS_PER_FACE = 3; // multiple placements per green polygon for full coverage
     let   nTrees = 0, nGrass = 0;
 
-    // Sample terrain faces evenly; face centroid guarantees vegetation is on terrain surface.
+    // Visit every terrain face; place CLUMPS_PER_FACE clumps per eligible grass face.
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
-    // 12000 target samples gives dense per-face coverage for the grass band.
-    const stride = Math.max(1, Math.floor(totalFaces / 12000));
 
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
-    for (let fi = 0; fi < totalFaces; fi += stride) {
+    for (let fi = 0; fi < totalFaces; fi++) {
       if (nTrees >= TREE_MAX && nGrass >= GRASS_MAX) break;
 
       const base = fi * 9;
-      // All 3 vertices of this face
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
       const v1x = posArr[base+3], v1y = posArr[base+4], v1z = posArr[base+5];
       const v2x = posArr[base+6], v2y = posArr[base+7], v2z = posArr[base+8];
-      // Face centroid
       const cx = (v0x + v1x + v2x) / 3;
       const cy = (v0y + v1y + v2y) / 3;
       const cz = (v0z + v1z + v2z) / 3;
@@ -262,7 +259,6 @@ const VEG = (() => {
       const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
       if (cl < 1e-6) continue;
 
-      // Normalised elevation matches the terrain colorizer formula exactly.
       const ne = (cl / baseR - 1) / ps;
 
       const wantTree  = ne >= TREE_NE_MIN  && ne <= TREE_NE_MAX  && nTrees < TREE_MAX;
@@ -278,21 +274,18 @@ const VEG = (() => {
       const fnl = Math.sqrt(fnx*fnx + fny*fny + fnz*fnz);
       if (fnl < 1e-10) continue;
       fnx /= fnl; fny /= fnl; fnz /= fnl;
-      // Ensure the normal points outward (same hemisphere as centroid radial).
       if (fnx*(cx/cl) + fny*(cy/cl) + fnz*(cz/cl) < 0) { fnx=-fnx; fny=-fny; fnz=-fnz; }
 
       _nv.set(fnx, fny, fnz);
       _q.setFromUnitVectors(_yUp, _nv);
-      _m.makeRotationFromQuaternion(_q);
-      // Tiny lift along face normal prevents z-fighting with the terrain polygon.
-      const eps = grassH * 0.05;
-      _m.setPosition(cx + fnx*eps, cy + fny*eps, cz + fnz*eps);
 
-      // In the overlapping band trees take priority ~1 in 3; rest become grass.
       const placeTree = wantTree && (!wantGrass || rng() < 0.35);
 
       if (placeTree) {
         nTrees++;
+        _m.makeRotationFromQuaternion(_q);
+        const eps = grassH * 0.05;
+        _m.setPosition(cx + fnx*eps, cy + fny*eps, cz + fnz*eps);
         const v  = Math.floor(rng() * 5);
         const sc = treeSc / VARIANT_HEIGHTS[v];
         const lp = [], lc = [];
@@ -300,12 +293,24 @@ const VEG = (() => {
         treePosArr[v].push(...applyMat4(lp, _m));
         treeColArr[v].push(...lc);
       } else if (wantGrass) {
-        nGrass++;
-        const gv = Math.floor(rng() * 3); // randomly pick 1 of 3 grass variants
-        const lp = [], lc = [];
-        GRASS_BUILDERS[gv](lp, lc, grassH, rng);
-        grassPos[gv].push(...applyMat4(lp, _m));
-        grassCol[gv].push(...lc);
+        // Place multiple clumps at random barycentric positions within this face.
+        const n   = Math.min(CLUMPS_PER_FACE, GRASS_MAX - nGrass);
+        const eps = grassH * 0.05;
+        for (let k = 0; k < n; k++) {
+          let u = rng(), v = rng();
+          if (u + v > 1) { u = 1 - u; v = 1 - v; } // fold into triangle
+          const px = v0x + u*(v1x-v0x) + v*(v2x-v0x);
+          const py = v0y + u*(v1y-v0y) + v*(v2y-v0y);
+          const pz = v0z + u*(v1z-v0z) + v*(v2z-v0z);
+          _m.makeRotationFromQuaternion(_q);
+          _m.setPosition(px + fnx*eps, py + fny*eps, pz + fnz*eps);
+          nGrass++;
+          const gv = Math.floor(rng() * 3);
+          const lp = [], lc = [];
+          GRASS_BUILDERS[gv](lp, lc, grassH, rng);
+          grassPos[gv].push(...applyMat4(lp, _m));
+          grassCol[gv].push(...lc);
+        }
       }
     }
 
