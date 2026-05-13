@@ -335,8 +335,8 @@ function applySmoothVertexNormalsForNonIndexedTerrain(geo) {
   const triCount = Math.floor(pos.count / 3);
   const bucket = new Map();
   const p0 = new THREE.Vector3();
-  const p1 = new THREE.Vector3();
-  const p2 = new THREE.Vector3();
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
   const e1 = new THREE.Vector3();
   const e2 = new THREE.Vector3();
   const fn = new THREE.Vector3();
@@ -346,10 +346,10 @@ function applySmoothVertexNormalsForNonIndexedTerrain(geo) {
     const i1 = i0 + 1;
     const i2 = i0 + 2;
     p0.fromBufferAttribute(pos, i0);
-    p1.fromBufferAttribute(pos, i1);
-    p2.fromBufferAttribute(pos, i2);
-    e1.subVectors(p1, p0);
-    e2.subVectors(p2, p0);
+    v1.fromBufferAttribute(pos, i1);
+    v2.fromBufferAttribute(pos, i2);
+    e1.subVectors(v1, p0);
+    e2.subVectors(v2, p0);
     fn.crossVectors(e1, e2);
     if (fn.lengthSq() < 1e-22) continue;
     fn.normalize();
@@ -511,6 +511,28 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     setVegVisible: v => { vegMeshes.forEach(m => { m.visible = v; }); },
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOL SYSTEM PLANETS (read this before changing terrain / “polygon size” behavior)
+//
+// • The two bodies you see orbiting each other at Sol are `p1` and `p2` below.
+//   They are THREE groups (`p1.pivot` / `p2.pivot`) parented under `sysGroup`
+//   (binary COM), which itself orbits the sun. Same objects appear as
+//   `managedPlanets[0].obj` and `managedPlanets[1].obj` (see registerPlanet in
+//   20-planet-management.js).
+//
+// • Terrain = displaced icosphere from createPlanet → buildGlobe (noise moves
+//   vertices along the radius). Equal subdivision level ≠ equal visible facet
+//   area everywhere: mountains and noise stretch edges. Tier snap / LOD only
+//   controls the *base* icosahedron resolution before that displacement.
+//
+// • “SCALE” on the HUD (curScale / targetScale) moves the *camera orbit radius*
+//   (see updateCamera in 00-core-camera-walk.js); it does not resize planet
+//   meshes. Per-planet size is `state.size` in the planet editor.
+//
+// • Other star systems on the galaxy map use small decorative meshes in
+//   40-galaxy.js (IcosahedronGeometry) — not the same code path as Sol’s p1/p2.
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ── System group: binary COM sits here, planets are children ──────
 const sysGroup = new THREE.Group();

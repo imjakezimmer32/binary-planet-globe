@@ -22,23 +22,28 @@ function setCamMode(mode) {
 }
 const btnGrid = document.getElementById('btn-grid');
 let gridOn = true;
-btnGrid.addEventListener('click', () => {
-  gridOn = !gridOn;
-  btnGrid.classList.toggle('active', gridOn);
-  managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
-});
+if (btnGrid) {
+  btnGrid.addEventListener('click', () => {
+    gridOn = !gridOn;
+    btnGrid.classList.toggle('active', gridOn);
+    managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
+  });
+}
 
 // Binary + registered planets: first terrain LOD/snap pass (see rebuildManagedPlanetTerrain in
 // 10-world-geometry.js). Must run after `gridOn` is initialized — planet wire syncGrid() reads it.
+// Runs even if #btn-grid is missing so Sol bodies are not stuck on createPlanet() placeholder meshes.
 if (typeof rebuildAllManagedPlanetTerrainMeshes === 'function') rebuildAllManagedPlanetTerrainMeshes();
 
 // ── Camera settings panel ─────────────────────────────────────────
 const btnCamSettings = document.getElementById('btn-cam-settings');
 const camSettingsEl  = document.getElementById('cam-settings');
-btnCamSettings.addEventListener('click', () => {
-  const open = camSettingsEl.classList.toggle('open');
-  btnCamSettings.classList.toggle('active', open);
-});
+if (btnCamSettings && camSettingsEl) {
+  btnCamSettings.addEventListener('click', () => {
+    const open = camSettingsEl.classList.toggle('open');
+    btnCamSettings.classList.toggle('active', open);
+  });
+}
 
 /** While walking: hide grid + cam settings, turn grid off; restore when leaving walk. */
 let _gridStateBeforeWalk = null;
