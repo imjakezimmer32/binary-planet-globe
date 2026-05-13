@@ -262,7 +262,7 @@ const VEG = (() => {
       [0.135, 0.168, 500000, 6],  // Pine  — dense clusters near peaks
       [0.065, 0.130,  80000, 4],  // Round — spread across middle green
       [0.120, 0.168, 200000, 5],  // Spire — medium density, upper+peaks
-      [0.042, 0.178,  40000, 3],  // Bush  — sparse, all green zones
+      [0.042, 0.140,  12000, 2],  // Bush  — very sparse, lower/mid green only
       [0.042, 0.065, 500000, 6],  // Palm  — dense shoreline only
     ];
 
