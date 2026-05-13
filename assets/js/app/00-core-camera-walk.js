@@ -176,23 +176,23 @@ const WALK_CFG = {
   /**
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
-   * Slightly lower than before for longer hang time on big jumps (still planet-scaled).
+   * Stronger gravity = shorter airtime; pair with jumpApexHeight for peak height.
    */
-  walkGravityMin: 0.062,
-  walkGravityMax: 0.158,
+  walkGravityMin: 0.12,
+  walkGravityMax: 0.30,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.122,
-  walkMaxFallMax: 0.24,
+  walkMaxFallMin: 0.26,
+  walkMaxFallMax: 0.48,
   /**
    * Jump always reaches this height above the feet (same on every world, world units along radial “up”).
    * Launch speed = sqrt(2 × g × height) so apex is fixed while fall curve follows g.
    */
-  jumpApexHeight: 0.35,
+  jumpApexHeight: 0.58,
   jumpBufferSec: 0.14,
-  jumpCooldownSec: 0.2,
-  coyoteTimeSec: 0.16,
+  jumpCooldownSec: 0.17,
+  coyoteTimeSec: 0.12,
   airControlFactor: 0.44,
-  airDrag: 1.12,
+  airDrag: 0.92,
   /** Run (Shift / run lock) needs at least this input magnitude to apply faster top speed. */
   runInputMin: 0.018,
   /** Keyboard + joystick combined input below this counts as "no intentional move". */
@@ -200,7 +200,7 @@ const WALK_CFG = {
   /** Extra planar velocity decay (per second) when idle on ground; stacks with `drag`. */
   idlePlanarBrake: 28,
   /** Same when airborne (weaker so air control still feels possible). */
-  idleAirPlanarBrake: 6.5,
+  idleAirPlanarBrake: 4.8,
   /** Tangential speed below this snaps to zero when idle (world units / frame-scale). */
   idlePlanarSnapSpeed: 0.0032,
   groundProbeDistance: 0.035,
@@ -211,7 +211,7 @@ const WALK_CFG = {
   /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
-  anchorSphereAbsSlack: 0.34,
+  anchorSphereAbsSlack: 0.46,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -220,7 +220,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 0.44,
+  airLandingAssistEndGap: 0.64,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
@@ -1866,7 +1866,9 @@ function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
     return;
   }
 
-  if (walkState.grounded && Math.abs(err) > 0.00025) {
+  if (!walkState.grounded) return;
+
+  if (Math.abs(err) > 0.00025) {
     const k = Math.min(1, 10 * dt);
     walkState.position.addScaledVector(n, -err * k);
     return;
@@ -1879,12 +1881,7 @@ function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
     err < WALK_CFG.airPostCorrectMaxAlongErr
   ) {
     walkState.position.addScaledVector(n, -err * Math.min(1, 8 * dt));
-  } else if (
-    vN <= 0.03 &&
-    err > 0.012 &&
-    err < WALK_CFG.airPostCorrectMaxAlongErr &&
-    (walkState.grounded || walkState.coyoteTimer > 0)
-  ) {
+  } else if (vN <= 0.03 && err > 0.012 && err < WALK_CFG.airPostCorrectMaxAlongErr) {
     walkState.position.addScaledVector(n, -err * Math.min(1, 6 * dt));
   }
 }
@@ -1984,7 +1981,10 @@ function updateWalkMode(dt) {
     walkState.grounded = false;
   }
 
-  walkState.forward.copy(walkState.viewDir).projectOnPlane(currentSurface.normal);
+  /** Ground: mesh tangent plane. Air: planet radial tangent only — no sliding along steep face normals. */
+  const movePlaneNormal = walkState.grounded ? currentSurface.normal : walkState.up;
+
+  walkState.forward.copy(walkState.viewDir).projectOnPlane(movePlaneNormal);
   if (walkState.forward.lengthSq() < 1e-8) {
     walkState.forward.copy(_walkX).projectOnPlane(walkState.up);
     if (walkState.forward.lengthSq() < 1e-8) walkState.forward.crossVectors(_walkY, walkState.up);
@@ -2000,9 +2000,9 @@ function updateWalkMode(dt) {
 
   const runBoost = walkInput.runLocked || walkInput.shiftRun;
   const sprinting = runBoost && moveLen > WALK_CFG.runInputMin;
-  const speedFactor = getWalkSurfaceSpeedFactor(currentSurface);
+  const speedFactor = walkState.grounded ? getWalkSurfaceSpeedFactor(currentSurface) : 1;
   const desiredSpeed = WALK_CFG.moveSpeed * speedScale * speedFactor * (sprinting ? WALK_CFG.sprintBoost : 1);
-  _walkDesired.projectOnPlane(currentSurface.normal);
+  _walkDesired.projectOnPlane(movePlaneNormal);
   if (_walkDesired.lengthSq() > 1e-8) _walkDesired.setLength(desiredSpeed);
 
   const radialVel = walkState.velocity.dot(walkState.up);
