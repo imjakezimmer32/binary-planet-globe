@@ -388,12 +388,13 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   const spin  = new THREE.Group();
   spin.rotation.z = axisTilt;
   pivot.add(spin);
-  let built = [], pickables = [];
+  let built = [], pickables = [], vegMeshes = [];
 
   // Per-planet state — independent of any global
   const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
 
   function build(d) {
+    if (typeof VEG !== 'undefined') { VEG.clearVegetation(spin, vegMeshes); vegMeshes = []; }
     built.forEach(c => {
       if (c.geometry) c.geometry.dispose();
       if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => m.dispose());
@@ -479,6 +480,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built.push(wire, atmo);
     pickables = [terrain];
     spin.add(...built);
+    if (typeof VEG !== 'undefined') {
+      vegMeshes = VEG.spawnVegetationOnPlanet(spin, baseR, state.peakScale, state.waterLevel, seed, state.size);
+    }
   }
 
   build(detailInit);
@@ -497,6 +501,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     },
     getTerrainMesh: () => pickables[0] || null,
     getPickables: () => pickables,
+    setVegVisible: v => { vegMeshes.forEach(m => { m.visible = v; }); },
   };
 }
 
