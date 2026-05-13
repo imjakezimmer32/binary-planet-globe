@@ -198,6 +198,7 @@ const WALK_CFG = {
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
   playerLightColor: 0xa6d9ff,
   playerLightIntensity: 3.4,
+  /** Player lantern: base distance at WALK_SPEED_REF_RADIUS; scaled each frame in walk by R/R_ref. */
   playerLightDistance: 0.28,
   playerLightDecay: 2,
   /** Lamp height along local body axis (fraction of characterHeight). */
@@ -1627,6 +1628,15 @@ function getWalkSurfaceSpeedScale(anchorMp) {
   return Math.max(0.22, Math.min(7.5, mul));
 }
 
+/** Point light AOE scales with planet shell radius so large worlds get a visible pool on the ground. */
+function syncWalkPlayerLightToPlanetScale(anchorMp) {
+  if (!walkPlayerLight || !anchorMp?.obj) return;
+  const R = getWalkPlanetRadiusMetric(anchorMp);
+  const mul = Math.max(0.4, Math.min(14, R / Math.max(WALK_SPEED_REF_RADIUS, 1e-5)));
+  walkPlayerLight.distance = WALK_CFG.playerLightDistance * mul;
+  walkPlayerLight.intensity = WALK_CFG.playerLightIntensity * Math.min(3.4, Math.pow(mul, 0.52));
+}
+
 /** Light mesh-only correction along face normal (does not fight horizontal walking). */
 function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
   const stick = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
@@ -1670,6 +1680,7 @@ function updateWalkMode(dt) {
   const walkMaxFall = walkGrav.maxFall;
   const speedScale = getWalkSurfaceSpeedScale(anchorMp);
   const landOutRad = WALK_CFG.landMaxOutwardSpeed * speedScale;
+  syncWalkPlayerLightToPlanetScale(anchorMp);
   if (anchorMp?.obj?.pivot) {
     if (!getWalkAnchorFrameWorldMatrix(anchorMp, _walkAnchorCurr)) {
       stopWalkMode();
