@@ -852,14 +852,19 @@ function applyPlanetEditSetting(setting, rawValue, skipVeg) {
       : undefined;
   if (setting === 'size') {
     mp.obj.state.size = nextValue;
-    if (mp.isBinary && !inRadialSizeDrag) {
-      const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-      const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
-      refreshBinaryPairForMassChange(mass1Now, mass2Now);
-      binaryPrevMass1 = mass1Now;
-      binaryPrevMass2 = mass2Now;
+    if (skipVeg) {
+      // Dial drag: scale the existing mesh — zero geometry work per input event.
+      mp.obj.setScalePreview(nextValue);
+    } else {
+      if (mp.isBinary && !inRadialSizeDrag) {
+        const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+        const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+        refreshBinaryPairForMassChange(mass1Now, mass2Now);
+        binaryPrevMass1 = mass1Now;
+        binaryPrevMass2 = mass2Now;
+      }
+      rebuildManagedPlanetTerrain(mp, detailCap);
     }
-    rebuildManagedPlanetTerrain(mp, detailCap, skipVeg);
   } else if (setting === 'peak') {
     mp.obj.state.peakScale = nextValue;
     rebuildManagedPlanetTerrain(mp, detailCap, skipVeg);
@@ -1369,10 +1374,20 @@ function selectPlanet(idx) {
 dialSizeE.addEventListener('input',  () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value),  true));
 dialPeakE.addEventListener('input',  () => applyPlanetEditSetting('peak',  parseFloat(dialPeakE.value),  true));
 dialWaterE.addEventListener('input', () => applyPlanetEditSetting('water', parseFloat(dialWaterE.value), true));
-// On release: full rebuild restores vegetation to correct positions.
+// On release: reset scale preview (size dial), then full rebuild restores correct geometry + veg.
 const _restoreVegOnDialRelease = () => {
   const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-  if (mp) rebuildManagedPlanetTerrain(mp);
+  if (!mp) return;
+  if (mp.obj.clearScalePreview) mp.obj.clearScalePreview();
+  // Recalculate binary mass/orbit now that size is finalised.
+  if (mp.isBinary) {
+    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    refreshBinaryPairForMassChange(mass1Now, mass2Now);
+    binaryPrevMass1 = mass1Now;
+    binaryPrevMass2 = mass2Now;
+  }
+  rebuildManagedPlanetTerrain(mp);
 };
 if (dialSizeE) {
   dialSizeE.addEventListener('change', () => {
