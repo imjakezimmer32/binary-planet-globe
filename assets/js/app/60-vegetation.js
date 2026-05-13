@@ -338,8 +338,9 @@ const VEG = (() => {
         treePosArr[v].push(...applyMat4(lp, _m));
         treeColArr[v].push(...lc);
       } else if (wantGrass) {
-        // fnl (pre-normalisation magnitude) = 2 × face area — free from the cross product above.
-        const n   = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * GRASS_DENSITY)));
+        // World-space face area = local area (fnl*0.5) × sz² (pivot scale squared).
+        // Multiplying both together gives consistent visual density across all planet sizes.
+        const n   = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * sz * sz * GRASS_DENSITY)));
         const eps = grassH * 0.05;
         for (let k = 0; k < n; k++) {
           let u = rng(), v = rng();
