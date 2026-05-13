@@ -301,6 +301,10 @@ const VEG = (() => {
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
+    // Scale the per-face cap with sz² so smaller planets stay proportionally sparse.
+    // sz=4 keeps full caps; sz=2 gets ¼, sz=1 gets 1/16 (probabilistic via rng).
+    const szCapScale = Math.min(1.0, sz * sz / 16.0);
+
     for (let fi = 0; fi < totalFaces; fi++) {
       const base = fi * 9;
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
@@ -342,7 +346,10 @@ const VEG = (() => {
         for (let vi = 0; vi < 5; vi++) {
           const [neMin, neMax, dens, maxN] = VARIANT_BANDS[vi];
           if (mapped < neMin || mapped > neMax) continue;
-          const n = Math.min(maxN, Math.max(0, Math.round(fnl * 0.5 * sz * sz * dens)));
+          // Effective cap scales with planet size; fractional values become a probability.
+          const rawMax = maxN * szCapScale;
+          const effectiveMax = rawMax < 1 ? (rng() < rawMax ? 1 : 0) : Math.floor(rawMax);
+          const n = Math.min(effectiveMax, Math.max(0, Math.round(fnl * 0.5 * sz * sz * dens)));
           for (let k = 0; k < n; k++) {
             let bu = rng(), bv = rng();
             if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
