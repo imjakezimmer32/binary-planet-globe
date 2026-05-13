@@ -465,10 +465,14 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       });
     })();
 
+    // Wire uses a fixed low-detail icosphere (detail 3 = 1,920 edges) regardless of terrain
+    // detail. Full-res edges at detail 7+ = 491k–7.8M line segments — a GPU killer every frame.
+    const wireIco = new THREE.IcosahedronGeometry(shellR * 1.001, 3);
     const wire = new THREE.LineSegments(
-      new THREE.EdgesGeometry(idxGeo),
+      new THREE.EdgesGeometry(wireIco),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
     );
+    wireIco.dispose();
     wire.scale.setScalar(1.0015);
     wire.renderOrder = 2;
 
