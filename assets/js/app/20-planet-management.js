@@ -1638,5 +1638,7 @@ rebuildPlanetList();
 updateTwinButtonVisibility();
 updateWalkButtonVisibility();
 if (isNarrowPlanetUI()) setPlanetPanelOpen(false);
-if (typeof rebuildAllManagedPlanetTerrainMeshes === 'function') rebuildAllManagedPlanetTerrainMeshes();
+// Initial terrain rebuild runs from 30-camera-ui-loop.js after `gridOn` exists — syncGrid()
+// reads gridOn; running rebuild here (before script 30) could throw and leave binary planets
+// on their createPlanet() placeholder detail.
 

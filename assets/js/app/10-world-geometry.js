@@ -496,7 +496,10 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     rebuild:  build,
     setWater: () => {},
     setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
-    syncGrid: ()  => { built.forEach(c => { if (c.isLineSegments) c.visible = gridOn; }); },
+    syncGrid: ()  => {
+      const g = typeof gridOn !== 'undefined' ? gridOn : true;
+      built.forEach(c => { if (c.isLineSegments) c.visible = g; });
+    },
     setWireOpacity: (v) => {
       const a = Math.max(0, Math.min(1, v));
       built.forEach(c => {
@@ -513,8 +516,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 const sysGroup = new THREE.Group();
 scene.add(sysGroup);
 
-const p1 = createPlanet(1.00, 10, 0.00,  0.22);
-const p2 = createPlanet(0.67, 10, 5.37, -0.38);
+// Same baseRadius so tier LOD + snap match between the starting pair (see snapPlanetSizeToMeshTier).
+const p1 = createPlanet(1.00, 7, 0.00,  0.22);
+const p2 = createPlanet(1.00, 7, 5.37, -0.38);
 sysGroup.add(p1.pivot, p2.pivot);
 
 // ── Orbit trails (in sysGroup local space = binary-relative) ──────
