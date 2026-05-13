@@ -788,6 +788,7 @@ function onMobilePointerMove(e) {
         const ratio = prevD / dist;
         const zf = Math.pow(ratio, 1.13);
         orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * zf));
+        resetOrbitPointerInertia();
       } else if (doPlanePan) {
         camera.matrix.extractBasis(_right, _up, new THREE.Vector3());
         const panSpeed = 0.019 * orbitZoom;
@@ -941,6 +942,7 @@ _canvas.addEventListener('wheel', e => {
   zoomTarget = null;
   const step = 1 + 0.08 * zoomSpeedMul;
   orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * (e.deltaY > 0 ? step : 1 / step)));
+  resetOrbitPointerInertia();
 }, { passive: false });
 
 function getPlanetCenterRadius(mp, centerOut) {
@@ -1316,6 +1318,7 @@ function stopWalkMode() {
   walkTransition.startedAt = 0;
   walkMode.active = false;
   walkMode.spawnPlanetIdx = null;
+  zoomTarget = null;
   if (walkState.prevFov !== null) {
     camera.fov = walkState.prevFov;
     camera.updateProjectionMatrix();
@@ -1343,7 +1346,10 @@ function stopWalkMode() {
   walkJoystickTouchIds.clear();
   setWalkJoystickCapturingPointer(null);
   desktopWalkLookReady = false;
+  mobPointers.clear();
+  mobSingleReady = false;
   refreshWalkUi();
+  syncOrbitStateFromActualCamera();
 }
 
 function startWalkMode(idx, spawnSurface = null) {
@@ -2029,6 +2035,79 @@ function updateCamera(curScale) {
     camera.lookAt(base);
   }
   enforceCameraOutsidePlanetMeshes();
+}
+
+/**
+ * Recompute sun/planet orbit angles and zoom from the actual camera position so orbit
+ * state matches the eye after walk, view switches, or any time the rig was driven elsewhere.
+ * Resets drag inertia and world-up so pan/orbit controls stay coherent.
+ */
+function getOrbitLookAtWorld(outVec) {
+  if (cameraMode === 'sun') {
+    return outVec.copy(cameraTarget).add(panOffset);
+  }
+  if (selectedPlanetIdx !== null) {
+    const selected = managedPlanets[selectedPlanetIdx];
+    if (selected?.obj?.pivot) {
+      selected.obj.pivot.getWorldPosition(outVec);
+      return outVec.add(panOffset);
+    }
+  }
+  if (currentDestIndex === 0) {
+    return outVec.copy(sysGroup.position).add(panOffset);
+  }
+  const g = typeof GALAXY_DESTINATIONS !== 'undefined' ? GALAXY_DESTINATIONS[currentDestIndex] : null;
+  const pos = g?._grp?.position || g?.pos || cameraTarget;
+  return outVec.copy(pos).add(panOffset);
+}
+
+function syncOrbitStateFromActualCamera(curScaleHint) {
+  if (walkMode.active) return;
+  const sc = curScaleHint != null ? curScaleHint : typeof curScale !== 'undefined' ? curScale : 1;
+  getOrbitLookAtWorld(_walkSpawnRadial);
+  _walkTmp.copy(camera.position).sub(_walkSpawnRadial);
+  const r = _walkTmp.length();
+  if (r < 1e-5) return;
+
+  const vx = _walkTmp.x;
+  const vy = _walkTmp.y;
+  const vz = _walkTmp.z;
+  const cosPhi = THREE.MathUtils.clamp(vy / r, -1, 1);
+  let phi = Math.acos(cosPhi);
+  const sinPhi = Math.sin(phi);
+  let theta = 0;
+  if (sinPhi > 1e-4) {
+    theta = Math.atan2(vx, vz);
+  }
+  const clampPhi = (p) => Math.max(0.06, Math.min(Math.PI - 0.06, p));
+  phi = clampPhi(phi);
+
+  if (cameraMode === 'sun') {
+    orbitTheta = theta;
+    orbitPhi = phi;
+    orbitZoom = THREE.MathUtils.clamp(r / Math.max(ORBIT_BASE * sc, 1e-10), 0.05, 14);
+  } else {
+    pOrbitTheta = theta;
+    pOrbitPhi = phi;
+    orbitZoom = THREE.MathUtils.clamp(r / Math.max(PLANET_ORBIT_BASE * sc, 1e-10), 0.05, 14);
+  }
+
+  resetOrbitInteractionState();
+}
+
+function resetOrbitPointerInertia() {
+  dTheta = 0;
+  dPhi = 0;
+  pDTheta = 0;
+  pDPhi = 0;
+  camera.up.set(0, 1, 0);
+}
+
+function resetOrbitInteractionState() {
+  resetOrbitPointerInertia();
+  dragging = false;
+  dragButton = 0;
+  desktopWalkLookReady = false;
 }
 
 /** Expand far clip for zoom-out; keep depth usable via logarithmicDepthBuffer on the renderer. */
