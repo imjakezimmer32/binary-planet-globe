@@ -230,19 +230,20 @@ const VEG = (() => {
 
   // ── Public API ────────────────────────────────────────────────────
 
-  // Spawns vegetation on terrain face centroids. Vertex positions share the same spin-local
-  // sphere radius as buildGlobe / colorizeGlobe (`nominalShellR`). `pivotScale` is the uniform
-  // scale on the planet pivot above `spinGroup` (pass 1 when the mesh already encodes full shell size).
-  function spawnVegetationOnPlanet(spinGroup, flatGeo, nominalShellR, peakScale, waterLevel, planetSeed, pivotScale) {
+  // Spawns vegetation attached to terrain face centroids of flatGeo (no floaters).
+  // planetSize = mp.obj.state.size (pivot scale); vegetation geometry lives in
+  // spin (pre-scale) so divide world-unit targets by size to get local units.
+  // All meshes start hidden; call refreshVisibility to show in walk mode.
+  function spawnVegetationOnPlanet(spinGroup, flatGeo, baseR, peakScale, waterLevel, planetSeed, planetSize) {
     const meshes = [];
     if (!(waterLevel > 0.0001)) return meshes;
 
     const ps  = Math.max(peakScale, 0.001);
-    const psz = Math.max(pivotScale || 1, 0.05);
+    const sz  = Math.max(planetSize || 1, 0.05);
 
-    // World plant height = local × pivotScale (pivot is 1 when shell is baked into verts).
-    const treeSc = TREE_H / psz;
-    const grassH = GRASS_H / psz;
+    // Heights in spin-local space (world height = local x sz via pivot.scale)
+    const treeSc = TREE_H / sz;
+    const grassH = GRASS_H / sz;
 
     let rngS = ((planetSeed * 997 + 1) * 65537) >>> 0;
     function rng() {
@@ -273,7 +274,7 @@ const VEG = (() => {
 
     // Pre-scan to find the same ne scale the terrain colorizer uses so elevation
     // band thresholds (0.040 = sand/green, 0.165 = treeline) match visual colors.
-    const liquidR   = nominalShellR * (0.80 + Math.abs(waterLevel) * 0.42);
+    const liquidR   = baseR * (0.80 + Math.abs(waterLevel) * 0.42);
     const liquidEps = liquidR * 0.0018;
     let minNe = Infinity, maxNe = -Infinity;
     for (let f = 0; f < totalFaces; f++) {
@@ -286,7 +287,7 @@ const VEG = (() => {
         if (rr <= liquidR + liquidEps) liq++;
       }
       if (liq > 0) continue;
-      const ne = (sumR / 3 / nominalShellR - 1) / ps;
+      const ne = (sumR / 3 / baseR - 1) / ps;
       if (ne < minNe) minNe = ne;
       if (ne > maxNe) maxNe = ne;
     }
@@ -300,6 +301,10 @@ const VEG = (() => {
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
+    // Scale the per-face cap with sz² so smaller planets stay proportionally sparse.
+    // sz=4 keeps full caps; sz=2 gets ¼, sz=1 gets 1/16 (probabilistic via rng).
+    const szCapScale = Math.min(1.0, sz * sz / 16.0);
+
     for (let fi = 0; fi < totalFaces; fi++) {
       const base = fi * 9;
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
@@ -312,7 +317,7 @@ const VEG = (() => {
       const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
       if (cl < 1e-6) continue;
 
-      const ne     = (cl / nominalShellR - 1) / ps;
+      const ne     = (cl / baseR - 1) / ps;
       const mapped = ne < 0 ? ne * negScale : ne * posScale;
 
       const wantGrass   = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX;
@@ -341,7 +346,10 @@ const VEG = (() => {
         for (let vi = 0; vi < 5; vi++) {
           const [neMin, neMax, dens, maxN] = VARIANT_BANDS[vi];
           if (mapped < neMin || mapped > neMax) continue;
-          const n = Math.min(maxN, Math.max(0, Math.round(fnl * 0.5 * psz * psz * dens)));
+          // Effective cap scales with planet size; fractional values become a probability.
+          const rawMax = maxN * szCapScale;
+          const effectiveMax = rawMax < 1 ? (rng() < rawMax ? 1 : 0) : Math.floor(rawMax);
+          const n = Math.min(effectiveMax, Math.max(0, Math.round(fnl * 0.5 * sz * sz * dens)));
           for (let k = 0; k < n; k++) {
             let bu = rng(), bv = rng();
             if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
@@ -364,7 +372,7 @@ const VEG = (() => {
       }
 
       if (wantGrass) {
-        const n = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * psz * psz * GRASS_DENSITY)));
+        const n = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * sz * sz * GRASS_DENSITY)));
         for (let k = 0; k < n; k++) {
           let u = rng(), v = rng();
           if (u + v > 1) { u = 1 - u; v = 1 - v; }
