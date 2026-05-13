@@ -657,16 +657,17 @@ function desiredDetailForCurrentView(scaleValue) {
   return cameraMode === 'planet' ? PLANET_VIEW_DETAIL_CAP : scaleToDetail(scaleValue);
 }
 
-/** Three.js icosahedron subdivisions get very heavy past ~9; caps GPU cost. */
-const PLANET_MESH_DETAIL_HARD_MAX = 9;
+/** Three.js icosahedron subdivisions get very heavy past ~10; caps GPU cost. */
+const PLANET_MESH_DETAIL_HARD_MAX = 10;
+const PLANET_MESH_DETAIL_MIN = 4;
 /**
- * Icosahedron detail so world-space facets stay ~fixed size: each ~2× growth in shell
- * radius adds one subdivision. `PLANET_POLYGON_REF_SHELL_RADIUS` is the shell size at
- * which `PLANET_POLYGON_BASE_DETAIL` applies (tuned for default binary planets).
+ * Pick icosahedron detail from a **target world-space edge length**, not `floor(log₂ R)`
+ * bands. With `floor`, detail stayed fixed while `R` crept upward inside a 2× band, so
+ * triangles visibly stretched until the next subdivision. `round(log₂ …)` tracks radius
+ * smoothly; coeff calibrates Three’s icosphere longest-edge ≈ coeff×R/2^d.
  */
-const PLANET_POLYGON_REF_SHELL_RADIUS = 0.75;
-const PLANET_POLYGON_BASE_DETAIL = 7;
-const PLANET_POLYGON_DETAIL_MIN = 4;
+const PLANET_ICOSA_TARGET_EDGE_WORLD = 0.0085;
+const PLANET_ICOSA_EDGE_COEFF = 1.18;
 
 /** World radius of the scaled body (geometry base × pivot size). */
 function getPlanetWorldShellRadius(mp) {
@@ -676,9 +677,11 @@ function getPlanetWorldShellRadius(mp) {
 
 function terrainDetailForManagedPlanet(mp) {
   const R = getPlanetWorldShellRadius(mp);
-  const ratio = R / Math.max(PLANET_POLYGON_REF_SHELL_RADIUS, 1e-6);
-  const d = PLANET_POLYGON_BASE_DETAIL + Math.floor(Math.log2(Math.max(1e-5, ratio)));
-  return Math.max(PLANET_POLYGON_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
+  const idealD = Math.log2(
+    Math.max(1e-6, (PLANET_ICOSA_EDGE_COEFF * R) / PLANET_ICOSA_TARGET_EDGE_WORLD)
+  );
+  const d = Math.round(idealD);
+  return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
 function rebuildManagedPlanetTerrain(mp) {
