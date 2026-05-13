@@ -110,12 +110,8 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 /** Capsule height in world units (must match avatar geometry). */
 const WALK_CAPSULE_HEIGHT = 0.013;
-/**
- * Jump apex = `WALK_JUMP_PILL_STACKS` × this many capsule heights each “stack”.
- * One stack ≈ prior single-jump apex (~45× pill); three stacks ≈ 3× that height.
- */
-const WALK_JUMP_CAPSULES_PER_STACK = 45;
-const WALK_JUMP_PILL_STACKS = 3;
+/** Jump apex ≈ this × capsule height — ~22 → ~0.29 world units (big hop, not moon-jump). */
+const WALK_JUMP_APEX_CAPSULE_MUL = 22;
 
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
@@ -185,19 +181,16 @@ const WALK_CFG = {
   /**
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
-   * ~4× prior values → ~½ airtime (∝ 1/√g) for a given apex vs old tuning.
    */
-  walkGravityMin: 0.48,
-  walkGravityMax: 1.2,
+  walkGravityMin: 0.10,
+  walkGravityMax: 0.26,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 1.04,
-  walkMaxFallMax: 1.92,
+  walkMaxFallMin: 0.22,
+  walkMaxFallMax: 0.42,
   /**
    * Jump apex above feet (world units along radial “up”); launch speed = sqrt(2 × g × height).
-   * `WALK_JUMP_PILL_STACKS` stacks of `WALK_JUMP_CAPSULES_PER_STACK` × capsule height each.
    */
-  jumpApexHeight:
-    WALK_CAPSULE_HEIGHT * WALK_JUMP_CAPSULES_PER_STACK * WALK_JUMP_PILL_STACKS,
+  jumpApexHeight: WALK_CAPSULE_HEIGHT * WALK_JUMP_APEX_CAPSULE_MUL,
   jumpBufferSec: 0.14,
   jumpCooldownSec: 0.17,
   coyoteTimeSec: 0.12,
@@ -221,7 +214,7 @@ const WALK_CFG = {
   /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
-  anchorSphereAbsSlack: 1.15,
+  anchorSphereAbsSlack: 0.24,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -230,7 +223,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 1.85,
+  airLandingAssistEndGap: 0.38,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
