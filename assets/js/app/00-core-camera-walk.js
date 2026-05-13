@@ -176,22 +176,23 @@ const WALK_CFG = {
   /**
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
+   * Slightly lower than before for longer hang time on big jumps (still planet-scaled).
    */
-  walkGravityMin: 0.078,
-  walkGravityMax: 0.195,
+  walkGravityMin: 0.062,
+  walkGravityMax: 0.158,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.15,
-  walkMaxFallMax: 0.28,
+  walkMaxFallMin: 0.122,
+  walkMaxFallMax: 0.24,
   /**
    * Jump always reaches this height above the feet (same on every world, world units along radial “up”).
    * Launch speed = sqrt(2 × g × height) so apex is fixed while fall curve follows g.
    */
-  jumpApexHeight: 0.12,
+  jumpApexHeight: 0.35,
   jumpBufferSec: 0.14,
-  jumpCooldownSec: 0.18,
-  coyoteTimeSec: 0.12,
-  airControlFactor: 0.38,
-  airDrag: 1.6,
+  jumpCooldownSec: 0.2,
+  coyoteTimeSec: 0.16,
+  airControlFactor: 0.44,
+  airDrag: 1.12,
   /** Run (Shift / run lock) needs at least this input magnitude to apply faster top speed. */
   runInputMin: 0.018,
   /** Keyboard + joystick combined input below this counts as "no intentional move". */
@@ -199,7 +200,7 @@ const WALK_CFG = {
   /** Extra planar velocity decay (per second) when idle on ground; stacks with `drag`. */
   idlePlanarBrake: 28,
   /** Same when airborne (weaker so air control still feels possible). */
-  idleAirPlanarBrake: 10,
+  idleAirPlanarBrake: 6.5,
   /** Tangential speed below this snaps to zero when idle (world units / frame-scale). */
   idlePlanarSnapSpeed: 0.0032,
   groundProbeDistance: 0.035,
@@ -210,7 +211,7 @@ const WALK_CFG = {
   /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
-  anchorSphereAbsSlack: 0.14,
+  anchorSphereAbsSlack: 0.34,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -219,7 +220,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 0.125,
+  airLandingAssistEndGap: 0.44,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
