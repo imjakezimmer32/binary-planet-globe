@@ -604,17 +604,19 @@ function getPlanetWorldShellRadius(mp) {
 }
 
 /**
- * Icosahedron detail for one planet: camera/zoom LOD cap plus a log₂ step per doubling of shell
- * radius vs the baseline, so growing a planet adds triangles instead of only stretching the same mesh.
+ * Icosahedron detail for one planet: zoom LOD sets a *base* tier (capped low so
+ * `extra` from world radius can still fit under HARD_MAX). `extra` is floor(log₂ R/R₀)
+ * so each ~2× growth in shell radius adds one subdivision step.
  */
 function terrainDetailForManagedPlanet(mp, viewerCap) {
-  const cap = Math.max(0, Math.min(PLANET_MESH_DETAIL_HARD_MAX, viewerCap | 0));
+  const vc = viewerCap | 0;
+  // Zoom LOD: coarser camera zoom lowers base tier; shell growth adds `extra` on top (max 8).
+  const viewerBase = Math.max(0, Math.min(3, Math.floor(vc / 3)));
   const R = getPlanetWorldShellRadius(mp);
   const R0 = getPlanetMeshReferenceWorldRadius();
   const ratio = R / Math.max(R0, 1e-6);
-  const sizeBoost = Math.max(-4, Math.min(5, Math.floor(Math.log2(Math.max(1e-5, ratio)))));
-  const raw = cap + sizeBoost;
-  return Math.max(1, Math.min(PLANET_MESH_DETAIL_HARD_MAX, raw));
+  const extra = Math.max(-2, Math.min(5, Math.floor(Math.log2(Math.max(1e-5, ratio)))));
+  return Math.max(1, Math.min(PLANET_MESH_DETAIL_HARD_MAX, viewerBase + extra));
 }
 
 function rebuildManagedPlanetTerrain(mp) {

@@ -837,7 +837,7 @@ function applyPlanetEditSetting(setting, rawValue) {
       binaryPrevMass1 = mass1Now;
       binaryPrevMass2 = mass2Now;
     }
-    if (!inRadialSizeDrag) rebuildManagedPlanetTerrain(mp);
+    rebuildManagedPlanetTerrain(mp);
   } else if (setting === 'peak') {
     mp.obj.state.peakScale = nextValue;
     rebuildManagedPlanetTerrain(mp);
