@@ -7,6 +7,9 @@ function setCamMode(mode) {
   }
   cameraMode = mode;
   document.body.classList.toggle('mode-planet-view', mode === 'planet');
+  if (mode === 'planet' && typeof resetPlanetViewShellRadiusSmoothed === 'function') {
+    resetPlanetViewShellRadiusSmoothed();
+  }
   applyDetailForCurrentView(targetScale);
   setPlanetsRenderable(true);
   updateTwinButtonVisibility();
@@ -358,6 +361,7 @@ function animate() {
   syncSolGalaxyMenuVisibility();
 
   // Camera update runs after all planet/world transforms so walk mode stays planet-locked.
+  if (typeof tickPlanetViewShellRadiusSmoothing === 'function') tickPlanetViewShellRadiusSmoothing();
   updateCamera(curScale);
   updateDynamicCameraFar();
 

@@ -83,6 +83,29 @@ function planetViewShellRadiusWorld() {
   return Math.max(0.12, br * sz);
 }
 
+/** Eased shell radius for planet-view camera only (true radius can jump each rebuild). */
+let _planetViewShellRSmoothed = 1;
+
+function resetPlanetViewShellRadiusSmoothed() {
+  _planetViewShellRSmoothed = planetViewShellRadiusWorld();
+}
+
+function planetViewShellRadiusForCamera() {
+  return _planetViewShellRSmoothed;
+}
+
+/** Call once per frame before updateCamera. */
+function tickPlanetViewShellRadiusSmoothing() {
+  const tgt = planetViewShellRadiusWorld();
+  if (typeof cameraMode === 'undefined' || cameraMode !== 'planet') {
+    _planetViewShellRSmoothed = tgt;
+    return;
+  }
+  const alpha = 0.18;
+  _planetViewShellRSmoothed += (tgt - _planetViewShellRSmoothed) * alpha;
+  if (Math.abs(tgt - _planetViewShellRSmoothed) < 1e-5) _planetViewShellRSmoothed = tgt;
+}
+
 // Sun-view orbit state
 let orbitTheta = -0.3, orbitPhi = 0.92, orbitZoom = 3.0;
 let zoomTarget = null; // when set, animate loop log-lerps orbitZoom toward it
@@ -2273,7 +2296,7 @@ function updateCamera(curScale) {
         : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
     }
     _cameraBase.copy(baseTarget).add(panOffset);
-    const shellR = planetViewShellRadiusWorld();
+    const shellR = planetViewShellRadiusForCamera();
     const r = PLANET_ORBIT_BASE * orbitZoom * curScale * shellR;
     const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
     camera.position.set(
@@ -2338,7 +2361,7 @@ function syncOrbitStateFromActualCamera(curScaleHint) {
   } else {
     pOrbitTheta = theta;
     pOrbitPhi = phi;
-    const shellR = planetViewShellRadiusWorld();
+    const shellR = planetViewShellRadiusForCamera();
     orbitZoom = THREE.MathUtils.clamp(r / Math.max(PLANET_ORBIT_BASE * sc * shellR, 1e-10), 0.05, 14);
   }
 
@@ -2365,7 +2388,7 @@ function updateDynamicCameraFar() {
   if (walkMode.active) return;
   _cameraClipFocus.copy(cameraTarget).add(panOffset);
   const distToFocus = camera.position.distanceTo(_cameraClipFocus);
-  const shellR = cameraMode === 'planet' ? planetViewShellRadiusWorld() : 1;
+  const shellR = cameraMode === 'planet' ? planetViewShellRadiusForCamera() : 1;
   const orbitCap = cameraMode === 'sun'
     ? ORBIT_BASE * curScale * orbitZoom
     : PLANET_ORBIT_BASE * curScale * orbitZoom * shellR;

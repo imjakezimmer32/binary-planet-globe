@@ -528,11 +528,10 @@ const planetRadialValueEls = {
   water: $('prk-val-water'),
 };
 const PLANET_EDIT_CONFIG = {
-  size:  { min: 0.1, max: 5, step: 0.05, arcStart: 140, arcEnd: 260 },
+  size:  { min: 0.1, max: 5, step: 0.005, arcStart: 140, arcEnd: 260 },
   peak:  { min: 0, max: 3, step: 0.01, arcStart: 310, arcEnd: 50 },
   water: { min: -1, max: 1, step: 0.005, arcStart: 40, arcEnd: 140 },
 };
-let _dialDragging = false;
 const planetRadialState = {
   visible: false,
   centerX: 0,
@@ -652,7 +651,7 @@ function radialCircDist(a, b) {
 
 /** Widen min/max plateaus so slight overshoot at arc ends does not snap to the opposite value */
 function softenRadialT(t) {
-  const m = 0.085;
+  const m = 0.055;
   if (t <= m) return 0;
   if (t >= 1 - m) return 1;
   return (t - m) / (1 - 2 * m);
@@ -758,10 +757,10 @@ function syncPlanetEditReadouts(mp) {
   _prevPlanetReadoutSize = mp.obj.state.size;
   _prevPlanetReadoutPeak = mp.obj.state.peakScale;
   _prevPlanetReadoutWater = mp.obj.state.waterLevel;
-  if (lblSizeE) lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
+  if (lblSizeE) lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(3)}×`;
   if (lblPeakE) lblPeakE.textContent = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
   if (lblWaterE) lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
-  if (planetRadialValueEls.size) planetRadialValueEls.size.textContent = `${mp.obj.state.size.toFixed(2)}×`;
+  if (planetRadialValueEls.size) planetRadialValueEls.size.textContent = `${mp.obj.state.size.toFixed(3)}×`;
   if (planetRadialValueEls.peak) planetRadialValueEls.peak.textContent = `${mp.obj.state.peakScale.toFixed(2)}×`;
   if (planetRadialValueEls.water) planetRadialValueEls.water.textContent = formatWaterCompact(mp.obj.state.waterLevel);
 }
@@ -831,6 +830,7 @@ function finalizePlanetSizeAfterRadialDrag() {
   syncPlanetDialValues(mp);
   syncPlanetEditReadouts(mp);
   rebuildManagedPlanetTerrain(mp);
+  if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
 }
 
 function applyPlanetEditSetting(setting, rawValue) {
@@ -841,12 +841,15 @@ function applyPlanetEditSetting(setting, rawValue) {
   const rawClamped = clampPlanetEditValue(setting, rawValue);
   let nextValue;
   if (setting === 'size') {
-    nextValue = inRadialSizeDrag ? rawClamped : quantizePlanetEditValue('size', rawClamped);
+    nextValue = rawClamped;
   } else {
     nextValue = inRadialSizeDrag ? rawClamped : quantizePlanetEditValue(setting, rawClamped);
   }
-  const isDragging = planetRadialState.dragSetting !== null || _dialDragging;
-  const detailCap  = isDragging ? DRAG_PREVIEW_DETAIL : undefined;
+  const detailCap =
+    planetRadialState.dragSetting !== null &&
+    planetRadialState.dragSetting !== 'size'
+      ? DRAG_PREVIEW_DETAIL
+      : undefined;
   if (setting === 'size') {
     mp.obj.state.size = nextValue;
     if (mp.isBinary && !inRadialSizeDrag) {
@@ -1348,6 +1351,7 @@ function selectPlanet(idx) {
   panOffset.set(0, 0, 0);
   rebuildPlanetList();
   const mp = idx !== null && idx !== undefined ? managedPlanets[idx] : null;
+  if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
   if (editPanel) editPanel.style.display = 'none';
   if (mp) {
     syncPlanetDialValues(mp);
@@ -1365,19 +1369,11 @@ function selectPlanet(idx) {
 dialSizeE.addEventListener('input',       () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value)));
 dialPeakE.addEventListener('input',       () => applyPlanetEditSetting('peak',  parseFloat(dialPeakE.value)));
 dialWaterE.addEventListener('input',      () => applyPlanetEditSetting('water', parseFloat(dialWaterE.value)));
-// Mark drag active on thumb press so applyPlanetEditSetting uses preview detail.
-// On change (thumb release) clear the flag and rebuild at full quality.
-const _fullRebuildOnDialRelease = () => {
-  _dialDragging = false;
-  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-  if (mp) rebuildManagedPlanetTerrain(mp);
-};
-dialSizeE.addEventListener('pointerdown',  () => { _dialDragging = true; });
-dialPeakE.addEventListener('pointerdown',  () => { _dialDragging = true; });
-dialWaterE.addEventListener('pointerdown', () => { _dialDragging = true; });
-dialSizeE.addEventListener('change',  _fullRebuildOnDialRelease);
-dialPeakE.addEventListener('change',  _fullRebuildOnDialRelease);
-dialWaterE.addEventListener('change', _fullRebuildOnDialRelease);
+if (dialSizeE) {
+  dialSizeE.addEventListener('change', () => {
+    if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
+  });
+}
 
 if (dialSunOrbitREl) dialSunOrbitREl.addEventListener('input', () => { applySunOrbitFromSliders(); });
 if (dialSunOrbitTiltDegEl) dialSunOrbitTiltDegEl.addEventListener('input', () => { applySunOrbitFromSliders(); });

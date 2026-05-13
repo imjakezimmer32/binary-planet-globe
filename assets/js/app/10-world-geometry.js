@@ -703,8 +703,8 @@ const PLANET_MESH_DETAIL_MIN = 4;
 const PLANET_MESH_LOD_LOG2_SCALE = 2;
 const PLANET_MESH_REF_SHELL_R = 1.0;
 const PLANET_MESH_REF_DETAIL = 7;
-// Detail level used during live drag — fast enough for real-time feedback; snaps to full on release.
-const DRAG_PREVIEW_DETAIL = PLANET_MESH_DETAIL_MIN;
+// Low-res only while dragging peak/water on the radial ring (not size / not HTML dials).
+const DRAG_PREVIEW_DETAIL = 6;
 
 /** World radius of the scaled body (geometry base x pivot size). */
 function getPlanetWorldShellRadius(mp) {
