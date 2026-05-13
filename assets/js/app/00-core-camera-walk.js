@@ -68,6 +68,21 @@ sunGroup.add(sunCoreMesh);
 const ORBIT_BASE = 30;
 const PLANET_ORBIT_BASE = 8; // camera distance for planet view (physics units)
 
+/**
+ * World shell radius of the planet framed in planet view (baseRadius × size).
+ * Camera rig scales with this so a size dial change does not only blow up the mesh
+ * while the eye stays at the same world distance (which makes facets look huge).
+ */
+function planetViewShellRadiusWorld() {
+  if (typeof managedPlanets === 'undefined' || typeof selectedPlanetIdx === 'undefined') return 1;
+  if (selectedPlanetIdx === null) return 1;
+  const mp = managedPlanets[selectedPlanetIdx];
+  if (!mp?.obj) return 1;
+  const br = mp.obj.baseRadius || 0.8;
+  const sz = Math.max(mp.obj.state?.size ?? 1, 0.05);
+  return Math.max(0.12, br * sz);
+}
+
 // Sun-view orbit state
 let orbitTheta = -0.3, orbitPhi = 0.92, orbitZoom = 3.0;
 let zoomTarget = null; // when set, animate loop log-lerps orbitZoom toward it
@@ -2256,7 +2271,8 @@ function updateCamera(curScale) {
         : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
     }
     const base = baseTarget.clone().add(panOffset);
-    const r = PLANET_ORBIT_BASE * orbitZoom * curScale;
+    const shellR = planetViewShellRadiusWorld();
+    const r = PLANET_ORBIT_BASE * orbitZoom * curScale * shellR;
     const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
     camera.position.set(
       base.x + r * sp * Math.sin(pOrbitTheta),
@@ -2320,7 +2336,8 @@ function syncOrbitStateFromActualCamera(curScaleHint) {
   } else {
     pOrbitTheta = theta;
     pOrbitPhi = phi;
-    orbitZoom = THREE.MathUtils.clamp(r / Math.max(PLANET_ORBIT_BASE * sc, 1e-10), 0.05, 14);
+    const shellR = planetViewShellRadiusWorld();
+    orbitZoom = THREE.MathUtils.clamp(r / Math.max(PLANET_ORBIT_BASE * sc * shellR, 1e-10), 0.05, 14);
   }
 
   resetOrbitInteractionState();
@@ -2346,9 +2363,10 @@ function updateDynamicCameraFar() {
   if (walkMode.active) return;
   _cameraClipFocus.copy(cameraTarget).add(panOffset);
   const distToFocus = camera.position.distanceTo(_cameraClipFocus);
+  const shellR = cameraMode === 'planet' ? planetViewShellRadiusWorld() : 1;
   const orbitCap = cameraMode === 'sun'
     ? ORBIT_BASE * curScale * orbitZoom
-    : PLANET_ORBIT_BASE * curScale * orbitZoom;
+    : PLANET_ORBIT_BASE * curScale * orbitZoom * shellR;
   const span = Math.max(distToFocus, orbitCap);
   const far = Math.min(
     5e7,

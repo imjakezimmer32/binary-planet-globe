@@ -687,11 +687,12 @@ function desiredDetailForCurrentView(scaleValue) {
 const PLANET_MESH_DETAIL_HARD_MAX = 10;
 const PLANET_MESH_DETAIL_MIN = 4;
 /**
- * Icosahedron detail tracks world shell radius R = baseRadius x size so mean triangle
- * edge length stays ~constant when resizing: each ~2x larger R adds one subdivision
- * (d ~ ceil(d_ref + log2(R/R_ref))). Ceil (vs round) bumps LOD slightly sooner so facets
- * grow less between integer subdivision levels. Size stays continuous; only mesh steps.
+ * Icosahedron detail tracks world shell radius R = baseRadius x size. Integer
+ * subdivision can only step in powers of two in R for a fixed d, so we apply an
+ * extra log2 scale (>1) to bump LOD more often — facets swing less on the size dial.
+ * Camera planet view also scales with shell radius (see planetViewShellRadiusWorld).
  */
+const PLANET_MESH_LOD_LOG2_SCALE = 2;
 const PLANET_MESH_REF_SHELL_R = 1.0;
 const PLANET_MESH_REF_DETAIL = 7;
 
@@ -703,7 +704,8 @@ function getPlanetWorldShellRadius(mp) {
 
 function terrainDetailForManagedPlanet(mp) {
   const R = getPlanetWorldShellRadius(mp);
-  const idealD = PLANET_MESH_REF_DETAIL + Math.log2(Math.max(R, 1e-6) / PLANET_MESH_REF_SHELL_R);
+  const idealD = PLANET_MESH_REF_DETAIL
+    + PLANET_MESH_LOD_LOG2_SCALE * Math.log2(Math.max(R, 1e-6) / PLANET_MESH_REF_SHELL_R);
   const d = Math.ceil(idealD - 1e-9);
   return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
