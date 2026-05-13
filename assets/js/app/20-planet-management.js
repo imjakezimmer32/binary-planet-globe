@@ -1354,13 +1354,19 @@ async function onWalkButtonPressed(e) {
     updateWalkButtonVisibility();
     return;
   }
-  if (cameraMode !== 'planet') setCamMode('planet');
+  if (cameraMode !== 'planet') {
+    skipNextOrbitSyncForSetCamMode = true;
+    setCamMode('planet');
+  }
   if (typeof trySelectPlanetForWalkStart === 'function') trySelectPlanetForWalkStart();
   const resolved = resolveWalkStartPlanetAndSpawn();
   if (!resolved) return;
   const { idx, spawn } = resolved;
   if (selectedPlanetIdx !== idx) selectPlanet(idx);
   await transitionCameraToWalkSpawn(spawn);
+  if (!walkMode.active && typeof syncOrbitStateFromActualCamera === 'function') {
+    syncOrbitStateFromActualCamera(typeof curScale !== 'undefined' ? curScale : 1);
+  }
   startWalkMode(idx, spawn);
   updateWalkButtonVisibility();
 }
