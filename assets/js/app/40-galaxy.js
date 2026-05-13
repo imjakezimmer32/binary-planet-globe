@@ -426,15 +426,18 @@ const _origAnimate = animate;
   const _destPlanetWorld = new THREE.Vector3();
   renderer.render = (scene, camera) => {
     const t = performance.now() * 0.001;
-    GALAXY_DESTINATIONS.forEach((dest, i) => {
-      if (!dest._orb) return;
-      dest._orb.rotation.y = t * 0.4;
-      const shouldRenderTrail = !isNavigating && i === currentDestIndex && i !== 0;
-      if (shouldRenderTrail && dest._planetMesh && dest._trail) {
-        dest._planetMesh.getWorldPosition(_destPlanetWorld);
-        pushTrail(dest._trail, _destPlanetWorld.x, _destPlanetWorld.y, _destPlanetWorld.z);
-      }
-    });
+    // Skip entirely when fully at Sol — no galaxy destination is visible.
+    if (currentDestIndex !== 0 || isNavigating) {
+      GALAXY_DESTINATIONS.forEach((dest, i) => {
+        if (!dest._orb) return;
+        dest._orb.rotation.y = t * 0.4;
+        const shouldRenderTrail = !isNavigating && i === currentDestIndex && i !== 0;
+        if (shouldRenderTrail && dest._planetMesh && dest._trail) {
+          dest._planetMesh.getWorldPosition(_destPlanetWorld);
+          pushTrail(dest._trail, _destPlanetWorld.x, _destPlanetWorld.y, _destPlanetWorld.z);
+        }
+      });
+    }
     origRender(scene, camera);
   };
 })();

@@ -568,16 +568,24 @@ function makeTrail(opts) {
 function pushTrail(t, x, y, z) {
   const { positions: p, colors: c } = t;
   const N = t.max || TRAIL_LEN;
-  if (t.count < N) { p[t.count*3]=x; p[t.count*3+1]=y; p[t.count*3+2]=z; t.count++; }
-  else { p.copyWithin(0, 3); p[(N-1)*3]=x; p[(N-1)*3+1]=y; p[(N-1)*3+2]=z; }
-  const n = t.count;
-  for (let i = 0; i < n; i++) {
-    const v = n < 2 ? 1 : i / (n-1);
-    c[i*3]=v; c[i*3+1]=v; c[i*3+2]=v;
+  if (t.count < N) {
+    // Trail still filling — append point and recompute gradient (n changes each frame).
+    p[t.count*3]=x; p[t.count*3+1]=y; p[t.count*3+2]=z;
+    t.count++;
+    const n = t.count;
+    for (let i = 0; i < n; i++) {
+      const v = n < 2 ? 1 : i / (n - 1);
+      c[i*3]=v; c[i*3+1]=v; c[i*3+2]=v;
+    }
+    t.line.geometry.attributes.color.needsUpdate = true;
+  } else {
+    // Trail is full — shift positions only. Colors are always the same fixed linear
+    // gradient [0, 1/(N-1), ..., 1] so they never need updating once the trail is full.
+    p.copyWithin(0, 3);
+    p[(N-1)*3]=x; p[(N-1)*3+1]=y; p[(N-1)*3+2]=z;
   }
-  t.line.geometry.setDrawRange(0, n);
+  t.line.geometry.setDrawRange(0, t.count);
   t.line.geometry.attributes.position.needsUpdate = true;
-  t.line.geometry.attributes.color.needsUpdate    = true;
 }
 const trail1 = makeTrail(), trail2 = makeTrail();
 
@@ -695,6 +703,8 @@ const PLANET_MESH_DETAIL_MIN = 4;
 const PLANET_MESH_LOD_LOG2_SCALE = 2;
 const PLANET_MESH_REF_SHELL_R = 1.0;
 const PLANET_MESH_REF_DETAIL = 7;
+// Detail level used during live drag — fast enough for real-time feedback; snaps to full on release.
+const DRAG_PREVIEW_DETAIL = PLANET_MESH_DETAIL_MIN;
 
 /** World radius of the scaled body (geometry base x pivot size). */
 function getPlanetWorldShellRadius(mp) {
@@ -710,9 +720,10 @@ function terrainDetailForManagedPlanet(mp) {
   return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
-function rebuildManagedPlanetTerrain(mp) {
+function rebuildManagedPlanetTerrain(mp, maxDetail) {
   if (!mp?.obj?.rebuild) return;
-  const d = terrainDetailForManagedPlanet(mp);
+  let d = terrainDetailForManagedPlanet(mp);
+  if (maxDetail !== undefined) d = Math.min(d, maxDetail);
   if (d > 0) {
     mp.obj.rebuild(d);
     mp.obj.syncGrid();

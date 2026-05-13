@@ -105,6 +105,8 @@ let desktopWalkLookReady = false, desktopWalkLookX = 0, desktopWalkLookY = 0;
 // but animates smoothly when navigating to another star system.
 const cameraTarget = new THREE.Vector3(0, 0, 0);
 const _cameraClipFocus = new THREE.Vector3();
+const _cameraLookAt    = new THREE.Vector3();
+const _cameraBase      = new THREE.Vector3();
 
 // Pan offset — shifts the look-at target in camera's local right/up plane
 const panOffset = new THREE.Vector3();
@@ -2244,13 +2246,13 @@ function updateCamera(curScale) {
 
     const r = ORBIT_BASE * curScale * orbitZoom;
     const sp = Math.sin(orbitPhi), cp = Math.cos(orbitPhi);
-    const lookAt = cameraTarget.clone().add(panOffset);
+    _cameraLookAt.copy(cameraTarget).add(panOffset);
     camera.position.set(
-      lookAt.x + r * sp * Math.sin(orbitTheta),
-      lookAt.y + r * cp,
-      lookAt.z + r * sp * Math.cos(orbitTheta)
+      _cameraLookAt.x + r * sp * Math.sin(orbitTheta),
+      _cameraLookAt.y + r * cp,
+      _cameraLookAt.z + r * sp * Math.cos(orbitTheta)
     );
-    camera.lookAt(lookAt);
+    camera.lookAt(_cameraLookAt);
   } else {
     // Planet view: orbit around selected planet (fallback to system center).
     pOrbitTheta += pDTheta; pDTheta *= 0.88;
@@ -2270,16 +2272,16 @@ function updateCamera(curScale) {
         ? sysGroup.position
         : (GALAXY_DESTINATIONS[currentDestIndex]?._grp?.position || GALAXY_DESTINATIONS[currentDestIndex]?.pos || cameraTarget);
     }
-    const base = baseTarget.clone().add(panOffset);
+    _cameraBase.copy(baseTarget).add(panOffset);
     const shellR = planetViewShellRadiusWorld();
     const r = PLANET_ORBIT_BASE * orbitZoom * curScale * shellR;
     const sp = Math.sin(pOrbitPhi), cp = Math.cos(pOrbitPhi);
     camera.position.set(
-      base.x + r * sp * Math.sin(pOrbitTheta),
-      base.y + r * cp,
-      base.z + r * sp * Math.cos(pOrbitTheta)
+      _cameraBase.x + r * sp * Math.sin(pOrbitTheta),
+      _cameraBase.y + r * cp,
+      _cameraBase.z + r * sp * Math.cos(pOrbitTheta)
     );
-    camera.lookAt(base);
+    camera.lookAt(_cameraBase);
   }
   enforceCameraOutsidePlanetMeshes();
 }

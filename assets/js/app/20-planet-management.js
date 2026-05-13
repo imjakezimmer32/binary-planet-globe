@@ -532,6 +532,7 @@ const PLANET_EDIT_CONFIG = {
   peak:  { min: 0, max: 3, step: 0.01, arcStart: 310, arcEnd: 50 },
   water: { min: -1, max: 1, step: 0.005, arcStart: 40, arcEnd: 140 },
 };
+let _dialDragging = false;
 const planetRadialState = {
   visible: false,
   centerX: 0,
@@ -844,6 +845,8 @@ function applyPlanetEditSetting(setting, rawValue) {
   } else {
     nextValue = inRadialSizeDrag ? rawClamped : quantizePlanetEditValue(setting, rawClamped);
   }
+  const isDragging = planetRadialState.dragSetting !== null || _dialDragging;
+  const detailCap  = isDragging ? DRAG_PREVIEW_DETAIL : undefined;
   if (setting === 'size') {
     mp.obj.state.size = nextValue;
     if (mp.isBinary && !inRadialSizeDrag) {
@@ -853,13 +856,13 @@ function applyPlanetEditSetting(setting, rawValue) {
       binaryPrevMass1 = mass1Now;
       binaryPrevMass2 = mass2Now;
     }
-    rebuildManagedPlanetTerrain(mp);
+    rebuildManagedPlanetTerrain(mp, detailCap);
   } else if (setting === 'peak') {
     mp.obj.state.peakScale = nextValue;
-    rebuildManagedPlanetTerrain(mp);
+    rebuildManagedPlanetTerrain(mp, detailCap);
   } else if (setting === 'water') {
     mp.obj.state.waterLevel = nextValue;
-    rebuildManagedPlanetTerrain(mp);
+    rebuildManagedPlanetTerrain(mp, detailCap);
   }
   syncPlanetDialValues(mp);
   syncPlanetEditReadouts(mp);
@@ -1359,17 +1362,22 @@ function selectPlanet(idx) {
   rebuildGalaxyMenu();
 }
 
-dialSizeE.addEventListener('input', () => {
-  applyPlanetEditSetting('size', parseFloat(dialSizeE.value));
-});
-
-dialPeakE.addEventListener('input', () => {
-  applyPlanetEditSetting('peak', parseFloat(dialPeakE.value));
-});
-
-dialWaterE.addEventListener('input', () => {
-  applyPlanetEditSetting('water', parseFloat(dialWaterE.value));
-});
+dialSizeE.addEventListener('input',       () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value)));
+dialPeakE.addEventListener('input',       () => applyPlanetEditSetting('peak',  parseFloat(dialPeakE.value)));
+dialWaterE.addEventListener('input',      () => applyPlanetEditSetting('water', parseFloat(dialWaterE.value)));
+// Mark drag active on thumb press so applyPlanetEditSetting uses preview detail.
+// On change (thumb release) clear the flag and rebuild at full quality.
+const _fullRebuildOnDialRelease = () => {
+  _dialDragging = false;
+  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
+  if (mp) rebuildManagedPlanetTerrain(mp);
+};
+dialSizeE.addEventListener('pointerdown',  () => { _dialDragging = true; });
+dialPeakE.addEventListener('pointerdown',  () => { _dialDragging = true; });
+dialWaterE.addEventListener('pointerdown', () => { _dialDragging = true; });
+dialSizeE.addEventListener('change',  _fullRebuildOnDialRelease);
+dialPeakE.addEventListener('change',  _fullRebuildOnDialRelease);
+dialWaterE.addEventListener('change', _fullRebuildOnDialRelease);
 
 if (dialSunOrbitREl) dialSunOrbitREl.addEventListener('input', () => { applySunOrbitFromSliders(); });
 if (dialSunOrbitTiltDegEl) dialSunOrbitTiltDegEl.addEventListener('input', () => { applySunOrbitFromSliders(); });
@@ -1541,7 +1549,13 @@ if (planetRadialEditorEl) {
       try { knob?.releasePointerCapture?.(e.pointerId); } catch (err) {}
     });
     updatePlanetRadialFocusVisuals();
-    if (endedSetting === 'size') finalizePlanetSizeAfterRadialDrag();
+    if (endedSetting === 'size') {
+      finalizePlanetSizeAfterRadialDrag();
+    } else if (endedSetting) {
+      // peak / water were rebuilt at preview detail during drag — snap to full quality now.
+      const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
+      if (mp) rebuildManagedPlanetTerrain(mp);
+    }
   };
   Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
     if (!knob) return;
