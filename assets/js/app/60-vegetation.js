@@ -133,25 +133,71 @@ const VEG = (() => {
   // ── Turf grass ───────────────────────────────────────────────
   // Dense cluster of thin, straight, uniform-height blades — no lean, no spread variation.
   function buildGrassTurf(pos, col, h, rng) {
-    const N      = 9;          // blades per instance
-    const spread = h * 1.0;    // tight footprint so instances merge into carpet
-    const hw     = h * 0.18;   // thin blade half-width
+    const N      = 9;
+    const spread = h * 1.0;
+    const hw     = h * 0.18;
     for (let i = 0; i < N; i++) {
       const a  = rng() * Math.PI * 2;
-      const r  = Math.sqrt(rng()) * spread; // uniform distribution within circle
+      const r  = Math.sqrt(rng()) * spread;
       const bx = Math.cos(a) * r;
       const bz = Math.sin(a) * r;
-      const oa = rng() * Math.PI; // blade face angle
+      const oa = rng() * Math.PI;
       const tx = Math.cos(oa) * hw;
       const tz = Math.sin(oa) * hw;
       const c  = i % 3 === 0 ? GS_C : i % 3 === 1 ? GS_A : GS_B;
-      // Blade: base spans +-hw, tip is straight up at exactly h — no lean.
       pushTri(pos, col, [bx-tx, 0, bz-tz], [bx+tx, 0, bz+tz], [bx, h, bz], c);
       pushTri(pos, col, [bx+tx, 0, bz+tz], [bx-tx, 0, bz-tz], [bx, h, bz], c);
     }
   }
 
-  const GRASS_BUILDERS = [buildGrassTurf];
+  // ── 3 accent grass plant variants ────────────────────────────────
+
+  // Clump — 3 crossed wide double-sided blades with slight lean.
+  function buildGrassClump(pos, col, h, rng) {
+    const w = h * 2.8;
+    for (let i = 0; i < 3; i++) {
+      const a    = (i / 3) * Math.PI + rng() * 0.4;
+      const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
+      const lean = (rng() - 0.5) * h * 0.5;
+      const c    = [GS_A, GS_B, GS_C][i];
+      pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, h, lean*0.5], c);
+      pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, h, lean*0.5], c);
+    }
+  }
+
+  // Tuft — 5 short upright blades radiating outward in a ring.
+  function buildGrassTuft(pos, col, h, rng) {
+    const th = h * 0.75;
+    for (let i = 0; i < 5; i++) {
+      const a  = (i / 5) * Math.PI * 2 + rng() * 0.25;
+      const sr = h * 0.14;
+      const bx = Math.cos(a) * sr, bz = Math.sin(a) * sr;
+      const hw = h * 0.28;
+      const tx = Math.cos(a + Math.PI * 0.5) * hw;
+      const tz = Math.sin(a + Math.PI * 0.5) * hw;
+      const lx = Math.cos(a) * h * 0.18, lz = Math.sin(a) * h * 0.18;
+      const c  = i % 2 === 0 ? G_MID : G_LT;
+      pushTri(pos, col, [bx-tx, 0, bz-tz], [bx+tx, 0, bz+tz], [bx+lx, th, bz+lz], c);
+      pushTri(pos, col, [bx+tx, 0, bz+tz], [bx-tx, 0, bz-tz], [bx+lx, th, bz+lz], c);
+    }
+  }
+
+  // Wispy — 2 tall thin blades with strong lean for wind-blown look.
+  function buildGrassWispy(pos, col, h, rng) {
+    const th = h * 1.5;
+    const w  = h * 0.9;
+    for (let i = 0; i < 2; i++) {
+      const a    = (i / 2) * Math.PI + rng() * 0.5;
+      const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
+      const lean = (rng() - 0.5) * h * 1.1;
+      const c    = i === 0 ? GS_A : G_DARK;
+      pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, th, lean * 0.4], c);
+      pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, th, lean * 0.4], c);
+    }
+  }
+
+  // Index 0 = turf carpet; 1–3 = accent grass plants (~35% of placements).
+  const GRASS_BUILDERS = [buildGrassTurf, buildGrassClump, buildGrassTuft, buildGrassWispy];
 
   // ── Helpers ───────────────────────────────────────────────────────
   function makeMat(doubleSide) {
@@ -303,8 +349,10 @@ const VEG = (() => {
           _m.makeRotationFromQuaternion(_q);
           _m.setPosition(px + fnx*eps, py + fny*eps, pz + fnz*eps);
           nGrass++;
+          // 65% turf carpet, 35% accent plant (clump/tuft/wispy)
+          const gv = rng() < 0.65 ? 0 : 1 + Math.floor(rng() * 3);
           const lp = [], lc = [];
-          GRASS_BUILDERS[0](lp, lc, grassH, rng);
+          GRASS_BUILDERS[gv](lp, lc, grassH, rng);
           grassPos[0].push(...applyMat4(lp, _m));
           grassCol[0].push(...lc);
         }
