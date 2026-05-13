@@ -133,8 +133,8 @@ const VEG = (() => {
   // ── Turf grass ───────────────────────────────────────────────
   // Dense cluster of thin, straight, uniform-height blades — no lean, no spread variation.
   function buildGrassTurf(pos, col, h, rng) {
-    const N      = 9;
-    const spread = h * 1.0;
+    const N      = 30;
+    const spread = h * 2.8;
     const hw     = h * 0.18;
     for (let i = 0; i < N; i++) {
       const a  = rng() * Math.PI * 2;
