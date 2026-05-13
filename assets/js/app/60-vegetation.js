@@ -252,7 +252,7 @@ const VEG = (() => {
     const grassPos = [[]], grassCol = [[]];
 
     const TREE_MAX        = 180;
-    const GRASS_MAX       = 8000;
+    const GRASS_MAX       = 16000;
     const CLUMPS_PER_FACE = 3; // multiple placements per green polygon for full coverage
     let   nTrees = 0, nGrass = 0;
 
