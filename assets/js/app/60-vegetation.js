@@ -255,15 +255,17 @@ const VEG = (() => {
     const treeColArr = [[], [], [], [], []];
     const grassPos = [[]], grassCol = [[]];
 
-    // Per-variant elevation bands (mapped-ne) and area-based densities.
+    // Universal tree densities: trees per square world unit.
+    // Completely independent of planet size, mesh detail, or polygon count —
+    // n = floor(worldFaceArea × density) + Bernoulli(remainder).
     // Index matches BUILDERS: 0=Pine, 1=Round, 2=Spire, 3=Bush, 4=Palm.
-    // [neMin, neMax, density, maxPerFace]
-    const VARIANT_BANDS = [
-      [0.135, 0.168, 500000, 6],  // Pine  — dense clusters near peaks
-      [0.065, 0.130,  80000, 4],  // Round — spread across middle green
-      [0.120, 0.168, 200000, 5],  // Spire — medium density, upper+peaks
-      [0.042, 0.140,  12000, 2],  // Bush  — very sparse, lower/mid green only
-      [0.042, 0.065, 500000, 6],  // Palm  — dense shoreline only
+    // [neMin, neMax, treesPerSqUnit]
+    const VARIANT_DENSITIES = [
+      [0.135, 0.168, 18],   // Pine  — dense near peaks
+      [0.065, 0.130,  2],   // Round — spread across middle green
+      [0.120, 0.168,  7],   // Spire — medium upper+peaks
+      [0.042, 0.140,  0.4], // Bush  — very sparse lower/mid green
+      [0.042, 0.065, 18],   // Palm  — dense shoreline
     ];
 
     const GRASS_DENSITY       = 300000;
@@ -301,10 +303,6 @@ const VEG = (() => {
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
-    // Scale the per-face cap with sz² so smaller planets stay proportionally sparse.
-    // sz=4 keeps full caps; sz=2 gets ¼, sz=1 gets 1/16 (probabilistic via rng).
-    const szCapScale = Math.min(1.0, sz * sz / 16.0);
-
     for (let fi = 0; fi < totalFaces; fi++) {
       const base = fi * 9;
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
@@ -341,15 +339,18 @@ const VEG = (() => {
       const treeEps  = grassH * 0.10;
       const grassEps = grassH * 0.05;
 
-      // Per-variant placement: density-based count, barycentric position, random yaw + size
+      // World-space area of this face (sq world units). fnl = |cross| = 2×local_area.
+      const worldFaceArea = fnl * 0.5 * sz * sz;
+
+      // Per-variant placement: pure world-area density, no caps, no planet-size fudge.
+      // Expected count = worldFaceArea × treesPerSqUnit. Integer part always placed;
+      // fractional part becomes a probability so expected value is exact.
       if (wantAnyTree) {
         for (let vi = 0; vi < 5; vi++) {
-          const [neMin, neMax, dens, maxN] = VARIANT_BANDS[vi];
+          const [neMin, neMax, density] = VARIANT_DENSITIES[vi];
           if (mapped < neMin || mapped > neMax) continue;
-          // Effective cap scales with planet size; fractional values become a probability.
-          const rawMax = maxN * szCapScale;
-          const effectiveMax = rawMax < 1 ? (rng() < rawMax ? 1 : 0) : Math.floor(rawMax);
-          const n = Math.min(effectiveMax, Math.max(0, Math.round(fnl * 0.5 * sz * sz * dens)));
+          const expected = worldFaceArea * density;
+          const n = Math.floor(expected) + (rng() < (expected % 1) ? 1 : 0);
           for (let k = 0; k < n; k++) {
             let bu = rng(), bv = rng();
             if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
