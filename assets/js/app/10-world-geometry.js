@@ -393,8 +393,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   // Per-planet state — independent of any global
   const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
 
-  function build(d) {
-    if (typeof VEG !== 'undefined') { VEG.clearVegetation(spin, vegMeshes); vegMeshes = []; }
+  function build(d, opts) {
+    const skipVeg = opts?.skipVeg ?? false;
+    if (!skipVeg && typeof VEG !== 'undefined') { VEG.clearVegetation(spin, vegMeshes); vegMeshes = []; }
     built.forEach(c => {
       if (c.geometry) c.geometry.dispose();
       if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => m.dispose());
@@ -484,7 +485,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built.push(wire, atmo);
     pickables = [terrain];
     spin.add(...built);
-    if (typeof VEG !== 'undefined') {
+    if (!skipVeg && typeof VEG !== 'undefined') {
       vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, shellR, state.peakScale, state.waterLevel, seed, 1);
     }
   }
@@ -720,12 +721,12 @@ function terrainDetailForManagedPlanet(mp) {
   return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
-function rebuildManagedPlanetTerrain(mp, maxDetail) {
+function rebuildManagedPlanetTerrain(mp, maxDetail, skipVeg) {
   if (!mp?.obj?.rebuild) return;
   let d = terrainDetailForManagedPlanet(mp);
   if (maxDetail !== undefined) d = Math.min(d, maxDetail);
   if (d > 0) {
-    mp.obj.rebuild(d);
+    mp.obj.rebuild(d, (maxDetail !== undefined || skipVeg) ? { skipVeg: true } : undefined);
     mp.obj.syncGrid();
   }
 }

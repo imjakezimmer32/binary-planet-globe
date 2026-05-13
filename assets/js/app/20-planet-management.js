@@ -833,7 +833,7 @@ function finalizePlanetSizeAfterRadialDrag() {
   if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
 }
 
-function applyPlanetEditSetting(setting, rawValue) {
+function applyPlanetEditSetting(setting, rawValue, skipVeg) {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   if (!mp) return;
@@ -859,13 +859,13 @@ function applyPlanetEditSetting(setting, rawValue) {
       binaryPrevMass1 = mass1Now;
       binaryPrevMass2 = mass2Now;
     }
-    rebuildManagedPlanetTerrain(mp, detailCap);
+    rebuildManagedPlanetTerrain(mp, detailCap, skipVeg);
   } else if (setting === 'peak') {
     mp.obj.state.peakScale = nextValue;
-    rebuildManagedPlanetTerrain(mp, detailCap);
+    rebuildManagedPlanetTerrain(mp, detailCap, skipVeg);
   } else if (setting === 'water') {
     mp.obj.state.waterLevel = nextValue;
-    rebuildManagedPlanetTerrain(mp, detailCap);
+    rebuildManagedPlanetTerrain(mp, detailCap, skipVeg);
   }
   syncPlanetDialValues(mp);
   syncPlanetEditReadouts(mp);
@@ -1366,14 +1366,22 @@ function selectPlanet(idx) {
   rebuildGalaxyMenu();
 }
 
-dialSizeE.addEventListener('input',       () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value)));
-dialPeakE.addEventListener('input',       () => applyPlanetEditSetting('peak',  parseFloat(dialPeakE.value)));
-dialWaterE.addEventListener('input',      () => applyPlanetEditSetting('water', parseFloat(dialWaterE.value)));
+dialSizeE.addEventListener('input',  () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value),  true));
+dialPeakE.addEventListener('input',  () => applyPlanetEditSetting('peak',  parseFloat(dialPeakE.value),  true));
+dialWaterE.addEventListener('input', () => applyPlanetEditSetting('water', parseFloat(dialWaterE.value), true));
+// On release: full rebuild restores vegetation to correct positions.
+const _restoreVegOnDialRelease = () => {
+  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
+  if (mp) rebuildManagedPlanetTerrain(mp);
+};
 if (dialSizeE) {
   dialSizeE.addEventListener('change', () => {
+    _restoreVegOnDialRelease();
     if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
   });
 }
+if (dialPeakE)  dialPeakE.addEventListener('change',  _restoreVegOnDialRelease);
+if (dialWaterE) dialWaterE.addEventListener('change', _restoreVegOnDialRelease);
 
 if (dialSunOrbitREl) dialSunOrbitREl.addEventListener('input', () => { applySunOrbitFromSliders(); });
 if (dialSunOrbitTiltDegEl) dialSunOrbitTiltDegEl.addEventListener('input', () => { applySunOrbitFromSliders(); });
