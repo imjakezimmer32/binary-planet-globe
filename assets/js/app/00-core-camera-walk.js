@@ -1,6 +1,6 @@
 // ── Renderer ──────────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: false, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 document.addEventListener('selectstart', (e) => e.preventDefault(), { passive: false });
@@ -571,14 +571,18 @@ const _pickRay = new THREE.Raycaster();
 const _pickNdc = new THREE.Vector2();
 let tapCandidate = null;
 
+const _galaxyMenuEl = document.getElementById('galaxy-menu');
+let _prevGalaxyMenuHide = null;
 function syncSolGalaxyMenuVisibility() {
-  const gm = document.getElementById('galaxy-menu');
-  if (!gm) return;
+  if (!_galaxyMenuEl) return;
   const hide =
     cameraMode === 'sun' &&
     currentDestIndex === 0 &&
     (!solGalaxyMenuRevealed || isNavigating);
-  gm.classList.toggle('galaxy-await-sun-tap', hide);
+  if (hide !== _prevGalaxyMenuHide) {
+    _galaxyMenuEl.classList.toggle('galaxy-await-sun-tap', hide);
+    _prevGalaxyMenuHide = hide;
+  }
 }
 
 /**
