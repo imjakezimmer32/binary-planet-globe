@@ -741,6 +741,8 @@ function setPlanetRadialGuide(setting) {
 
 function updatePlanetRadialFocusVisuals() {
   const active = planetRadialState.dragSetting;
+  if (active === _prevPlanetFocusDrag) return;
+  _prevPlanetFocusDrag = active;
   if (planetRadialRingEl) {
     planetRadialRingEl.style.opacity = active ? '0.92' : '0.78';
   }
@@ -757,6 +759,14 @@ function updatePlanetRadialFocusVisuals() {
 
 function syncPlanetEditReadouts(mp) {
   if (!mp) return;
+  if (mp.id === _prevPlanetReadoutMpId &&
+      mp.obj.state.size === _prevPlanetReadoutSize &&
+      mp.obj.state.peakScale === _prevPlanetReadoutPeak &&
+      mp.obj.state.waterLevel === _prevPlanetReadoutWater) return;
+  _prevPlanetReadoutMpId = mp.id;
+  _prevPlanetReadoutSize = mp.obj.state.size;
+  _prevPlanetReadoutPeak = mp.obj.state.peakScale;
+  _prevPlanetReadoutWater = mp.obj.state.waterLevel;
   if (lblSizeE) lblSizeE.textContent = `Size ${mp.obj.state.size.toFixed(2)}×`;
   if (lblPeakE) lblPeakE.textContent = `Peaks ${mp.obj.state.peakScale.toFixed(2)}×`;
   if (lblWaterE) lblWaterE.textContent = waterLabelText(mp.obj.state.waterLevel);
@@ -874,6 +884,7 @@ function applyPlanetEditSetting(setting, rawValue) {
 
 function hidePlanetRadialEditor() {
   const wasSizeRadialDrag = planetRadialState.dragSetting === 'size';
+  _prevPlanetEdCx = _prevPlanetEdCy = _prevPlanetEdRing = null;
   if (planetRadialEditorEl) planetRadialEditorEl.style.display = 'none';
   planetRadialState.visible = false;
   planetRadialState.dragSetting = null;
@@ -892,17 +903,21 @@ function hidePlanetRadialEditor() {
 function updatePlanetRadialKnobPositions(mp) {
   if (!planetRadialEditorEl || !mp) return;
   const r = planetRadialState.knobRadius;
-  ['size', 'peak', 'water'].forEach(setting => {
-    const knob = planetRadialKnobEls[setting];
-    const cfg = PLANET_EDIT_CONFIG[setting];
-    if (!knob || !cfg) return;
-    const value = valueFromPlanetSetting(mp, setting);
-    const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
-    const deg = planetEditTToAngle(setting, t);
-    const rad = deg * Math.PI / 180;
-    knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
-    knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
-  });
+  const sz = mp.obj.state.size, pk = mp.obj.state.peakScale, wt = mp.obj.state.waterLevel;
+  if (r !== _prevPlanetKnobR || sz !== _prevPlanetKnobSize || pk !== _prevPlanetKnobPeak || wt !== _prevPlanetKnobWater) {
+    _prevPlanetKnobR = r; _prevPlanetKnobSize = sz; _prevPlanetKnobPeak = pk; _prevPlanetKnobWater = wt;
+    ['size', 'peak', 'water'].forEach(setting => {
+      const knob = planetRadialKnobEls[setting];
+      const cfg = PLANET_EDIT_CONFIG[setting];
+      if (!knob || !cfg) return;
+      const value = valueFromPlanetSetting(mp, setting);
+      const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      const deg = planetEditTToAngle(setting, t);
+      const rad = deg * Math.PI / 180;
+      knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
+      knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
+    });
+  }
   updatePlanetRadialFocusVisuals();
 }
 
@@ -944,8 +959,8 @@ function updatePlanetSelectionEditor() {
     hidePlanetRadialEditor();
     return;
   }
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vw = _vwCache;
+  const vh = _vhCache;
   const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
   if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
@@ -983,9 +998,12 @@ function updatePlanetSelectionEditor() {
 
   if (planetRadialEditorEl) {
     planetRadialEditorEl.style.display = 'block';
-    planetRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
-    planetRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
-    planetRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+    if (_prevPlanetEdCx === null || Math.abs(cx - _prevPlanetEdCx) > 0.05 || Math.abs(cy - _prevPlanetEdCy) > 0.05 || Math.abs(ringSize - _prevPlanetEdRing) > 0.05) {
+      planetRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
+      planetRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
+      planetRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+      _prevPlanetEdCx = cx; _prevPlanetEdCy = cy; _prevPlanetEdRing = ringSize;
+    }
   }
   planetRadialState.visible = true;
   planetRadialState.centerX = cx;
@@ -1074,6 +1092,8 @@ function setSunRadialGuide(setting) {
 }
 function updateSunRadialFocusVisuals() {
   const active = sunRadialState.dragSetting;
+  if (active === _prevSunFocusDrag) return;
+  _prevSunFocusDrag = active;
   if (sunRadialRingEl) {
     sunRadialRingEl.style.opacity = active ? '0.92' : '0.78';
   }
@@ -1105,6 +1125,7 @@ function applySunEditSetting(setting, rawValue) {
   syncSunRadialReadouts();
 }
 function hideSunRadialEditor() {
+  _prevSunEdCx = _prevSunEdCy = _prevSunEdRing = null;
   if (sunRadialEditorEl) sunRadialEditorEl.style.display = 'none';
   sunRadialState.visible = false;
   sunRadialState.dragSetting = null;
@@ -1122,17 +1143,21 @@ function hideSunRadialEditor() {
 function updateSunRadialKnobPositions() {
   if (!sunRadialEditorEl) return;
   const r = sunRadialState.knobRadius;
-  ['scale', 'warp'].forEach(setting => {
-    const knob = sunRadialKnobEls[setting];
-    const cfg = SUN_EDIT_CONFIG[setting];
-    if (!knob || !cfg) return;
-    const value = valueFromSunSetting(setting);
-    const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
-    const deg = sunEditTToAngle(setting, t);
-    const rad = deg * Math.PI / 180;
-    knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
-    knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
-  });
+  const sc = targetScale, wp = timeWarp;
+  if (r !== _prevSunKnobR || sc !== _prevSunKnobScale || wp !== _prevSunKnobWarp) {
+    _prevSunKnobR = r; _prevSunKnobScale = sc; _prevSunKnobWarp = wp;
+    ['scale', 'warp'].forEach(setting => {
+      const knob = sunRadialKnobEls[setting];
+      const cfg = SUN_EDIT_CONFIG[setting];
+      if (!knob || !cfg) return;
+      const value = valueFromSunSetting(setting);
+      const t = (value - cfg.min) / Math.max(1e-6, cfg.max - cfg.min);
+      const deg = sunEditTToAngle(setting, t);
+      const rad = deg * Math.PI / 180;
+      knob.style.left = `${(Math.cos(rad) * r).toFixed(1)}px`;
+      knob.style.top = `${(Math.sin(rad) * r).toFixed(1)}px`;
+    });
+  }
   updateSunRadialFocusVisuals();
 }
 function updateSunSelectionEditor() {
@@ -1167,8 +1192,8 @@ function updateSunSelectionEditor() {
     hideSunRadialEditor();
     return;
   }
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vw = _vwCache;
+  const vh = _vhCache;
   const projectedCx = (_planetEditorNdc.x * 0.5 + 0.5) * vw;
   const projectedCy = (-_planetEditorNdc.y * 0.5 + 0.5) * vh;
   if (!Number.isFinite(projectedCx) || !Number.isFinite(projectedCy)) {
@@ -1197,9 +1222,12 @@ function updateSunSelectionEditor() {
 
   if (sunRadialEditorEl) {
     sunRadialEditorEl.style.display = 'block';
-    sunRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
-    sunRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
-    sunRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+    if (_prevSunEdCx === null || Math.abs(cx - _prevSunEdCx) > 0.05 || Math.abs(cy - _prevSunEdCy) > 0.05 || Math.abs(ringSize - _prevSunEdRing) > 0.05) {
+      sunRadialEditorEl.style.left = `${cx.toFixed(1)}px`;
+      sunRadialEditorEl.style.top = `${cy.toFixed(1)}px`;
+      sunRadialEditorEl.style.setProperty('--pre-size', `${ringSize.toFixed(1)}px`);
+      _prevSunEdCx = cx; _prevSunEdCy = cy; _prevSunEdRing = ringSize;
+    }
   }
   sunRadialState.visible = true;
   sunRadialState.centerX = cx;
@@ -1283,9 +1311,20 @@ function updateWalkButtonVisibility() {
   refreshWalkUi();
 }
 
-function isNarrowPlanetUI() {
-  return typeof matchMedia !== 'undefined' && matchMedia('(max-width: 768px)').matches;
+let _narrowUiCache = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 768px)').matches;
+let _vwCache = window.innerWidth, _vhCache = window.innerHeight;
+{
+  const _mq768 = typeof matchMedia !== 'undefined' ? matchMedia('(max-width: 768px)') : null;
+  if (_mq768) _mq768.addEventListener('change', e => { _narrowUiCache = e.matches; });
+  window.addEventListener('resize', () => { _vwCache = window.innerWidth; _vhCache = window.innerHeight; });
 }
+let _prevPlanetEdCx = null, _prevPlanetEdCy = null, _prevPlanetEdRing = null;
+let _prevSunEdCx = null, _prevSunEdCy = null, _prevSunEdRing = null;
+let _prevPlanetReadoutMpId = null, _prevPlanetReadoutSize = null, _prevPlanetReadoutPeak = null, _prevPlanetReadoutWater = null;
+let _prevPlanetKnobR = null, _prevPlanetKnobSize = null, _prevPlanetKnobPeak = null, _prevPlanetKnobWater = null;
+let _prevSunKnobR = null, _prevSunKnobScale = null, _prevSunKnobWarp = null;
+let _prevPlanetFocusDrag = undefined, _prevSunFocusDrag = undefined;
+function isNarrowPlanetUI() { return _narrowUiCache; }
 
 function setPlanetPanelOpen(open) {
   if (!planetPanel || !isNarrowPlanetUI()) return;
