@@ -250,10 +250,14 @@ const VEG = (() => {
       if (nTrees >= TREE_MAX && nGrass >= GRASS_MAX) break;
 
       const base = fi * 9;
+      // All 3 vertices of this face
+      const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
+      const v1x = posArr[base+3], v1y = posArr[base+4], v1z = posArr[base+5];
+      const v2x = posArr[base+6], v2y = posArr[base+7], v2z = posArr[base+8];
       // Face centroid
-      const cx = (posArr[base]   + posArr[base+3] + posArr[base+6]) / 3;
-      const cy = (posArr[base+1] + posArr[base+4] + posArr[base+7]) / 3;
-      const cz = (posArr[base+2] + posArr[base+5] + posArr[base+8]) / 3;
+      const cx = (v0x + v1x + v2x) / 3;
+      const cy = (v0y + v1y + v2y) / 3;
+      const cz = (v0z + v1z + v2z) / 3;
 
       const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
       if (cl < 1e-6) continue;
@@ -265,13 +269,24 @@ const VEG = (() => {
       const wantGrass = ne >= GRASS_NE_MIN && ne <= GRASS_NE_MAX && nGrass < GRASS_MAX;
       if (!wantTree && !wantGrass) continue;
 
-      // Radial outward direction at centroid
-      const nx = cx/cl, ny = cy/cl, nz = cz/cl;
-      _nv.set(nx, ny, nz);
+      // Face normal via cross product (v1-v0) x (v2-v0), normalised.
+      const e1x = v1x-v0x, e1y = v1y-v0y, e1z = v1z-v0z;
+      const e2x = v2x-v0x, e2y = v2y-v0y, e2z = v2z-v0z;
+      let fnx = e1y*e2z - e1z*e2y;
+      let fny = e1z*e2x - e1x*e2z;
+      let fnz = e1x*e2y - e1y*e2x;
+      const fnl = Math.sqrt(fnx*fnx + fny*fny + fnz*fnz);
+      if (fnl < 1e-10) continue;
+      fnx /= fnl; fny /= fnl; fnz /= fnl;
+      // Ensure the normal points outward (same hemisphere as centroid radial).
+      if (fnx*(cx/cl) + fny*(cy/cl) + fnz*(cz/cl) < 0) { fnx=-fnx; fny=-fny; fnz=-fnz; }
+
+      _nv.set(fnx, fny, fnz);
       _q.setFromUnitVectors(_yUp, _nv);
       _m.makeRotationFromQuaternion(_q);
-      // Place at the exact face centroid — zero gap, zero float.
-      _m.setPosition(cx, cy, cz);
+      // Tiny lift along face normal prevents z-fighting with the terrain polygon.
+      const eps = grassH * 0.05;
+      _m.setPosition(cx + fnx*eps, cy + fny*eps, cz + fnz*eps);
 
       // In the overlapping band trees take priority ~1 in 3; rest become grass.
       const placeTree = wantTree && (!wantGrass || rng() < 0.35);
