@@ -417,9 +417,14 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     );
     depthBack.renderOrder = 0;
 
-    const terrain = new THREE.Mesh(flatGeo, new THREE.MeshLambertMaterial({
+    // MeshLambert computes direct lights per *vertex* (vLightFront); interpolating that
+    // across large triangles is wrong for a nearby point light — face centers look dark.
+    // MeshStandard evaluates punctual lights per fragment (roughness 1 ≈ matte).
+    const terrain = new THREE.Mesh(flatGeo, new THREE.MeshStandardMaterial({
       vertexColors: true,
       flatShading: false,
+      roughness: 1,
+      metalness: 0,
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
     terrain.renderOrder = 0;
