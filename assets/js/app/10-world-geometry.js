@@ -393,6 +393,8 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   // Per-planet state — independent of any global
   const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
 
+  let lastBuiltSz = Math.max(state.size ?? 1, 0.05);
+
   function build(d, opts) {
     const skipVeg = opts?.skipVeg ?? false;
     if (!skipVeg && typeof VEG !== 'undefined') { VEG.clearVegetation(spin, vegMeshes); vegMeshes = []; }
@@ -407,6 +409,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     // World shell lives in spin-local space at full radius (no pivot scale) so facet size
     // tracks LOD only — avoids stretching the same mesh with pivot.scale = size.
     const sz = Math.max(state.size ?? 1, 0.05);
+    lastBuiltSz = sz;
     const shellR = baseR * sz;
     const liquidState = getLiquidState(wl, shellR);
     // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
@@ -510,6 +513,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     getTerrainMesh: () => pickables[0] || null,
     getPickables: () => pickables,
     setVegVisible: v => { vegMeshes.forEach(m => { m.visible = v; }); },
+    // Scale spin uniformly during drag — no geometry rebuild, snaps to 1 on full rebuild.
+    setScalePreview: (newSize) => { spin.scale.setScalar(Math.max(newSize, 0.05) / lastBuiltSz); },
+    clearScalePreview: () => { spin.scale.setScalar(1); },
   };
 }
 
