@@ -127,14 +127,14 @@ const WALK_CFG = {
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
-  /** Walk bob frequency (rad/s); run uses a faster bob. */
-  bounceFreqWalk: 9.8,
-  bounceFreqRun: 14.2,
+  /** Walk bob frequency (rad/s); run is moderately faster, not frantic. */
+  bounceFreqWalk: 5.4,
+  bounceFreqRun: 7.2,
   /** Vertical bob amplitude (world units) at full blend; run slightly stronger. */
-  bounceAmpWalk: 0.00185,
-  bounceAmpRun: 0.00245,
-  /** Extra bob frequency from planar speed (rad per unit speed). */
-  bounceFreqFromSpeed: 12,
+  bounceAmpWalk: 0.00175,
+  bounceAmpRun: 0.00235,
+  /** Small extra bob rate from planar speed (keeps bob tied to motion without speeding up too much). */
+  bounceFreqFromSpeed: 3.2,
   bounceResponse: 9.8,
   /** Foot dust: min planar speed (world) before puffs spawn on land. */
   dustMinPlanarSpeed: 0.0026,
@@ -412,26 +412,31 @@ function spawnWalkDustPuff(surface, speedScale, sprinting, planarSpeed, desiredS
     }
   }
   if (!m) return;
-  const up = walkState.up;
-  _walkSpawnV1.copy(walkState.velocity).projectOnPlane(up);
+  /** Away from planet core — always use this for lift; mesh `normal` can face inward and suck puffs under terrain. */
+  const out = surface.radialDir;
+  _walkSpawnV1.copy(walkState.velocity).projectOnPlane(out);
   if (_walkSpawnV1.lengthSq() < 1e-14) {
-    _walkSpawnV1.copy(walkState.forward).multiplyScalar(-1);
-  } else {
-    _walkSpawnV1.multiplyScalar(-1 / _walkSpawnV1.length());
+    _walkSpawnV1.copy(walkState.forward).projectOnPlane(out);
   }
+  if (_walkSpawnV1.lengthSq() < 1e-14) return;
+  _walkSpawnV1.multiplyScalar(-1 / _walkSpawnV1.length());
+
   const speedRatio = Math.min(1.85, planarSpeed / Math.max(desiredSpeed, 1e-6));
-  const kick = WALK_CFG.characterRadius * speedScale * (sprinting ? 1.12 : 0.76)
-    * (0.0085 + 0.015 * speedRatio);
-  m.userData.vel.copy(_walkSpawnV1).multiplyScalar(kick);
-  _walkSpawnV2.copy(up).cross(_walkSpawnV1);
+  const kickTan = WALK_CFG.characterRadius * speedScale * (sprinting ? 1.05 : 0.72)
+    * (0.0075 + 0.012 * speedRatio);
+  /** Tiny drift off the surface along +radial only (no normal — avoids “into the rock” velocity). */
+  const kickLift = kickTan * (0.14 + Math.random() * 0.1);
+
+  m.userData.vel.copy(_walkSpawnV1).multiplyScalar(kickTan);
+  _walkSpawnV2.copy(out).cross(_walkSpawnV1);
   if (_walkSpawnV2.lengthSq() < 1e-12) _walkSpawnV2.set(1, 0, 0);
   else _walkSpawnV2.normalize();
-  m.userData.vel.addScaledVector(_walkSpawnV2, (Math.random() - 0.5) * kick * 0.7);
-  m.userData.vel.addScaledVector(surface.normal, kick * (0.28 + Math.random() * 0.55));
+  m.userData.vel.addScaledVector(_walkSpawnV2, (Math.random() - 0.5) * kickTan * 0.55);
+  m.userData.vel.addScaledVector(out, kickLift);
 
   m.position.copy(surface.point);
-  m.position.addScaledVector(surface.normal, WALK_CFG.characterRadius * (0.07 + Math.random() * 0.11));
-  m.position.addScaledVector(_walkSpawnV2, (Math.random() - 0.5) * WALK_CFG.characterRadius * 0.52);
+  m.position.addScaledVector(out, WALK_CFG.characterRadius * speedScale * (0.18 + Math.random() * 0.14));
+  m.position.addScaledVector(_walkSpawnV2, (Math.random() - 0.5) * WALK_CFG.characterRadius * speedScale * 0.48);
 
   const rs = WALK_CFG.characterRadius * speedScale * (0.38 + Math.random() * 0.42);
   m.userData.baseScale = rs;
@@ -462,7 +467,7 @@ function updateWalkDustParticles(dt, surface, grounded, planarSpeed, sprinting, 
     const fade = (1 - u) * (1 - u);
     mesh.material.opacity = ud.baseOpacity * fade;
     mesh.position.addScaledVector(ud.vel, dt);
-    ud.vel.multiplyScalar(Math.max(0, 1 - dt * 2.35));
+    ud.vel.multiplyScalar(Math.max(0, 1 - dt * 1.45));
     mesh.scale.setScalar(ud.baseScale * (1 + u * 2.25));
   }
 
