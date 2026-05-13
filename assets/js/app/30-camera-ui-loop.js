@@ -28,6 +28,10 @@ btnGrid.addEventListener('click', () => {
   managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
 });
 
+// Binary + registered planets: first terrain LOD/snap pass (see rebuildManagedPlanetTerrain in
+// 10-world-geometry.js). Must run after `gridOn` is initialized — planet wire syncGrid() reads it.
+if (typeof rebuildAllManagedPlanetTerrainMeshes === 'function') rebuildAllManagedPlanetTerrainMeshes();
+
 // ── Camera settings panel ─────────────────────────────────────────
 const btnCamSettings = document.getElementById('btn-cam-settings');
 const camSettingsEl  = document.getElementById('cam-settings');
