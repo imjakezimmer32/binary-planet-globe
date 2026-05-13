@@ -829,6 +829,7 @@ function finalizePlanetSizeAfterRadialDrag() {
   }
   syncPlanetDialValues(mp);
   syncPlanetEditReadouts(mp);
+  if (mp.obj.clearScalePreview) mp.obj.clearScalePreview();
   rebuildManagedPlanetTerrain(mp);
   if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
 }
@@ -1025,7 +1026,7 @@ function updatePlanetSettingFromPointer(clientX, clientY, setting) {
   }
   const t = softenRadialT(planetEditAngleToT(setting, deg));
   const value = cfg.min + t * (cfg.max - cfg.min);
-  applyPlanetEditSetting(setting, value);
+  applyPlanetEditSetting(setting, value, true);
 }
 
 function sunArcSpan(cfg) {
