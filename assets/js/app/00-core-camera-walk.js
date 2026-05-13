@@ -183,10 +183,10 @@ const WALK_CFG = {
   walkMaxFallMin: 0.15,
   walkMaxFallMax: 0.28,
   /**
-   * Jump always reaches this height above the feet (same on every world).
+   * Jump always reaches this height above the feet (same on every world, world units along radial “up”).
    * Launch speed = sqrt(2 × g × height) so apex is fixed while fall curve follows g.
    */
-  jumpApexHeight: 0.037,
+  jumpApexHeight: 0.12,
   jumpBufferSec: 0.14,
   jumpCooldownSec: 0.18,
   coyoteTimeSec: 0.12,
