@@ -128,6 +128,9 @@ function getSimulationWarp(uiWarp) {
   return Math.max(0, uiWarp) * TIME_WARP_BASE_SCALE;
 }
 
+let _prevWireOpacity = -1;
+let _vegWalkWasActive = false;
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -167,7 +170,10 @@ function animate() {
   const curScaleUi = scaleWorldToUi(curScale);
   const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScaleUi - 8) / 44);
   const wireOpacity = 0.25 * wireFade;
-  managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
+  if (wireOpacity !== _prevWireOpacity) {
+    managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
+    _prevWireOpacity = wireOpacity;
+  }
 
   const simWarp = getSimulationWarp(timeWarp);
   if (simWarp > 0) {
@@ -201,8 +207,8 @@ function animate() {
     const sunOrbiters = managedPlanets.filter(mp => !mp.isBinary && mp.orbitCenter === 'sun');
     const subSteps = Math.max(2, Math.min(64, steps * 2));
     const subDt = dt / subSteps;
+    const acc = sunOrbiters.map(() => new THREE.Vector3());
     for (let k = 0; k < subSteps; k++) {
-      const acc = sunOrbiters.map(() => new THREE.Vector3());
       sunOrbiters.forEach((mp, i) => {
         initializeSunOrbiterState(mp);
         const pos = mp.orbitPos;
@@ -287,9 +293,7 @@ function animate() {
     );
   });
 
-  // Terrain meshes are rebuilt at full shell radius (base × size); pivot stays unit scale.
   managedPlanets.forEach(mp => {
-    mp.obj.pivot.scale.setScalar(1);
     mp.obj.spin.rotation.y = mp.spinAngle;
   });
 
@@ -341,7 +345,11 @@ function animate() {
 
   // Show vegetation only in walk mode, on planets within viewing distance.
   if (typeof VEG !== 'undefined' && typeof managedPlanets !== 'undefined') {
-    VEG.refreshVisibility(managedPlanets, camera.position, walkMode.active);
+    const vegWalkActive = walkMode.active;
+    if (vegWalkActive || _vegWalkWasActive) {
+      VEG.refreshVisibility(managedPlanets, camera.position, vegWalkActive);
+    }
+    _vegWalkWasActive = vegWalkActive;
   }
 
   renderer.render(scene, camera);
