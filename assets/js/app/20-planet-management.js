@@ -847,9 +847,10 @@ function applyPlanetEditSetting(setting, rawValue, skipVeg) {
     nextValue = inRadialSizeDrag ? rawClamped : quantizePlanetEditValue(setting, rawClamped);
   }
   const detailCap =
-    planetRadialState.dragSetting !== null &&
-    planetRadialState.dragSetting !== 'size'
-      ? DRAG_PREVIEW_DETAIL
+    planetRadialState.dragSetting !== null && planetRadialState.dragSetting !== 'size'
+      ? DRAG_PREVIEW_DETAIL          // radial peak/water knob: detail 6
+      : skipVeg && setting !== 'size'
+      ? PLANET_MESH_DETAIL_MIN       // HTML dial peak/water: detail 4 (fastest safe preview)
       : undefined;
   if (setting === 'size') {
     mp.obj.state.size = nextValue;
@@ -1372,9 +1373,17 @@ function selectPlanet(idx) {
   rebuildGalaxyMenu();
 }
 
+// Size: scale-preview is free, run immediately on every event.
 dialSizeE.addEventListener('input',  () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value),  true));
-dialPeakE.addEventListener('input',  () => applyPlanetEditSetting('peak',  parseFloat(dialPeakE.value),  true));
-dialWaterE.addEventListener('input', () => applyPlanetEditSetting('water', parseFloat(dialWaterE.value), true));
+// Peak/water: rebuild even at low detail takes ~10 ms; coalesce to at most one rebuild per frame.
+let _pendingDialPeak = null, _pendingDialWater = null, _dialDragRafId = null;
+function _flushDialDrag() {
+  _dialDragRafId = null;
+  if (_pendingDialPeak !== null)  { applyPlanetEditSetting('peak',  _pendingDialPeak,  true); _pendingDialPeak  = null; }
+  if (_pendingDialWater !== null) { applyPlanetEditSetting('water', _pendingDialWater, true); _pendingDialWater = null; }
+}
+dialPeakE.addEventListener('input',  () => { _pendingDialPeak  = parseFloat(dialPeakE.value);  if (!_dialDragRafId) _dialDragRafId = requestAnimationFrame(_flushDialDrag); });
+dialWaterE.addEventListener('input', () => { _pendingDialWater = parseFloat(dialWaterE.value); if (!_dialDragRafId) _dialDragRafId = requestAnimationFrame(_flushDialDrag); });
 // On release: reset scale preview (size dial), then full rebuild restores correct geometry + veg.
 const _restoreVegOnDialRelease = () => {
   const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
