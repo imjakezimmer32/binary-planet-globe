@@ -662,6 +662,15 @@ function mobPinchPair() {
   return { a: pts[0], b: pts[1] };
 }
 
+/** Two-finger walk third-person: pinch distance may change — do not apply look from per-pointer deltas. */
+function walkMobileTwoFingerTpPinchContext() {
+  return (
+    mobPointers.size >= 2 &&
+    walkCameraMode === 'tp' &&
+    (walkJoystickPointerId === null || !mobPointers.has(walkJoystickPointerId))
+  );
+}
+
 function onMobilePointerDown(e) {
   if (walkMode.active && typeof e.preventDefault === 'function') e.preventDefault();
   try { _canvas.setPointerCapture(e.pointerId); } catch (err) {}
@@ -707,11 +716,10 @@ function onMobilePointerMove(e) {
       return;
     }
     if (typeof e.preventDefault === 'function') e.preventDefault();
-    if (prev) {
+    if (prev && !walkMobileTwoFingerTpPinchContext()) {
       queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
     }
-    if (mobPointers.size >= 2 && walkCameraMode === 'tp' &&
-        (walkJoystickPointerId === null || !mobPointers.has(walkJoystickPointerId))) {
+    if (walkMobileTwoFingerTpPinchContext()) {
       const pair = mobPinchPair();
       if (pair) {
         const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
@@ -860,6 +868,10 @@ window.addEventListener('touchstart', e => {
 
 window.addEventListener('touchmove', e => {
   if (!walkMode.active || walkTouchLookId === null) return;
+  if (e.touches.length >= 2) {
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    return;
+  }
   for (let i = 0; i < e.touches.length; i++) {
     const t = e.touches[i];
     if (walkJoystickTouchIds.has(t.identifier)) continue;
