@@ -150,8 +150,8 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 /** Capsule height in world units (must match avatar geometry). */
 const WALK_CAPSULE_HEIGHT = 0.013;
-/** Jump apex ≈ this × capsule height — 44 → ~0.57 world units (2× the prior 22× tuning). */
-const WALK_JUMP_APEX_CAPSULE_MUL = 44;
+/** Jump apex ≈ this × capsule height (88 → ~1.14 world units; was 44 before this double). */
+const WALK_JUMP_APEX_CAPSULE_MUL = 88;
 
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
@@ -225,8 +225,14 @@ const WALK_CFG = {
   walkGravityMin: 0.10,
   walkGravityMax: 0.26,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.22,
-  walkMaxFallMax: 0.42,
+  walkMaxFallMin: 0.28,
+  walkMaxFallMax: 0.52,
+  /**
+   * Airborne radial gravity curve: stronger pull when falling than when rising
+   * (shorter hang, snappier drop — not symmetric float).
+   */
+  jumpGravityRiseMul: 1.16,
+  jumpGravityFallMul: 1.78,
   /**
    * Jump apex above feet (world units along radial “up”); launch speed = sqrt(2 × g × height).
    */
@@ -254,7 +260,7 @@ const WALK_CFG = {
   /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
-  anchorSphereAbsSlack: 0.48,
+  anchorSphereAbsSlack: 0.96,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -263,7 +269,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 0.76,
+  airLandingAssistEndGap: 1.52,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
@@ -2071,7 +2077,8 @@ function updateWalkMode(dt) {
     nextRadialVel = Math.min(nextRadialVel, 0);
   } else {
     walkState.sliding = false;
-    nextRadialVel = Math.max(-walkMaxFall, nextRadialVel - walkG * dt);
+    const gMul = nextRadialVel > 0 ? WALK_CFG.jumpGravityRiseMul : WALK_CFG.jumpGravityFallMul;
+    nextRadialVel = Math.max(-walkMaxFall, nextRadialVel - walkG * gMul * dt);
   }
 
   const inputIdle = moveLen < WALK_CFG.moveInputDeadzone;
@@ -2094,7 +2101,9 @@ function updateWalkMode(dt) {
     walkState.jumpBufferTimer = 0;
     walkState.jumpCooldownTimer = WALK_CFG.jumpCooldownSec;
     walkState.coyoteTimer = 0;
-    nextRadialVel = Math.sqrt(Math.max(0, 2 * walkG * WALK_CFG.jumpApexHeight));
+    nextRadialVel = Math.sqrt(
+      Math.max(0, 2 * walkG * WALK_CFG.jumpGravityRiseMul * WALK_CFG.jumpApexHeight)
+    );
   }
 
   walkState.velocity.copy(_walkTmp).addScaledVector(walkState.up, nextRadialVel);
