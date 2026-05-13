@@ -481,7 +481,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     pickables = [terrain];
     spin.add(...built);
     if (typeof VEG !== 'undefined') {
-      vegMeshes = VEG.spawnVegetationOnPlanet(spin, baseR, state.peakScale, state.waterLevel, seed);
+      vegMeshes = VEG.spawnVegetationOnPlanet(spin, baseR, state.peakScale, state.waterLevel, seed, state.size);
     }
   }
 

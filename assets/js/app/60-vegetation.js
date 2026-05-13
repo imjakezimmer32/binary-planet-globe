@@ -13,6 +13,23 @@ const VEG = (() => {
   const GS_B    = [0.18, 0.48, 0.08];
   const GS_C    = [0.08, 0.28, 0.04];
 
+  // Character height matches WALK_CFG.characterHeight (00-core-camera-walk.js)
+  const CHAR_H  = 0.013;
+  const TREE_H  = CHAR_H * 4.0;    // target tree height in world units
+  const GRASS_H = CHAR_H * 0.25;   // target grass height in world units
+
+  // Inherent height of each tree variant when built at sc=1.
+  // Used to normalise so every variant's tip lands at ~TREE_H world units.
+  const VARIANT_HEIGHTS = [1.18, 1.34, 1.44, 0.64, 0.90];
+
+  // Elevation bands (raw ne = d/ps, before palette stretch)
+  // Trees  – darker highland-green strip just before the treeline-brown
+  const TREE_NE_MIN  = 0.110;
+  const TREE_NE_MAX  = 0.148;
+  // Grass  – all green, plus a slight toe into the sandy shore band
+  const GRASS_NE_MIN = 0.010;
+  const GRASS_NE_MAX = 0.148;
+
   function pushTri(pos, col, v0, v1, v2, c) {
     pos.push(v0[0], v0[1], v0[2], v1[0], v1[1], v1[2], v2[0], v2[1], v2[2]);
     col.push(c[0], c[1], c[2], c[0], c[1], c[2], c[0], c[1], c[2]);
@@ -62,9 +79,10 @@ const VEG = (() => {
     tmp.dispose();
   }
 
-  // ── 5 tree variants (local Y-up space, sc = unit scale) ───────────
+  // ── 5 tree variants (local Y-up space, sc = normalised unit) ─────
+  // sc is computed per variant so the tip of each tree lands at ~1×sc above ground.
 
-  // Variant 0: Pine — triple-stacked cones
+  // Variant 0: Pine — triple-stacked cones (inherent height 1.18 sc)
   function v0Pine(pos, col, sc) {
     addCylinder(pos, col, 0, 0,       0, sc*0.09, sc*0.42, 4, T_MID);
     addCone(    pos, col, 0, sc*0.28, 0, sc*0.65, sc*0.52, 6, G_MID,  G_DARK);
@@ -72,26 +90,26 @@ const VEG = (() => {
     addCone(    pos, col, 0, sc*0.78, 0, sc*0.30, sc*0.40, 6, G_LT,   G_PALE);
   }
 
-  // Variant 1: Round tree — trunk + icosahedron canopy
+  // Variant 1: Round tree — trunk + icosahedron canopy (inherent height 1.34 sc)
   function v1Round(pos, col, sc) {
     addCylinder(pos, col, 0, 0,       0, sc*0.10, sc*0.55, 4, T_DARK);
     addIco(     pos, col, 0, sc*0.82, 0, sc*0.52, G_MID);
   }
 
-  // Variant 2: Spire — thin trunk + tall cypress-style cone
+  // Variant 2: Spire — thin trunk + tall cypress-style cone (inherent height 1.44 sc)
   function v2Spire(pos, col, sc) {
     addCylinder(pos, col, 0, 0,       0, sc*0.07, sc*0.18, 4, T_MID);
     addCone(    pos, col, 0, sc*0.06, 0, sc*0.38, sc*1.38, 7, G_DARK, G_MID);
   }
 
-  // Variant 3: Bush — 3 overlapping low icosahedra
+  // Variant 3: Bush — 3 overlapping low icosahedra (inherent height 0.64 sc)
   function v3Bush(pos, col, sc) {
     addIco(pos, col,  0.00,     sc*0.22,  0.00,     sc*0.42, G_MID);
     addIco(pos, col,  sc*0.28,  sc*0.16,  sc*0.16,  sc*0.34, G_DARK);
     addIco(pos, col, -sc*0.24,  sc*0.18, -sc*0.12,  sc*0.36, G_LT);
   }
 
-  // Variant 4: Palm — thin trunk + 5 drooping flat fronds
+  // Variant 4: Palm — thin trunk + 5 drooping flat fronds (inherent height 0.90 sc)
   function v4Palm(pos, col, sc) {
     addCylinder(pos, col, 0, 0, 0, sc*0.07, sc*0.78, 4, T_MID);
     const tipY = sc * 0.86, fl = sc * 0.68, fw = sc * 0.12;
@@ -111,14 +129,14 @@ const VEG = (() => {
   const BUILDERS = [v0Pine, v1Round, v2Spire, v3Bush, v4Palm];
 
   // ── Grass clump — 3 crossed double-sided blades ───────────────────
-  function buildGrass(pos, col, sc, rng) {
-    const h = sc * (0.20 + rng() * 0.12);
-    const w = sc * (0.08 + rng() * 0.04);
+  function buildGrass(pos, col, targetH, rng) {
+    const h = targetH * (1.0 + (rng() - 0.5) * 0.4);
+    const w = targetH * 2.8;
     for (let i = 0; i < 3; i++) {
-      const a  = (i / 3) * Math.PI + rng() * 0.4;
-      const dx = Math.cos(a) * w, dz = Math.sin(a) * w;
-      const lean = (rng() - 0.5) * sc * 0.06;
-      const c = [GS_A, GS_B, GS_C][i];
+      const a    = (i / 3) * Math.PI + rng() * 0.4;
+      const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
+      const lean = (rng() - 0.5) * targetH * 0.5;
+      const c    = [GS_A, GS_B, GS_C][i];
       pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, h, lean*0.5], c);
       pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, h, lean*0.5], c);
     }
@@ -156,13 +174,20 @@ const VEG = (() => {
   }
 
   // ── Public API ────────────────────────────────────────────────────
-  function spawnVegetationOnPlanet(spinGroup, baseR, peakScale, waterLevel, planetSeed) {
+
+  // planetSize = mp.obj.state.size (pivot scale); vegetation geometry lives in
+  // spin (pre-scale) so divide world-unit targets by size to get local units.
+  function spawnVegetationOnPlanet(spinGroup, baseR, peakScale, waterLevel, planetSeed, planetSize) {
     const meshes = [];
-    if (!(waterLevel > 0.0001)) return meshes;  // no vegetation on dry/lava planets
+    if (!(waterLevel > 0.0001)) return meshes;
 
     const ps   = Math.max(peakScale, 0.001);
-    const sc   = baseR * 0.10;
+    const sz   = Math.max(planetSize || 1, 0.05);
     const liqR = baseR * (0.80 + Math.min(waterLevel, 1) * 0.42);
+
+    // Heights in spin-local space (world height = local × sz via pivot.scale)
+    const treeSc  = TREE_H  / sz;
+    const grassH  = GRASS_H / sz;
 
     let rngS = ((planetSeed * 997 + 1) * 65537) >>> 0;
     function rng() {
@@ -172,14 +197,12 @@ const VEG = (() => {
 
     const treePosArr = [[], [], [], [], []];
     const treeColArr = [[], [], [], [], []];
-    const grassPos = [], grassCol = [];
+    const grassPos   = [], grassCol = [];
 
-    const SAMPLE_N  = 3600;
-    const TREE_MAX  = 160;
-    const GRASS_MAX = 360;
+    const SAMPLE_N  = 4800;
+    const TREE_MAX  = 180;
+    const GRASS_MAX = 420;
     let   nTrees = 0, nGrass = 0;
-
-    const NE_MIN = 0.036, NE_MAX = 0.148;
 
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
@@ -202,28 +225,32 @@ const VEG = (() => {
       if (baseR * (1 + d) < liqR) continue;
 
       const ne = d / ps;
-      if (ne < NE_MIN || ne > NE_MAX) continue;
+
+      const wantTree  = ne >= TREE_NE_MIN  && ne <= TREE_NE_MAX  && nTrees < TREE_MAX;
+      const wantGrass = ne >= GRASS_NE_MIN && ne <= GRASS_NE_MAX && nGrass < GRASS_MAX;
+      if (!wantTree && !wantGrass) continue;
 
       _nv.set(nx, ny, nz);
       _q.setFromUnitVectors(_yUp, _nv);
       _m.makeRotationFromQuaternion(_q);
-      const surfR = baseR * (1 + d) + sc * 0.02;
+      const surfR = baseR * (1 + d) + grassH * 0.1;
       _m.setPosition(nx * surfR, ny * surfR, nz * surfR);
 
-      const isTree  = rng() < 0.33 && nTrees < TREE_MAX;
-      const isGrass = !isTree && nGrass < GRASS_MAX;
+      // In the overlapping band trees take priority ~1 in 3; rest become grass
+      const placeTree = wantTree && (!wantGrass || rng() < 0.35);
 
-      if (isTree) {
+      if (placeTree) {
         nTrees++;
         const v  = Math.floor(rng() * 5);
+        const sc = treeSc / VARIANT_HEIGHTS[v];
         const lp = [], lc = [];
         BUILDERS[v](lp, lc, sc);
         treePosArr[v].push(...applyMat4(lp, _m));
         treeColArr[v].push(...lc);
-      } else if (isGrass) {
+      } else if (wantGrass) {
         nGrass++;
         const lp = [], lc = [];
-        buildGrass(lp, lc, sc, rng);
+        buildGrass(lp, lc, grassH, rng);
         grassPos.push(...applyMat4(lp, _m));
         grassCol.push(...lc);
       }
