@@ -118,7 +118,7 @@ let currentDestIndex = 0;
 let isNavigating     = false;
 const SYSTEM_FIT_ZOOM = 3.0; // match Sol-system framing at rest
 const BASE_DT = 1 / 60;
-const TIME_WARP_BASE_SCALE = 0.12; // New baseline: 1x is much slower than legacy behavior.
+const TIME_WARP_BASE_SCALE = 0.06; // Maps UI warp × to sim speed; halved vs prior 0.12 for slower default pacing.
 
 function getSimulationWarp(uiWarp) {
   return Math.max(0, uiWarp) * TIME_WARP_BASE_SCALE;
