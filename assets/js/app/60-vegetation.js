@@ -21,11 +21,11 @@ const VEG = (() => {
   // Inherent height of each tree variant when built at sc=1.
   const VARIANT_HEIGHTS = [1.18, 1.34, 1.44, 0.64, 0.90];
 
-  // Elevation bands (raw ne = (dist/baseR - 1) / peakScale)
+  // Elevation bands in mapped-ne space (matches terrain colorizer palette thresholds).
   const TREE_NE_MIN  = 0.110;
-  const TREE_NE_MAX  = 0.148;
-  const GRASS_NE_MIN = 0.040; // start at lowland-green; no grass on sand (0–0.04) or grey/water
-  const GRASS_NE_MAX = 0.148;
+  const TREE_NE_MAX  = 0.160; // mapped ne — stays below treeline brown (0.165)
+  const GRASS_NE_MIN = 0.042; // mapped ne — just above sand/green boundary (0.040)
+  const GRASS_NE_MAX = 0.162; // mapped ne — just below treeline brown (0.165)
 
   // Max camera-to-planet-pivot world distance to show vegetation.
   // Covers binary companion (~3.5 sep) and typical moons; hides far solar orbiters.
@@ -240,6 +240,29 @@ const VEG = (() => {
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
 
+    // Pre-scan to find the same ne scale the terrain colorizer uses so elevation
+    // band thresholds (0.040 = sand/green, 0.165 = treeline) match visual colors.
+    const liquidR   = baseR * (0.80 + Math.abs(waterLevel) * 0.42);
+    const liquidEps = liquidR * 0.0018;
+    let minNe = Infinity, maxNe = -Infinity;
+    for (let f = 0; f < totalFaces; f++) {
+      const b = f * 9;
+      let sumR = 0, liq = 0;
+      for (let v = 0; v < 3; v++) {
+        const o = b + v*3;
+        const rr = Math.sqrt(posArr[o]*posArr[o] + posArr[o+1]*posArr[o+1] + posArr[o+2]*posArr[o+2]);
+        sumR += rr;
+        if (rr <= liquidR + liquidEps) liq++;
+      }
+      if (liq > 0) continue;
+      const ne = (sumR / 3 / baseR - 1) / ps;
+      if (ne < minNe) minNe = ne;
+      if (ne > maxNe) maxNe = ne;
+    }
+    if (!Number.isFinite(minNe)) { minNe = -0.2; maxNe = 0.2; }
+    const negScale = minNe < 0 ? -0.200 / minNe : 1;
+    const posScale = maxNe > 0 ?  0.200 / maxNe : 1;
+
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
     const _m   = new THREE.Matrix4();
@@ -259,10 +282,12 @@ const VEG = (() => {
       const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
       if (cl < 1e-6) continue;
 
-      const ne = (cl / baseR - 1) / ps;
+      const ne     = (cl / baseR - 1) / ps;
+      const mapped = ne < 0 ? ne * negScale : ne * posScale;
 
-      const wantTree  = ne >= TREE_NE_MIN  && ne <= TREE_NE_MAX  && nTrees < TREE_MAX;
-      const wantGrass = ne >= GRASS_NE_MIN && ne <= GRASS_NE_MAX && nGrass < GRASS_MAX;
+      // Compare mapped ne to palette thresholds so bands match terrain colors exactly.
+      const wantTree  = mapped >= TREE_NE_MIN  && mapped <= TREE_NE_MAX  && nTrees < TREE_MAX;
+      const wantGrass = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX && nGrass < GRASS_MAX;
       if (!wantTree && !wantGrass) continue;
 
       // Face normal via cross product (v1-v0) x (v2-v0), normalised.
