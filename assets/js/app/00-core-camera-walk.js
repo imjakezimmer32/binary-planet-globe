@@ -215,6 +215,13 @@ const WALK_CFG = {
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
   maxAirHorizontalSpeed: 0.38,
+  /**
+   * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
+   * Below it, pull ramps in for a soft landing (especially while falling).
+   */
+  airLandingAssistEndGap: 0.09,
+  /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
+  airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
   playerLightColor: 0xa6d9ff,
   playerLightIntensity: 3.4,
@@ -1866,7 +1873,12 @@ function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
 
   if (walkState.coyoteTimer > 0 && vN < 0.08 && err > 0.001) {
     walkState.position.addScaledVector(n, -err * Math.min(1, 8 * dt));
-  } else if (vN <= 0.03 && err > 0.012) {
+  } else if (
+    vN <= 0.03 &&
+    err > 0.012 &&
+    err < WALK_CFG.airPostCorrectMaxAlongErr &&
+    (walkState.grounded || walkState.coyoteTimer > 0)
+  ) {
     walkState.position.addScaledVector(n, -err * Math.min(1, 6 * dt));
   }
 }
@@ -2084,7 +2096,8 @@ function updateWalkMode(dt) {
     clampWalkPositionToAnchor(anchorMp, dt);
     if (walkState.grounded && walkState.coyoteTimer <= 0) walkState.grounded = false;
   } else {
-    const nextGapAbs = Math.abs(nextSurface.gap);
+    const nextGapSigned = nextSurface.gap;
+    const nextGapAbs = Math.abs(nextGapSigned);
     const nextOutwardSpeed = walkState.velocity.dot(nextSurface.radialDir);
     if (!walkState.grounded && nextGapAbs <= WALK_CFG.groundProbeDistance && nextOutwardSpeed <= landOutRad) {
       walkState.grounded = true;
@@ -2107,11 +2120,26 @@ function updateWalkMode(dt) {
     } else {
       walkFootOnSurface(nextSurface, _walkGroundTarget);
       let pull = 0;
-      if (nextGapAbs > WALK_CFG.groundProbeDistance * 1.2) pull = Math.min(1, dt * 20);
-      if (nextGapAbs > 0.07) pull = Math.max(pull, Math.min(1, dt * 28));
-      if (nextGapAbs < -0.006) pull = Math.max(pull, 0.62);
-      if (nextOutwardSpeed < -0.02 && nextGapAbs > WALK_CFG.groundProbeDistance * 0.6) {
-        pull = Math.max(pull, Math.min(1, dt * 24));
+      if (nextGapSigned < -0.006) {
+        pull = Math.max(pull, 0.72);
+      } else {
+        const probe = WALK_CFG.groundProbeDistance;
+        const assistEnd = WALK_CFG.airLandingAssistEndGap;
+        if (nextGapSigned >= assistEnd) {
+          pull = 0;
+        } else if (nextGapAbs <= probe * 1.12) {
+          pull = Math.min(1, dt * 26);
+          if (nextGapAbs > probe * 0.72) pull = Math.max(pull, Math.min(1, dt * 18));
+          if (nextOutwardSpeed < -0.016 && nextGapAbs > probe * 0.55) {
+            pull = Math.max(pull, Math.min(1, dt * 20));
+          }
+        } else {
+          const w = 1 - THREE.MathUtils.smoothstep(nextGapSigned, probe * 1.12, assistEnd);
+          if (nextOutwardSpeed <= 0.014) {
+            const fall = Math.max(0, Math.min(1, -nextOutwardSpeed / (walkMaxFall * 0.52 + 1e-6)));
+            pull = Math.min(1, dt * 15) * w * (0.22 + 0.78 * fall);
+          }
+        }
       }
       walkState.position.copy(_walkIntPos).lerp(_walkGroundTarget, Math.min(1, pull));
     }
