@@ -15,6 +15,7 @@ function setCamMode(mode) {
   galaxyBtn.classList.remove('open');
   rebuildGalaxyMenu();
   syncSolGalaxyMenuVisibility();
+  if (!walkMode.active) syncOrbitStateFromActualCamera(curScale);
 }
 const btnGrid = document.getElementById('btn-grid');
 let gridOn = true;
@@ -135,6 +136,7 @@ function animate() {
       orbitZoom = zoomTarget;
       zoomTarget = null;
       introZoomProfile = null;
+      resetOrbitPointerInertia();
     } else {
       let zoomLerp = 0.008;
       if (introZoomProfile) {
