@@ -156,11 +156,11 @@ const WALK_CFG = {
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
    */
-  walkGravityMin: 0.17,
-  walkGravityMax: 0.42,
+  walkGravityMin: 0.078,
+  walkGravityMax: 0.195,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.32,
-  walkMaxFallMax: 0.56,
+  walkMaxFallMin: 0.15,
+  walkMaxFallMax: 0.28,
   /**
    * Jump always reaches this height above the feet (same on every world).
    * Launch speed = sqrt(2 × g × height) so apex is fixed while fall curve follows g.
