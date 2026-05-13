@@ -662,6 +662,27 @@ function mobPinchPair() {
   return { a: pts[0], b: pts[1] };
 }
 
+/** Walk pinch on canvas: two pointers, or with 3+ (e.g. look + pinch) use the widest finger pair. */
+function mobPinchPairWalkZoom() {
+  if (mobPointers.size < 2) return null;
+  if (mobPointers.size === 2) return mobPinchPair();
+  const pts = Array.from(mobPointers.values());
+  let bestA = null;
+  let bestB = null;
+  let bestD = -1;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+      if (d > bestD) {
+        bestD = d;
+        bestA = pts[i];
+        bestB = pts[j];
+      }
+    }
+  }
+  return bestA && bestB ? { a: bestA, b: bestB } : null;
+}
+
 /** Two-finger walk third-person: pinch distance may change — do not apply look from per-pointer deltas. */
 function walkMobileTwoFingerTpPinchContext() {
   return (
@@ -682,7 +703,15 @@ function onMobilePointerDown(e) {
   }
   if (mobPointers.size === 2) {
     clearWalkTouchLookState();
-    const pair = mobPinchPair();
+    const pair = mobPinchPairWalkZoom();
+    if (pair) {
+      mobPinchDist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
+      mobMidX = (pair.a.x + pair.b.x) * 0.5;
+      mobMidY = (pair.a.y + pair.b.y) * 0.5;
+    }
+  }
+  if (walkMode.active && mobPointers.size >= 3) {
+    const pair = mobPinchPairWalkZoom();
     if (pair) {
       mobPinchDist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
       mobMidX = (pair.a.x + pair.b.x) * 0.5;
@@ -708,8 +737,6 @@ function onMobilePointerMove(e) {
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   if (walkMode.active) {
-    // Touch-look uses the first touch id; allow two-finger pinch once both pointers are tracked.
-    if (walkTouchLookId !== null && mobPointers.size < 2) return;
     if (walkJoystickPointerId !== null && e.pointerId === walkJoystickPointerId) {
       mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (typeof e.preventDefault === 'function') e.preventDefault();
@@ -720,7 +747,7 @@ function onMobilePointerMove(e) {
       queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
     }
     if (walkMobileTwoFingerTpPinchContext()) {
-      const pair = mobPinchPair();
+      const pair = mobPinchPairWalkZoom();
       if (pair) {
         const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
         mobMidX = (pair.a.x + pair.b.x) * 0.5;
@@ -854,6 +881,7 @@ window.addEventListener('pointermove', e => {
 
 window.addEventListener('touchstart', e => {
   if (!walkMode.active || walkTouchLookId !== null) return;
+  if (typeof PointerEvent !== 'undefined') return;
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
     if (walkJoystickTouchIds.has(t.identifier)) continue;
@@ -868,6 +896,7 @@ window.addEventListener('touchstart', e => {
 
 window.addEventListener('touchmove', e => {
   if (!walkMode.active || walkTouchLookId === null) return;
+  if (typeof PointerEvent !== 'undefined') return;
   if (e.touches.length >= 2) {
     if (typeof e.preventDefault === 'function') e.preventDefault();
     return;
