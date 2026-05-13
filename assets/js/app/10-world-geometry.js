@@ -545,7 +545,7 @@ const SCALE_BASE_MULT = 3.0; // User request: legacy 3x should read as new 1x.
 const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
 // Above this UI scale, terrain uses detail 0 (lowest tier) for performance — not planet visibility.
 const PLANET_DETAIL_ZERO_UI = 15.0;
-const PLANET_VIEW_DETAIL = 20;
+const PLANET_VIEW_DETAIL_CAP = 7;
 function scaleUiToWorld(s) { return s * SCALE_BASE_MULT; }
 function scaleWorldToUi(s) { return s / SCALE_BASE_MULT; }
 function sliderToScale(v) { return scaleUiToWorld(SCALE_MIN * Math.exp(SCALE_LOG * v)); }
@@ -580,14 +580,64 @@ function scaleLabelText(s) {
 }
 
 function desiredDetailForCurrentView(scaleValue) {
-  return cameraMode === 'planet' ? PLANET_VIEW_DETAIL : scaleToDetail(scaleValue);
+  return cameraMode === 'planet' ? PLANET_VIEW_DETAIL_CAP : scaleToDetail(scaleValue);
+}
+
+/**
+ * UI smallest size knob (matches planet radial editor) — "normal" shell for baseline mesh budget.
+ */
+const PLANET_MESH_SIZE_BASELINE = 0.1;
+/** Three.js icosahedron subdivisions become huge past ~8; also caps GPU cost. */
+const PLANET_MESH_DETAIL_HARD_MAX = 8;
+/**
+ * World-space shell radius (physics units) at baseline: mid base × smallest size.
+ * Worlds near this radius use viewer cap alone; larger add subdivisions, smaller subtract (clamped).
+ */
+function getPlanetMeshReferenceWorldRadius() {
+  return 0.6 * PLANET_MESH_SIZE_BASELINE;
+}
+
+/** World radius of the scaled body (geometry base × pivot size). */
+function getPlanetWorldShellRadius(mp) {
+  if (!mp?.obj) return 0.8;
+  return (mp.obj.baseRadius || 0.8) * Math.max(mp.obj.state?.size ?? 1, 0.05);
+}
+
+/**
+ * Icosahedron detail for one planet: camera/zoom LOD cap plus a log₂ step per doubling of shell
+ * radius vs the baseline, so growing a planet adds triangles instead of only stretching the same mesh.
+ */
+function terrainDetailForManagedPlanet(mp, viewerCap) {
+  const cap = Math.max(0, Math.min(PLANET_MESH_DETAIL_HARD_MAX, viewerCap | 0));
+  const R = getPlanetWorldShellRadius(mp);
+  const R0 = getPlanetMeshReferenceWorldRadius();
+  const ratio = R / Math.max(R0, 1e-6);
+  const sizeBoost = Math.max(-4, Math.min(5, Math.floor(Math.log2(Math.max(1e-5, ratio)))));
+  const raw = cap + sizeBoost;
+  return Math.max(1, Math.min(PLANET_MESH_DETAIL_HARD_MAX, raw));
+}
+
+function rebuildManagedPlanetTerrain(mp) {
+  if (!mp?.obj?.rebuild) return;
+  const d = terrainDetailForManagedPlanet(mp, curDetail);
+  if (d > 0) {
+    mp.obj.rebuild(d);
+    mp.obj.syncGrid();
+  }
+}
+
+function rebuildAllManagedPlanetTerrainMeshes() {
+  if (typeof managedPlanets === 'undefined' || !managedPlanets.length) return;
+  for (let i = 0; i < managedPlanets.length; i++) {
+    rebuildManagedPlanetTerrain(managedPlanets[i]);
+  }
 }
 
 function applyDetailForCurrentView(scaleValue) {
-  const d = desiredDetailForCurrentView(scaleValue);
-  if (d === curDetail) return;
-  curDetail = d;
-  if (d > 0) managedPlanets.forEach(mp => { mp.obj.rebuild(d); mp.obj.syncGrid(); });
+  const cap = desiredDetailForCurrentView(scaleValue);
+  if (cap === curDetail) return;
+  curDetail = cap;
+  rebuildAllManagedPlanetTerrainMeshes();
 }
 
 function setPlanetsRenderable(enabled) {

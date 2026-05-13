@@ -438,6 +438,7 @@ function createSunOrbitPlanet({
   initializeSunOrbiterState(mp);
   newP.pivot.position.copy(mp.orbitPos);
   ensureSunTrail(mp);
+  rebuildManagedPlanetTerrain(mp);
   syncTrailVisibility();
   return newIdx;
 }
@@ -489,6 +490,7 @@ function createPlanetMoonOrbit(parentIdx) {
   );
   const moonIdx = managedPlanets.length - 1;
   ensureMoonTrail(managedPlanets[moonIdx]);
+  rebuildManagedPlanetTerrain(managedPlanets[moonIdx]);
   syncTrailVisibility();
   return moonIdx;
 }
@@ -815,6 +817,7 @@ function finalizePlanetSizeAfterRadialDrag() {
   }
   syncPlanetDialValues(mp);
   syncPlanetEditReadouts(mp);
+  rebuildManagedPlanetTerrain(mp);
 }
 
 function applyPlanetEditSetting(setting, rawValue) {
@@ -834,12 +837,13 @@ function applyPlanetEditSetting(setting, rawValue) {
       binaryPrevMass1 = mass1Now;
       binaryPrevMass2 = mass2Now;
     }
+    if (!inRadialSizeDrag) rebuildManagedPlanetTerrain(mp);
   } else if (setting === 'peak') {
     mp.obj.state.peakScale = nextValue;
-    mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+    rebuildManagedPlanetTerrain(mp);
   } else if (setting === 'water') {
     mp.obj.state.waterLevel = nextValue;
-    mp.obj.rebuild(curDetail); mp.obj.syncGrid();
+    rebuildManagedPlanetTerrain(mp);
   }
   syncPlanetDialValues(mp);
   syncPlanetEditReadouts(mp);
@@ -1605,4 +1609,5 @@ rebuildPlanetList();
 updateTwinButtonVisibility();
 updateWalkButtonVisibility();
 if (isNarrowPlanetUI()) setPlanetPanelOpen(false);
+if (typeof rebuildAllManagedPlanetTerrainMeshes === 'function') rebuildAllManagedPlanetTerrainMeshes();
 
