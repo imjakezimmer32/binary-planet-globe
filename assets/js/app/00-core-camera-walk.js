@@ -116,7 +116,7 @@ const WALK_CFG = {
   characterRadius: 0.0036,
   characterHeight: 0.013,
   footOffset: 0.0065,
-  /** Tangential top speed at WALK_SPEED_REF_RADIUS; scaled per-planet in updateWalkMode. */
+  /** Tangential top speed at reference radius (see WALK_SPEED_REF_RADIUS); scaled so angular pace stays similar across planet sizes. */
   moveSpeed: 0.10,
   sprintBoost: 1.82,
   acceleration: 6.4,
@@ -1641,15 +1641,17 @@ function getWalkGravityForPlanet(anchorMp) {
 }
 
 /**
- * WALK_CFG planar speeds are tuned at a reference shell radius. Scale by R_ref / R so similar
- * angular motion across tiny moons and huge worlds (uses physics radius, not mesh tessellation).
+ * Scale planar walk speeds vs reference radius so bigger shells need higher world-space
+ * tangential speed for similar "going around the planet" pace. Old R_ref/R made ω ∝ 1/R²
+ * and the min clamp froze v on large worlds while R grew → very slow on big planets and
+ * very fast on tiny ones.
  */
 const WALK_SPEED_REF_RADIUS = 0.62;
 
 function getWalkSurfaceSpeedScale(anchorMp) {
   const R = getWalkPlanetRadiusMetric(anchorMp);
-  const mul = WALK_SPEED_REF_RADIUS / Math.max(R, 1e-5);
-  return Math.max(0.22, Math.min(7.5, mul));
+  const mul = R / Math.max(WALK_SPEED_REF_RADIUS, 1e-5);
+  return Math.max(0.28, Math.min(10, mul));
 }
 
 /** Point light AOE scales with planet shell radius so large worlds get a visible pool on the ground. */
