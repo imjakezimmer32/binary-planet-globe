@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vegetation Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a12; overflow: hidden; font-family: sans-serif; }
+  canvas { display: block; }
+  #labels { position: fixed; bottom: 24px; left: 0; right: 0; display: flex; justify-content: center; gap: 32px; pointer-events: none; }
+  .lbl { color: #aac; font-size: 13px; letter-spacing: 0.08em; text-align: center; }
+  #hint { position: fixed; top: 16px; left: 0; right: 0; text-align: center; color: #557; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="hint">drag to rotate · scroll to zoom</div>
+<div id="labels">
+  <span class="lbl">Pine</span>
+  <span class="lbl">Round</span>
+  <span class="lbl">Spire</span>
+  <span class="lbl">Bush</span>
+  <span class="lbl">Palm</span>
+  <span class="lbl">Grass</span>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+// ── Scene ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a12);
+scene.fog = new THREE.Fog(0x0a0a12, 18, 40);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 200);
+camera.position.set(0, 3.2, 10);
+camera.lookAt(0, 0.6, 0);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+const sun = new THREE.DirectionalLight(0xfff5cc, 1.4);
+sun.position.set(6, 10, 4);
+sun.castShadow = true;
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x4466aa, 0.25);
+fill.position.set(-4, 2, -3);
+scene.add(fill);
+
+// Ground plane
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(28, 8),
+  new THREE.MeshStandardMaterial({ color: 0x1a2a12, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ── Vegetation geometry (same code as 60-vegetation.js) ────────────
+const T_DARK  = [0.22, 0.14, 0.07];
+const T_MID   = [0.30, 0.18, 0.09];
+const G_DARK  = [0.06, 0.20, 0.03];
+const G_MID   = [0.10, 0.31, 0.06];
+const G_LT    = [0.16, 0.42, 0.08];
+const G_PALE  = [0.22, 0.52, 0.12];
+const GS_A    = [0.12, 0.38, 0.05];
+const GS_B    = [0.18, 0.48, 0.08];
+const GS_C    = [0.08, 0.28, 0.04];
+
+function pushTri(pos, col, v0, v1, v2, c) {
+  pos.push(v0[0],v0[1],v0[2], v1[0],v1[1],v1[2], v2[0],v2[1],v2[2]);
+  col.push(c[0],c[1],c[2], c[0],c[1],c[2], c[0],c[1],c[2]);
+}
+function addCone(pos, col, x, y, z, r, h, sides, cSide, cTop) {
+  const apex = [x, y+h, z];
+  for (let i = 0; i < sides; i++) {
+    const a0=(i/sides)*Math.PI*2, a1=((i+1)/sides)*Math.PI*2;
+    const b0=[x+Math.cos(a0)*r,y,z+Math.sin(a0)*r];
+    const b1=[x+Math.cos(a1)*r,y,z+Math.sin(a1)*r];
+    pushTri(pos,col,b0,b1,apex, i%2===0?cSide:cTop);
+    pushTri(pos,col,[x,y,z],b1,b0,cSide);
+  }
+}
+function addCylinder(pos, col, x, y, z, r, h, sides, c) {
+  const yT=y+h;
+  for (let i=0;i<sides;i++){
+    const a0=(i/sides)*Math.PI*2, a1=((i+1)/sides)*Math.PI*2;
+    const b0=[x+Math.cos(a0)*r,y, z+Math.sin(a0)*r];
+    const b1=[x+Math.cos(a1)*r,y, z+Math.sin(a1)*r];
+    const t0=[x+Math.cos(a0)*r,yT,z+Math.sin(a0)*r];
+    const t1=[x+Math.cos(a1)*r,yT,z+Math.sin(a1)*r];
+    pushTri(pos,col,b0,t0,b1,c); pushTri(pos,col,b1,t0,t1,c);
+    pushTri(pos,col,[x,y,z],b1,b0,c); pushTri(pos,col,[x,yT,z],t0,t1,c);
+  }
+}
+function addIco(pos, col, x, y, z, r, color) {
+  const tmp = new THREE.IcosahedronGeometry(r,0).toNonIndexed();
+  const pa  = tmp.attributes.position.array;
+  for (let i=0;i<pa.length;i+=9){
+    const t=i/pa.length, cv=0.80+t*0.40;
+    pushTri(pos,col,
+      [pa[i]+x,  pa[i+1]+y, pa[i+2]+z],
+      [pa[i+3]+x,pa[i+4]+y, pa[i+5]+z],
+      [pa[i+6]+x,pa[i+7]+y, pa[i+8]+z],
+      [color[0]*cv,color[1]*cv,color[2]*cv]);
+  }
+  tmp.dispose();
+}
+
+function v0Pine(pos, col, sc) {
+  addCylinder(pos,col,0,0,       0,sc*.09,sc*.42,4,T_MID);
+  addCone(    pos,col,0,sc*.28,  0,sc*.65,sc*.52,6,G_MID, G_DARK);
+  addCone(    pos,col,0,sc*.55,  0,sc*.48,sc*.46,6,G_MID, G_LT);
+  addCone(    pos,col,0,sc*.78,  0,sc*.30,sc*.40,6,G_LT,  G_PALE);
+}
+function v1Round(pos, col, sc) {
+  addCylinder(pos,col,0,0,      0,sc*.10,sc*.55,4,T_DARK);
+  addIco(     pos,col,0,sc*.82, 0,sc*.52,G_MID);
+}
+function v2Spire(pos, col, sc) {
+  addCylinder(pos,col,0,0,      0,sc*.07,sc*.18,4,T_MID);
+  addCone(    pos,col,0,sc*.06, 0,sc*.38,sc*1.38,7,G_DARK,G_MID);
+}
+function v3Bush(pos, col, sc) {
+  addIco(pos,col, 0.00,    sc*.22, 0.00,   sc*.42,G_MID);
+  addIco(pos,col, sc*.28,  sc*.16, sc*.16, sc*.34,G_DARK);
+  addIco(pos,col,-sc*.24,  sc*.18,-sc*.12, sc*.36,G_LT);
+}
+function v4Palm(pos, col, sc) {
+  addCylinder(pos,col,0,0,0,sc*.07,sc*.78,4,T_MID);
+  const tipY=sc*.86,fl=sc*.68,fw=sc*.12;
+  for(let i=0;i<5;i++){
+    const a=(i/5)*Math.PI*2;
+    const dx=Math.cos(a),dz=Math.sin(a);
+    const lx=-dz*fw,lz=dx*fw;
+    const b1=[ lx*.3,tipY+sc*.04, lz*.3];
+    const b2=[-lx*.3,tipY+sc*.04,-lz*.3];
+    const tip=[dx*fl,tipY-sc*.25,dz*fl];
+    const c=i%2===0?G_MID:G_LT;
+    pushTri(pos,col,b1,tip,b2,c);
+    pushTri(pos,col,b2,tip,b1,c);
+  }
+}
+function buildGrass(pos, col, sc, rng) {
+  const h=sc*(0.20+rng()*.12), w=sc*(0.08+rng()*.04);
+  for(let i=0;i<3;i++){
+    const a=(i/3)*Math.PI+rng()*.4;
+    const dx=Math.cos(a)*w, dz=Math.sin(a)*w;
+    const lean=(rng()-.5)*sc*.06;
+    const c=[GS_A,GS_B,GS_C][i];
+    pushTri(pos,col,[-dx,0,-dz],[dx,0,dz],[lean,h,lean*.5],c);
+    pushTri(pos,col,[dx,0,dz],[-dx,0,-dz],[lean,h,lean*.5],c);
+  }
+}
+
+function toGeo(pos, col) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(pos), 3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(new Float32Array(col), 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+function makeMat(doubleSide) {
+  return new THREE.MeshStandardMaterial({
+    vertexColors:true, flatShading:true, roughness:1, metalness:0,
+    side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+  });
+}
+
+// ── Place one of each variant + a grass patch ──────────────────────
+const BUILDERS = [v0Pine, v1Round, v2Spire, v3Bush, v4Palm];
+const NAMES    = ['Pine','Round','Spire','Bush','Palm'];
+const SC = 1.0;  // preview scale — 1 unit = 1 unit
+
+const SPACING = 3.2;
+const startX  = -(SPACING * 2.5);
+
+BUILDERS.forEach((fn, i) => {
+  const pos=[], col=[];
+  fn(pos, col, SC);
+  const mesh = new THREE.Mesh(toGeo(pos, col), makeMat(false));
+  mesh.castShadow = true;
+  mesh.position.x = startX + i * SPACING;
+  scene.add(mesh);
+
+  // Small cluster of 3 behind/beside it for context
+  for (let k = 0; k < 4; k++) {
+    const p2=[], c2=[];
+    fn(p2, c2, SC * (0.55 + Math.random() * 0.35));
+    const m2 = new THREE.Mesh(toGeo(p2, c2), makeMat(false));
+    m2.castShadow = true;
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 0.7 + Math.random() * 0.9;
+    m2.position.set(
+      startX + i * SPACING + Math.cos(ang) * dist,
+      0,
+      Math.sin(ang) * dist - 0.3
+    );
+    scene.add(m2);
+  }
+});
+
+// Grass patch at the end
+let rngS = 42;
+function rng() { rngS=(Math.imul(rngS,1664525)+1013904223)>>>0; return rngS/4294967296; }
+
+const gPos=[], gCol=[];
+for (let g=0;g<40;g++){
+  const gp=[], gc=[];
+  buildGrass(gp, gc, SC * (0.6 + rng() * 0.5), rng);
+  const ox = (rng()-.5)*3.5;
+  const oz = (rng()-.5)*2.2;
+  for (let v=0;v<gp.length;v+=3){
+    gPos.push(gp[v]+startX+SPACING*5+ox, gp[v+1], gp[v+2]+oz);
+  }
+  gCol.push(...gc);
+}
+const grassMesh = new THREE.Mesh(toGeo(gPos, gCol), makeMat(true));
+grassMesh.position.x = 0;
+scene.add(grassMesh);
+
+// ── Orbit controls (manual) ────────────────────────────────────────
+let drag=false, lastX=0, lastY=0;
+let theta=0, phi=0.28, radius=10;
+function updateCamera() {
+  const cx = radius * Math.sin(theta) * Math.cos(phi);
+  const cy = radius * Math.sin(phi) + 0.6;
+  const cz = radius * Math.cos(theta) * Math.cos(phi);
+  camera.position.set(cx, cy, cz);
+  camera.lookAt(0, 0.6, 0);
+}
+renderer.domElement.addEventListener('mousedown', e=>{ drag=true; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('mouseup', ()=>drag=false);
+window.addEventListener('mousemove', e=>{
+  if (!drag) return;
+  theta -= (e.clientX - lastX) * 0.007;
+  phi    = Math.max(-0.1, Math.min(1.1, phi + (e.clientY - lastY) * 0.005));
+  lastX=e.clientX; lastY=e.clientY;
+  updateCamera();
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  radius = Math.max(2, Math.min(24, radius + e.deltaY * 0.01));
+  updateCamera();
+}, { passive:true });
+window.addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Auto-rotate slowly
+let autoTheta = theta;
+function animate() {
+  requestAnimationFrame(animate);
+  if (!drag) { autoTheta += 0.003; theta = autoTheta; updateCamera(); }
+  renderer.render(scene, camera);
+}
+updateCamera();
+animate();
+</script>
+</body>
+</html>
