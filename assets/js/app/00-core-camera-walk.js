@@ -130,12 +130,14 @@ const WALK_CFG = {
   /** Walk bob frequency (rad/s); run is moderately faster, not frantic. */
   bounceFreqWalk: 5.4,
   bounceFreqRun: 7.2,
-  /** Vertical bob amplitude (world units) at full blend; run slightly stronger. */
-  bounceAmpWalk: 0.00175,
-  bounceAmpRun: 0.00235,
+  /** Vertical bob amplitude (world units, ≈ fraction of characterHeight); was too small to see on screen. */
+  bounceAmpWalk: 0.0055,
+  bounceAmpRun: 0.0072,
+  /** Portion of bob offset applied to the pill along planet up (camera still uses full `bounce`). */
+  bobAvatarUpFactor: 0.92,
   /** Small extra bob rate from planar speed (keeps bob tied to motion without speeding up too much). */
   bounceFreqFromSpeed: 3.2,
-  bounceResponse: 9.8,
+  bounceResponse: 11,
   /** Foot dust: min planar speed (world) before puffs spawn on land. */
   dustMinPlanarSpeed: 0.0026,
   /** Seconds until a dust puff is fully faded and recycled. */
@@ -2135,7 +2137,7 @@ function updateWalkMode(dt) {
     ? Math.abs(Math.sin(walkState.bouncePhase)) * bounceAmp * walkState.bounceBlend
     : 0;
 
-  walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * 0.45);
+  walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * WALK_CFG.bobAvatarUpFactor);
   _walkBasisZ.crossVectors(walkState.forward, walkState.up);
   if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.crossVectors(_walkRight, walkState.up);
   if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.set(0, 0, 1);
