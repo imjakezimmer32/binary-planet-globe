@@ -93,6 +93,8 @@ const _cameraClipFocus = new THREE.Vector3();
 
 // Pan offset — shifts the look-at target in camera's local right/up plane
 const panOffset = new THREE.Vector3();
+/** When true, next setCamMode skips syncOrbit (Walk from solar view: camera is still sun-orbited). */
+let skipNextOrbitSyncForSetCamMode = false;
 const _right = new THREE.Vector3();
 const _up    = new THREE.Vector3();
 const _selectedPlanetWorld = new THREE.Vector3();
@@ -1543,8 +1545,7 @@ function updateWalkCameraPose(dt, bounce = 0) {
 
   _walkCamTarget.copy(chest).lerp(eye, fpBlend * 0.78);
 
-  // Preserve (camera − chest)·up through occlusion / mesh nudge so the rig does not sink
-  // when orbiting behind terrain (spoke pull used to shrink the vertical offset).
+  // Preserve (camera − chest)·up through occlusion only (second nudge after enforce fought the lerp).
   _walkSpawnRadial.copy(_walkCamPos).sub(chest);
   const keepAlongUp = _walkSpawnRadial.dot(walkState.up);
   resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
@@ -1568,14 +1569,6 @@ function updateWalkCameraPose(dt, bounce = 0) {
   }
 
   enforceCameraOutsidePlanetMeshes();
-
-  if (walkMode.active) {
-    _walkSpawnRadial.copy(camera.position).sub(chest);
-    camera.position.addScaledVector(
-      walkState.up,
-      keepAlongUp - _walkSpawnRadial.dot(walkState.up)
-    );
-  }
 }
 
 function getWalkSurfaceSpeedFactor(surface) {

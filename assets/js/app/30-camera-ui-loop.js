@@ -15,7 +15,10 @@ function setCamMode(mode) {
   galaxyBtn.classList.remove('open');
   rebuildGalaxyMenu();
   syncSolGalaxyMenuVisibility();
-  if (!walkMode.active) syncOrbitStateFromActualCamera(curScale);
+  if (!walkMode.active && !skipNextOrbitSyncForSetCamMode) {
+    syncOrbitStateFromActualCamera(curScale);
+  }
+  skipNextOrbitSyncForSetCamMode = false;
 }
 const btnGrid = document.getElementById('btn-grid');
 let gridOn = true;
