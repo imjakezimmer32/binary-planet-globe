@@ -1699,16 +1699,17 @@ function applyWalkLook() {
     .normalize();
 }
 
-function updateWalkCameraPose(dt, bounce = 0) {
+function updateWalkCameraPose(dt) {
   walkTpDistance += (walkTpDistanceTarget - walkTpDistance) * Math.min(1, dt * WALK_CFG.tpZoomSmooth);
   const dist = walkTpDistance;
 
   // Character-anchored rig: chest (composition) + eye (FPS) share walkState.up (gravity / planetary up).
-  const lift = WALK_CFG.cameraTargetLift + bounce * 0.5;
+  // Walk bob is applied only to the visible pill, not the camera, so the view stays steady.
+  const lift = WALK_CFG.cameraTargetLift;
   const chest = _walkTmp2.copy(walkState.position).addScaledVector(walkState.up, lift);
   const eye = _walkTmp3.copy(walkState.position).addScaledVector(
     walkState.up,
-    WALK_CFG.fpEyeHeight + bounce * 0.32
+    WALK_CFG.fpEyeHeight
   );
 
   const d0 = WALK_CFG.tpFpsBlendEnd;
@@ -1718,7 +1719,7 @@ function updateWalkCameraPose(dt, bounce = 0) {
   else if (dist < d1) fpBlend = 1 - (dist - d0) / (d1 - d0);
   fpBlend = fpBlend * fpBlend * (3 - 2 * fpBlend);
 
-  const camH = (WALK_CFG.cameraHeight + bounce) * (1 - fpBlend);
+  const camH = WALK_CFG.cameraHeight * (1 - fpBlend);
   const tpPos = _walkCamPos
     .copy(chest)
     .addScaledVector(walkState.viewDir, -dist)
@@ -1937,7 +1938,7 @@ function updateWalkMode(dt) {
       applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
       clampWalkPositionToAnchor(anchorMp, dt);
       walkAvatar.position.copy(walkState.position);
-      updateWalkCameraPose(dt, 0);
+      updateWalkCameraPose(dt);
       return;
     }
 
@@ -1945,7 +1946,7 @@ function updateWalkMode(dt) {
     applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
     clampWalkPositionToAnchor(anchorMp, dt);
     walkAvatar.position.copy(walkState.position);
-    updateWalkCameraPose(dt, 0);
+    updateWalkCameraPose(dt);
     return;
   }
   walkState.missedSurfaceFrames = 0;
@@ -2155,7 +2156,7 @@ function updateWalkMode(dt) {
   walkAvatar.quaternion.slerp(_walkQ, Math.min(1, dt * WALK_CFG.avatarTurnLerp));
   walkAvatar.visible = true;
 
-  updateWalkCameraPose(dt, bounce);
+  updateWalkCameraPose(dt);
 }
 
 function updateCamera(curScale) {
