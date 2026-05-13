@@ -108,13 +108,22 @@ const _planetEditorCamForward = new THREE.Vector3();
 const _sunEditorCenterWorld = new THREE.Vector3();
 
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
+/** Capsule height in world units (must match avatar geometry). */
+const WALK_CAPSULE_HEIGHT = 0.013;
+/**
+ * Jump apex = `WALK_JUMP_PILL_STACKS` × this many capsule heights each “stack”.
+ * One stack ≈ prior single-jump apex (~45× pill); three stacks ≈ 3× that height.
+ */
+const WALK_JUMP_CAPSULES_PER_STACK = 45;
+const WALK_JUMP_PILL_STACKS = 3;
+
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
 const walkLookInput = { x: 0, y: 0 };
 const walkAnalog = { x: 0, y: 0 };
 const WALK_CFG = {
   characterRadius: 0.0036,
-  characterHeight: 0.013,
+  characterHeight: WALK_CAPSULE_HEIGHT,
   footOffset: 0.0065,
   /** Tangential top speed at reference radius (see WALK_SPEED_REF_RADIUS); scaled so angular pace stays similar across planet sizes. */
   moveSpeed: 0.067,
@@ -176,18 +185,19 @@ const WALK_CFG = {
   /**
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
-   * Stronger gravity = shorter airtime; pair with jumpApexHeight for peak height.
+   * ~4× prior values → ~½ airtime (∝ 1/√g) for a given apex vs old tuning.
    */
-  walkGravityMin: 0.12,
-  walkGravityMax: 0.30,
+  walkGravityMin: 0.48,
+  walkGravityMax: 1.2,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.26,
-  walkMaxFallMax: 0.48,
+  walkMaxFallMin: 1.04,
+  walkMaxFallMax: 1.92,
   /**
-   * Jump always reaches this height above the feet (same on every world, world units along radial “up”).
-   * Launch speed = sqrt(2 × g × height) so apex is fixed while fall curve follows g.
+   * Jump apex above feet (world units along radial “up”); launch speed = sqrt(2 × g × height).
+   * `WALK_JUMP_PILL_STACKS` stacks of `WALK_JUMP_CAPSULES_PER_STACK` × capsule height each.
    */
-  jumpApexHeight: 0.58,
+  jumpApexHeight:
+    WALK_CAPSULE_HEIGHT * WALK_JUMP_CAPSULES_PER_STACK * WALK_JUMP_PILL_STACKS,
   jumpBufferSec: 0.14,
   jumpCooldownSec: 0.17,
   coyoteTimeSec: 0.12,
@@ -211,7 +221,7 @@ const WALK_CFG = {
   /** Max distance from planet center while walking (tight shell keeps you on the mesh, not in empty space). */
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
-  anchorSphereAbsSlack: 0.46,
+  anchorSphereAbsSlack: 1.15,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -220,7 +230,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 0.64,
+  airLandingAssistEndGap: 1.85,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
