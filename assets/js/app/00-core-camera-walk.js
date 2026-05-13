@@ -1532,17 +1532,10 @@ function updateWalkCameraPose(dt, bounce = 0) {
   fpBlend = fpBlend * fpBlend * (3 - 2 * fpBlend);
 
   const camH = (WALK_CFG.cameraHeight + bounce) * (1 - fpBlend);
-  // Pull back in the tangent plane (perpendicular to body/planet up) so cameraHeight is
-  // purely along `up` and orbit/occlusion does not dip the rig when view pitches or
-  // when resolveWalkCameraOcclusion shortens the target→camera spoke.
-  _walkTmp.copy(walkState.viewDir);
-  _walkTmp.addScaledVector(walkState.up, -_walkTmp.dot(walkState.up));
-  if (_walkTmp.lengthSq() < 1e-10) _walkTmp.copy(walkState.forward);
-  else _walkTmp.normalize();
   const tpPos = _walkCamPos
     .copy(chest)
-    .addScaledVector(walkState.up, camH)
-    .addScaledVector(_walkTmp, -dist);
+    .addScaledVector(walkState.viewDir, -dist)
+    .addScaledVector(walkState.up, camH);
   const fpPos = _walkSpawnToCam
     .copy(eye)
     .addScaledVector(walkState.viewDir, -WALK_CFG.fpsEyePullback);
@@ -1550,6 +1543,8 @@ function updateWalkCameraPose(dt, bounce = 0) {
 
   _walkCamTarget.copy(chest).lerp(eye, fpBlend * 0.78);
 
+  // Preserve (camera − chest)·up through occlusion / mesh nudge so the rig does not sink
+  // when orbiting behind terrain (spoke pull used to shrink the vertical offset).
   _walkSpawnRadial.copy(_walkCamPos).sub(chest);
   const keepAlongUp = _walkSpawnRadial.dot(walkState.up);
   resolveWalkCameraOcclusion(_walkCamTarget, _walkCamPos, _walkCamPos);
