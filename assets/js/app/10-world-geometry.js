@@ -661,13 +661,44 @@ function desiredDetailForCurrentView(scaleValue) {
 const PLANET_MESH_DETAIL_HARD_MAX = 10;
 const PLANET_MESH_DETAIL_MIN = 4;
 /**
- * Pick icosahedron detail from a **target world-space edge length**, not `floor(log₂ R)`
- * bands. With `floor`, detail stayed fixed while `R` crept upward inside a 2× band, so
- * triangles visibly stretched until the next subdivision. `round(log₂ …)` tracks radius
- * smoothly; coeff calibrates Three’s icosphere longest-edge ≈ coeff×R/2^d.
+ * Discrete planet mesh tiers: world shell radius = R_REF·2^n, icosahedron detail = BASE+n
+ * so longest-edge length stays ~constant. The size multiplier snaps to shellR / baseRadius
+ * so the planet only "jumps" between these logical sizes in the editor.
  */
-const PLANET_ICOSA_TARGET_EDGE_WORLD = 0.0085;
-const PLANET_ICOSA_EDGE_COEFF = 1.18;
+const PLANET_MESH_TIER_R_REF = 1.0;
+const PLANET_MESH_TIER_BASE_DETAIL = 7;
+const PLANET_MESH_TIER_N_MIN = PLANET_MESH_DETAIL_MIN - PLANET_MESH_TIER_BASE_DETAIL;
+const PLANET_MESH_TIER_N_MAX = PLANET_MESH_DETAIL_HARD_MAX - PLANET_MESH_TIER_BASE_DETAIL;
+
+function shellRadiusForMeshTier(n) {
+  return PLANET_MESH_TIER_R_REF * Math.pow(2, n);
+}
+
+/**
+ * Snap dimensionless size so baseR×size is a tier shell (within [minS,maxS]), picking the
+ * tier whose shell is closest in log-space to the clamped raw shell.
+ */
+function snapPlanetSizeToMeshTier(baseR, size, minS, maxS) {
+  const b = Math.max(baseR, 1e-5);
+  const clamped = Math.max(minS, Math.min(maxS, size));
+  const shellRaw = b * clamped;
+  let bestN = null;
+  let bestDist = Infinity;
+  for (let n = PLANET_MESH_TIER_N_MIN - 8; n <= PLANET_MESH_TIER_N_MAX + 8; n++) {
+    const d = PLANET_MESH_TIER_BASE_DETAIL + n;
+    if (d < PLANET_MESH_DETAIL_MIN || d > PLANET_MESH_DETAIL_HARD_MAX) continue;
+    const shellT = shellRadiusForMeshTier(n);
+    const sizeT = shellT / b;
+    if (sizeT < minS - 1e-9 || sizeT > maxS + 1e-9) continue;
+    const dist = Math.abs(Math.log(Math.max(shellRaw, 1e-9) / Math.max(shellT, 1e-9)));
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestN = n;
+    }
+  }
+  if (bestN === null) return clamped;
+  return shellRadiusForMeshTier(bestN) / b;
+}
 
 /** World radius of the scaled body (geometry base × pivot size). */
 function getPlanetWorldShellRadius(mp) {
@@ -677,19 +708,42 @@ function getPlanetWorldShellRadius(mp) {
 
 function terrainDetailForManagedPlanet(mp) {
   const R = getPlanetWorldShellRadius(mp);
-  const idealD = Math.log2(
-    Math.max(1e-6, (PLANET_ICOSA_EDGE_COEFF * R) / PLANET_ICOSA_TARGET_EDGE_WORLD)
-  );
-  const d = Math.round(idealD);
+  let n = Math.round(Math.log2(Math.max(R, 1e-9) / PLANET_MESH_TIER_R_REF));
+  n = Math.max(PLANET_MESH_TIER_N_MIN, Math.min(PLANET_MESH_TIER_N_MAX, n));
+  const d = PLANET_MESH_TIER_BASE_DETAIL + n;
   return Math.max(PLANET_MESH_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
 function rebuildManagedPlanetTerrain(mp) {
   if (!mp?.obj?.rebuild) return;
+  let minS = 0.1;
+  let maxS = 5;
+  if (typeof PLANET_EDIT_CONFIG !== 'undefined' && PLANET_EDIT_CONFIG.size) {
+    minS = PLANET_EDIT_CONFIG.size.min;
+    maxS = PLANET_EDIT_CONFIG.size.max;
+  }
+  const baseR = mp.obj.baseRadius || 0.8;
+  const snapped = snapPlanetSizeToMeshTier(baseR, mp.obj.state.size, minS, maxS);
+  let sizeChanged = false;
+  if (Math.abs(snapped - mp.obj.state.size) > 1e-6) {
+    mp.obj.state.size = snapped;
+    sizeChanged = true;
+    if (mp.isBinary && typeof refreshBinaryPairForMassChange === 'function') {
+      const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
+      const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+      refreshBinaryPairForMassChange(mass1Now, mass2Now);
+      binaryPrevMass1 = mass1Now;
+      binaryPrevMass2 = mass2Now;
+    }
+  }
   const d = terrainDetailForManagedPlanet(mp);
   if (d > 0) {
     mp.obj.rebuild(d);
     mp.obj.syncGrid();
+  }
+  if (sizeChanged && typeof syncPlanetDialValues === 'function' && typeof managedPlanets !== 'undefined' && typeof selectedPlanetIdx !== 'undefined') {
+    const idx = managedPlanets.indexOf(mp);
+    if (idx !== -1 && idx === selectedPlanetIdx) syncPlanetDialValues(mp);
   }
 }
 
