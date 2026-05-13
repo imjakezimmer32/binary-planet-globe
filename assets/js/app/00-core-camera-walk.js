@@ -219,7 +219,7 @@ const WALK_CFG = {
    * Airborne: above this radial gap (world units) we do not lerp toward the mesh — jump uses pure integration.
    * Below it, pull ramps in for a soft landing (especially while falling).
    */
-  airLandingAssistEndGap: 0.09,
+  airLandingAssistEndGap: 0.125,
   /** Post-correction: only nudge along normal when this close (along normal, world units) while airborne. */
   airPostCorrectMaxAlongErr: 0.034,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
@@ -1871,7 +1871,12 @@ function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
     return;
   }
 
-  if (walkState.coyoteTimer > 0 && vN < 0.08 && err > 0.001) {
+  if (
+    walkState.coyoteTimer > 0 &&
+    vN < 0.08 &&
+    err > 0.001 &&
+    err < WALK_CFG.airPostCorrectMaxAlongErr
+  ) {
     walkState.position.addScaledVector(n, -err * Math.min(1, 8 * dt));
   } else if (
     vN <= 0.03 &&
