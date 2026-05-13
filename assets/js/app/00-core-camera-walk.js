@@ -117,9 +117,9 @@ const WALK_CFG = {
   characterHeight: 0.013,
   footOffset: 0.0065,
   /** Tangential top speed at reference radius (see WALK_SPEED_REF_RADIUS); scaled so angular pace stays similar across planet sizes. */
-  moveSpeed: 0.10,
-  sprintBoost: 1.82,
-  acceleration: 6.4,
+  moveSpeed: 0.067,
+  sprintBoost: 1.55,
+  acceleration: 5.2,
   drag: 9.2,
   slideAccel: 2.6,
   slipEnterDeg: 40,
@@ -127,16 +127,16 @@ const WALK_CFG = {
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
   lavaSpeedFactor: 0.2,
-  /** Walk bob frequency (rad/s); run is faster. */
-  bounceFreqWalk: 8.4,
-  bounceFreqRun: 11.2,
+  /** Walk bob frequency (rad/s); run is faster — decoupled from low moveSpeed so hops stay lively. */
+  bounceFreqWalk: 12.6,
+  bounceFreqRun: 17.2,
   /** Vertical bob amplitude (world units, ≈ fraction of characterHeight); was too small to see on screen. */
   bounceAmpWalk: 0.0055,
   bounceAmpRun: 0.0072,
   /** Portion of bob offset applied to the pill along planet up (camera still uses full `bounce`). */
   bobAvatarUpFactor: 0.92,
   /** Extra bob rate from planar speed (rad per unit speed). */
-  bounceFreqFromSpeed: 5.8,
+  bounceFreqFromSpeed: 8.2,
   bounceResponse: 11,
   /** Foot dust: min planar speed (world) before touchdown can emit puffs on land. */
   dustMinPlanarSpeed: 0.0026,
@@ -214,7 +214,7 @@ const WALK_CFG = {
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
-  maxAirHorizontalSpeed: 0.52,
+  maxAirHorizontalSpeed: 0.38,
   /** Player lantern: point light with finite distance (AOE-style falloff on ground). */
   playerLightColor: 0xa6d9ff,
   playerLightIntensity: 3.4,
