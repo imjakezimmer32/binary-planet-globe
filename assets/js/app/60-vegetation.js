@@ -232,14 +232,14 @@ const VEG = (() => {
     const grassPos = [[], [], []], grassCol = [[], [], []];
 
     const TREE_MAX  = 180;
-    const GRASS_MAX = 1400; // abundant grass spread all over green terrain
+    const GRASS_MAX = 4000; // dense grass coverage across green terrain
     let   nTrees = 0, nGrass = 0;
 
     // Sample terrain faces evenly; face centroid guarantees vegetation is on terrain surface.
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
-    // 5000 target samples ensures grass band is densely covered.
-    const stride = Math.max(1, Math.floor(totalFaces / 5000));
+    // 12000 target samples gives dense per-face coverage for the grass band.
+    const stride = Math.max(1, Math.floor(totalFaces / 12000));
 
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
