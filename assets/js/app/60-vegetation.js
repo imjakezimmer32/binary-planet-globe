@@ -1,5 +1,5 @@
 // ── Vegetation ─────────────────────────────────────────────────────
-// Low-poly grass (3 variants) + 5 tree variants for planet surfaces.
+// Turf grass + 5 tree variants for planet surfaces.
 // Depends on: THREE (global).
 // Exposes: VEG.spawnVegetationOnPlanet, VEG.clearVegetation, VEG.refreshVisibility
 const VEG = (() => {
@@ -21,11 +21,11 @@ const VEG = (() => {
   // Inherent height of each tree variant when built at sc=1.
   const VARIANT_HEIGHTS = [1.18, 1.34, 1.44, 0.64, 0.90];
 
-  // Elevation bands (raw ne = (dist/baseR - 1) / peakScale)
+  // Elevation bands in mapped-ne space (matches terrain colorizer palette thresholds).
   const TREE_NE_MIN  = 0.110;
-  const TREE_NE_MAX  = 0.148;
-  const GRASS_NE_MIN = 0.040; // start at lowland-green; no grass on sand (0–0.04) or grey/water
-  const GRASS_NE_MAX = 0.148;
+  const TREE_NE_MAX  = 0.160; // mapped ne — stays below treeline brown (0.165)
+  const GRASS_NE_MIN = 0.042; // mapped ne — just above sand/green boundary (0.040)
+  const GRASS_NE_MAX = 0.162; // mapped ne — just below treeline brown (0.165)
 
   // Max camera-to-planet-pivot world distance to show vegetation.
   // Covers binary companion (~3.5 sep) and typical moons; hides far solar orbiters.
@@ -130,9 +130,29 @@ const VEG = (() => {
 
   const BUILDERS = [v0Pine, v1Round, v2Spire, v3Bush, v4Palm];
 
-  // ── 3 grass variants ──────────────────────────────────────────────
+  // ── Turf grass ───────────────────────────────────────────────
+  // Dense cluster of thin, straight, uniform-height blades — no lean, no spread variation.
+  function buildGrassTurf(pos, col, h, rng) {
+    const N      = 9;
+    const spread = h * 1.0;
+    const hw     = h * 0.18;
+    for (let i = 0; i < N; i++) {
+      const a  = rng() * Math.PI * 2;
+      const r  = Math.sqrt(rng()) * spread;
+      const bx = Math.cos(a) * r;
+      const bz = Math.sin(a) * r;
+      const oa = rng() * Math.PI;
+      const tx = Math.cos(oa) * hw;
+      const tz = Math.sin(oa) * hw;
+      const c  = i % 3 === 0 ? GS_C : i % 3 === 1 ? GS_A : GS_B;
+      pushTri(pos, col, [bx-tx, 0, bz-tz], [bx+tx, 0, bz+tz], [bx, h, bz], c);
+      pushTri(pos, col, [bx+tx, 0, bz+tz], [bx-tx, 0, bz-tz], [bx, h, bz], c);
+    }
+  }
 
-  // Variant 0: Clump — 3 crossed wide double-sided blades with slight lean.
+  // ── 3 accent grass plant variants ────────────────────────────────
+
+  // Clump — 3 crossed wide double-sided blades with slight lean.
   function buildGrassClump(pos, col, h, rng) {
     const w = h * 2.8;
     for (let i = 0; i < 3; i++) {
@@ -145,13 +165,13 @@ const VEG = (() => {
     }
   }
 
-  // Variant 1: Tuft — 5 short upright blades radiating outward in a ring.
+  // Tuft — 5 short upright blades radiating outward in a ring.
   function buildGrassTuft(pos, col, h, rng) {
     const th = h * 0.75;
     for (let i = 0; i < 5; i++) {
       const a  = (i / 5) * Math.PI * 2 + rng() * 0.25;
       const sr = h * 0.14;
-      const bx = Math.cos(a) * sr,  bz = Math.sin(a) * sr;
+      const bx = Math.cos(a) * sr, bz = Math.sin(a) * sr;
       const hw = h * 0.28;
       const tx = Math.cos(a + Math.PI * 0.5) * hw;
       const tz = Math.sin(a + Math.PI * 0.5) * hw;
@@ -162,7 +182,7 @@ const VEG = (() => {
     }
   }
 
-  // Variant 2: Wispy — 2 tall thin blades with strong lean for wind-blown look.
+  // Wispy — 2 tall thin blades with strong lean for wind-blown look.
   function buildGrassWispy(pos, col, h, rng) {
     const th = h * 1.5;
     const w  = h * 0.9;
@@ -176,7 +196,8 @@ const VEG = (() => {
     }
   }
 
-  const GRASS_BUILDERS = [buildGrassClump, buildGrassTuft, buildGrassWispy];
+  // Index 0 = turf carpet; 1–3 = accent grass plants (~35% of placements).
+  const GRASS_BUILDERS = [buildGrassTurf, buildGrassClump, buildGrassTuft, buildGrassWispy];
 
   // ── Helpers ───────────────────────────────────────────────────────
   function makeMat(doubleSide) {
@@ -216,7 +237,7 @@ const VEG = (() => {
     const ps  = Math.max(peakScale, 0.001);
     const sz  = Math.max(planetSize || 1, 0.05);
 
-    // Heights in spin-local space (world height = local × sz via pivot.scale)
+    // Heights in spin-local space (world height = local x sz via pivot.scale)
     const treeSc = TREE_H / sz;
     const grassH = GRASS_H / sz;
 
@@ -228,33 +249,51 @@ const VEG = (() => {
 
     const treePosArr = [[], [], [], [], []];
     const treeColArr = [[], [], [], [], []];
-    // Separate geometry per grass variant for visual batching.
-    const grassPos = [[], [], []], grassCol = [[], [], []];
+    const grassPos = [[]], grassCol = [[]];
 
-    const TREE_MAX  = 180;
-    const GRASS_MAX = 1400; // abundant grass spread all over green terrain
+    const TREE_MAX        = 180;
+    const GRASS_MAX       = 4000;
+    const CLUMPS_PER_FACE = 3; // multiple placements per green polygon for full coverage
     let   nTrees = 0, nGrass = 0;
 
-    // Sample terrain faces evenly; face centroid guarantees vegetation is on terrain surface.
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
-    // 5000 target samples ensures grass band is densely covered.
-    const stride = Math.max(1, Math.floor(totalFaces / 5000));
+
+    // Pre-scan to find the same ne scale the terrain colorizer uses so elevation
+    // band thresholds (0.040 = sand/green, 0.165 = treeline) match visual colors.
+    const liquidR   = baseR * (0.80 + Math.abs(waterLevel) * 0.42);
+    const liquidEps = liquidR * 0.0018;
+    let minNe = Infinity, maxNe = -Infinity;
+    for (let f = 0; f < totalFaces; f++) {
+      const b = f * 9;
+      let sumR = 0, liq = 0;
+      for (let v = 0; v < 3; v++) {
+        const o = b + v*3;
+        const rr = Math.sqrt(posArr[o]*posArr[o] + posArr[o+1]*posArr[o+1] + posArr[o+2]*posArr[o+2]);
+        sumR += rr;
+        if (rr <= liquidR + liquidEps) liq++;
+      }
+      if (liq > 0) continue;
+      const ne = (sumR / 3 / baseR - 1) / ps;
+      if (ne < minNe) minNe = ne;
+      if (ne > maxNe) maxNe = ne;
+    }
+    if (!Number.isFinite(minNe)) { minNe = -0.2; maxNe = 0.2; }
+    const negScale = minNe < 0 ? -0.200 / minNe : 1;
+    const posScale = maxNe > 0 ?  0.200 / maxNe : 1;
 
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
-    for (let fi = 0; fi < totalFaces; fi += stride) {
+    for (let fi = 0; fi < totalFaces; fi++) {
       if (nTrees >= TREE_MAX && nGrass >= GRASS_MAX) break;
 
       const base = fi * 9;
-      // All 3 vertices of this face
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
       const v1x = posArr[base+3], v1y = posArr[base+4], v1z = posArr[base+5];
       const v2x = posArr[base+6], v2y = posArr[base+7], v2z = posArr[base+8];
-      // Face centroid
       const cx = (v0x + v1x + v2x) / 3;
       const cy = (v0y + v1y + v2y) / 3;
       const cz = (v0z + v1z + v2z) / 3;
@@ -262,14 +301,15 @@ const VEG = (() => {
       const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
       if (cl < 1e-6) continue;
 
-      // Normalised elevation matches the terrain colorizer formula exactly.
-      const ne = (cl / baseR - 1) / ps;
+      const ne     = (cl / baseR - 1) / ps;
+      const mapped = ne < 0 ? ne * negScale : ne * posScale;
 
-      const wantTree  = ne >= TREE_NE_MIN  && ne <= TREE_NE_MAX  && nTrees < TREE_MAX;
-      const wantGrass = ne >= GRASS_NE_MIN && ne <= GRASS_NE_MAX && nGrass < GRASS_MAX;
+      // Compare mapped ne to palette thresholds so bands match terrain colors exactly.
+      const wantTree  = mapped >= TREE_NE_MIN  && mapped <= TREE_NE_MAX  && nTrees < TREE_MAX;
+      const wantGrass = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX && nGrass < GRASS_MAX;
       if (!wantTree && !wantGrass) continue;
 
-      // Face normal via cross product (v1-v0) × (v2-v0), normalised.
+      // Face normal via cross product (v1-v0) x (v2-v0), normalised.
       const e1x = v1x-v0x, e1y = v1y-v0y, e1z = v1z-v0z;
       const e2x = v2x-v0x, e2y = v2y-v0y, e2z = v2z-v0z;
       let fnx = e1y*e2z - e1z*e2y;
@@ -278,21 +318,18 @@ const VEG = (() => {
       const fnl = Math.sqrt(fnx*fnx + fny*fny + fnz*fnz);
       if (fnl < 1e-10) continue;
       fnx /= fnl; fny /= fnl; fnz /= fnl;
-      // Ensure the normal points outward (same hemisphere as centroid radial).
       if (fnx*(cx/cl) + fny*(cy/cl) + fnz*(cz/cl) < 0) { fnx=-fnx; fny=-fny; fnz=-fnz; }
 
       _nv.set(fnx, fny, fnz);
       _q.setFromUnitVectors(_yUp, _nv);
-      _m.makeRotationFromQuaternion(_q);
-      // Tiny lift along face normal prevents z-fighting with the terrain polygon.
-      const eps = grassH * 0.05;
-      _m.setPosition(cx + fnx*eps, cy + fny*eps, cz + fnz*eps);
 
-      // In the overlapping band trees take priority ~1 in 3; rest become grass.
       const placeTree = wantTree && (!wantGrass || rng() < 0.35);
 
       if (placeTree) {
         nTrees++;
+        _m.makeRotationFromQuaternion(_q);
+        const eps = grassH * 0.05;
+        _m.setPosition(cx + fnx*eps, cy + fny*eps, cz + fnz*eps);
         const v  = Math.floor(rng() * 5);
         const sc = treeSc / VARIANT_HEIGHTS[v];
         const lp = [], lc = [];
@@ -300,12 +337,25 @@ const VEG = (() => {
         treePosArr[v].push(...applyMat4(lp, _m));
         treeColArr[v].push(...lc);
       } else if (wantGrass) {
-        nGrass++;
-        const gv = Math.floor(rng() * 3); // randomly pick 1 of 3 grass variants
-        const lp = [], lc = [];
-        GRASS_BUILDERS[gv](lp, lc, grassH, rng);
-        grassPos[gv].push(...applyMat4(lp, _m));
-        grassCol[gv].push(...lc);
+        // Place multiple turf instances at random barycentric positions within this face.
+        const n   = Math.min(CLUMPS_PER_FACE, GRASS_MAX - nGrass);
+        const eps = grassH * 0.05;
+        for (let k = 0; k < n; k++) {
+          let u = rng(), v = rng();
+          if (u + v > 1) { u = 1 - u; v = 1 - v; } // fold into triangle
+          const px = v0x + u*(v1x-v0x) + v*(v2x-v0x);
+          const py = v0y + u*(v1y-v0y) + v*(v2y-v0y);
+          const pz = v0z + u*(v1z-v0z) + v*(v2z-v0z);
+          _m.makeRotationFromQuaternion(_q);
+          _m.setPosition(px + fnx*eps, py + fny*eps, pz + fnz*eps);
+          nGrass++;
+          // 65% turf carpet, 35% accent plant (clump/tuft/wispy)
+          const gv = rng() < 0.65 ? 0 : 1 + Math.floor(rng() * 3);
+          const lp = [], lc = [];
+          GRASS_BUILDERS[gv](lp, lc, grassH, rng);
+          grassPos[0].push(...applyMat4(lp, _m));
+          grassCol[0].push(...lc);
+        }
       }
     }
 
@@ -320,9 +370,8 @@ const VEG = (() => {
     }
 
     const grassMat = makeMat(true);
-    for (let gv = 0; gv < 3; gv++) {
-      if (!grassPos[gv].length) continue;
-      const mesh = new THREE.Mesh(toGeo(grassPos[gv], grassCol[gv]), grassMat);
+    if (grassPos[0].length) {
+      const mesh = new THREE.Mesh(toGeo(grassPos[0], grassCol[0]), grassMat);
       mesh.frustumCulled = false;
       mesh.visible = false;
       spinGroup.add(mesh);
