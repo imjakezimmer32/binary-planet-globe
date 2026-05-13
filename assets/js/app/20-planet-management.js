@@ -414,11 +414,6 @@ function createSunOrbitPlanet({
   const seed  = Math.random() * 99;
   const color = PLANET_COLORS[idx % PLANET_COLORS.length];
   const newP  = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, initState);
-  if (typeof snapPlanetSizeToMeshTier === 'function') {
-    const br = newP.baseRadius || 0.8;
-    const { min, max } = PLANET_EDIT_CONFIG.size;
-    newP.state.size = snapPlanetSizeToMeshTier(br, newP.state.size, min, max);
-  }
   scene.add(newP.pivot);
   newP.pivot.visible = planetsRenderable;
   newP.pivot.position.set(0, 0, 0);
@@ -469,11 +464,6 @@ function createPlanetMoonOrbit(parentIdx) {
     waterLevel: parent.obj.state.waterLevel,
     size: Math.max(0.25, parent.obj.state.size * (0.35 + Math.random() * 0.25)),
   });
-  if (typeof snapPlanetSizeToMeshTier === 'function') {
-    const br = moon.baseRadius || 0.8;
-    const { min, max } = PLANET_EDIT_CONFIG.size;
-    moon.state.size = snapPlanetSizeToMeshTier(br, moon.state.size, min, max);
-  }
   scene.add(moon.pivot);
   moon.pivot.visible = planetsRenderable;
   parent.obj.pivot.getWorldPosition(_orbitParentWorld);
@@ -826,13 +816,10 @@ function finalizePlanetSizeAfterRadialDrag() {
   if (selectedPlanetIdx === null) return;
   const mp = managedPlanets[selectedPlanetIdx];
   if (!mp) return;
-  const snapped = snapPlanetSizeToMeshTier(
-    mp.obj.baseRadius || 0.8,
-    clampPlanetEditValue('size', mp.obj.state.size),
-    PLANET_EDIT_CONFIG.size.min,
-    PLANET_EDIT_CONFIG.size.max
+  mp.obj.state.size = quantizePlanetEditValue(
+    'size',
+    clampPlanetEditValue('size', mp.obj.state.size)
   );
-  mp.obj.state.size = snapped;
   if (mp.isBinary) {
     const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
     const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
@@ -853,17 +840,13 @@ function applyPlanetEditSetting(setting, rawValue) {
   const rawClamped = clampPlanetEditValue(setting, rawValue);
   let nextValue;
   if (setting === 'size') {
-    const br = mp.obj.baseRadius || 0.8;
-    const { min, max } = PLANET_EDIT_CONFIG.size;
-    nextValue = typeof snapPlanetSizeToMeshTier === 'function'
-      ? snapPlanetSizeToMeshTier(br, rawClamped, min, max)
-      : rawClamped;
+    nextValue = inRadialSizeDrag ? rawClamped : quantizePlanetEditValue('size', rawClamped);
   } else {
     nextValue = inRadialSizeDrag ? rawClamped : quantizePlanetEditValue(setting, rawClamped);
   }
   if (setting === 'size') {
     mp.obj.state.size = nextValue;
-    if (mp.isBinary) {
+    if (mp.isBinary && !inRadialSizeDrag) {
       const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
       const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
       refreshBinaryPairForMassChange(mass1Now, mass2Now);
