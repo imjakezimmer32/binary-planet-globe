@@ -933,19 +933,29 @@ _canvas.addEventListener('pointercancel', e => {
 
 _canvas.addEventListener('wheel', e => {
   if (isTouchPointer(e)) return;
-  e.preventDefault();
   if (walkMode.active) {
-    if (walkCameraMode === 'tp') {
-      const zoomOut = e.deltaY > 0 ? WALK_CFG.tpZoomWheelStep : 1 / WALK_CFG.tpZoomWheelStep;
-      setWalkTpDistanceTarget(walkTpDistanceTarget * zoomOut);
-    }
+    // Third-person zoom is handled on document (capture) so wheel works over HUD/sliders.
+    e.preventDefault();
     return;
   }
+  e.preventDefault();
   zoomTarget = null;
   const step = 1 + 0.08 * zoomSpeedMul;
   orbitZoom = Math.max(0.05, Math.min(14, orbitZoom * (e.deltaY > 0 ? step : 1 / step)));
   resetOrbitPointerInertia();
 }, { passive: false });
+
+/** Wheel over the page (not only the canvas) adjusts walk pull-back; capture beats range sliders on #ui. */
+function handleWalkModeWheelZoomCapture(e) {
+  if (!walkMode.active || walkCameraMode !== 'tp') return;
+  if (e.ctrlKey || e.metaKey) return;
+  if (Math.abs(e.deltaY) < 1e-6 && Math.abs(e.deltaX) < 1e-6) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const zoomOut = e.deltaY > 0 ? WALK_CFG.tpZoomWheelStep : 1 / WALK_CFG.tpZoomWheelStep;
+  setWalkTpDistanceTarget(walkTpDistanceTarget * zoomOut);
+}
+document.addEventListener('wheel', handleWalkModeWheelZoomCapture, { capture: true, passive: false });
 
 function getPlanetCenterRadius(mp, centerOut) {
   mp.obj.pivot.getWorldPosition(centerOut);
