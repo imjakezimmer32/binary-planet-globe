@@ -21,11 +21,9 @@ const VEG = (() => {
   // Inherent height of each tree variant when built at sc=1.
   const VARIANT_HEIGHTS = [1.18, 1.34, 1.44, 0.64, 0.90];
 
-  // Elevation bands in mapped-ne space (matches terrain colorizer palette thresholds).
-  const TREE_NE_MIN  = 0.110;
-  const TREE_NE_MAX  = 0.160; // mapped ne — stays below treeline brown (0.165)
-  const GRASS_NE_MIN = 0.042; // mapped ne — just above sand/green boundary (0.040)
-  const GRASS_NE_MAX = 0.162; // mapped ne — just below treeline brown (0.165)
+  // Grass elevation band in mapped-ne space (matches terrain colorizer palette thresholds).
+  const GRASS_NE_MIN = 0.042; // just above sand/green boundary (0.040)
+  const GRASS_NE_MAX = 0.162; // just below treeline brown (0.165)
 
   // Max camera-to-planet-pivot world distance to show vegetation.
   // Covers binary companion (~3.5 sep) and typical moons; hides far solar orbiters.
@@ -45,8 +43,8 @@ const VEG = (() => {
       const a1 = ((i + 1) / sides) * Math.PI * 2;
       const b0 = [x + Math.cos(a0) * r, y, z + Math.sin(a0) * r];
       const b1 = [x + Math.cos(a1) * r, y, z + Math.sin(a1) * r];
-      pushTri(pos, col, b0, b1, apex, i % 2 === 0 ? cSide : cTop);
-      pushTri(pos, col, [x, y, z], b1, b0, cSide);
+      pushTri(pos, col, b0, apex, b1, i % 2 === 0 ? cSide : cTop);
+      pushTri(pos, col, [x, y, z], b0, b1, cSide);
     }
   }
 
@@ -111,18 +109,24 @@ const VEG = (() => {
     addIco(pos, col, -sc*0.24,  sc*0.18, -sc*0.12,  sc*0.36, G_LT);
   }
 
-  // Variant 4: Palm — thin trunk + 5 drooping flat fronds (inherent height 0.90 sc)
+  // Variant 4: Palm — curved trunk + 9 fronds in varied directions (inherent height 0.90 sc)
   function v4Palm(pos, col, sc) {
-    addCylinder(pos, col, 0, 0, 0, sc*0.07, sc*0.78, 4, T_MID);
-    const tipY = sc * 0.86, fl = sc * 0.68, fw = sc * 0.12;
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      const dx = Math.cos(a), dz = Math.sin(a);
-      const lx = -dz * fw, lz = dx * fw;
-      const base1 = [ lx*0.3, tipY + sc*0.04,  lz*0.3];
-      const base2 = [-lx*0.3, tipY + sc*0.04, -lz*0.3];
-      const tip   = [dx * fl, tipY - sc*0.25,  dz * fl];
-      const c = i % 2 === 0 ? G_MID : G_LT;
+    addCylinder(pos, col, 0, 0, 0, sc*0.055, sc*0.84, 5, T_MID);
+    const tipY = sc * 0.92;
+    const nFronds = 9;
+    for (let i = 0; i < nFronds; i++) {
+      const a = (i / nFronds) * Math.PI * 2;
+      // Three alternating length/droop tiers so fronds vary in reach and hang
+      const tier = i % 3;
+      const lng   = sc * (0.52 + tier * 0.14);   // 0.52 / 0.66 / 0.80
+      const droop = sc * (0.16 + tier * 0.08);    // 0.16 / 0.24 / 0.32
+      const fw  = sc * 0.09;
+      const dx  = Math.cos(a), dz = Math.sin(a);
+      const lx  = -dz * fw,    lz = dx * fw;
+      const base1 = [ lx, tipY + sc*0.02,  lz];
+      const base2 = [-lx, tipY + sc*0.02, -lz];
+      const tip   = [dx * lng, tipY - droop, dz * lng];
+      const c = tier === 0 ? G_DARK : tier === 1 ? G_MID : G_LT;
       pushTri(pos, col, base1, tip, base2, c);
       pushTri(pos, col, base2, tip, base1, c);
     }
@@ -251,13 +255,19 @@ const VEG = (() => {
     const treeColArr = [[], [], [], [], []];
     const grassPos = [[]], grassCol = [[]];
 
-    const TREE_MAX            = 180;
-    // Chunks per sq local-unit of face area — scales with polygon size automatically.
-    // At detail-8 (~9.6e-6 sq units/face) this gives ~3 chunks per face.
-    // Larger polygons (lower detail or bigger baseR) get proportionally more.
+    // Per-variant elevation bands (mapped-ne) and area-based densities.
+    // Index matches BUILDERS: 0=Pine, 1=Round, 2=Spire, 3=Bush, 4=Palm.
+    // [neMin, neMax, density, maxPerFace]
+    const VARIANT_BANDS = [
+      [0.135, 0.168, 500000, 6],  // Pine  — dense clusters near peaks
+      [0.065, 0.130,  80000, 4],  // Round — spread across middle green
+      [0.120, 0.168, 200000, 5],  // Spire — medium density, upper+peaks
+      [0.042, 0.178,  40000, 3],  // Bush  — sparse, all green zones
+      [0.042, 0.065, 500000, 6],  // Palm  — dense shoreline only
+    ];
+
     const GRASS_DENSITY       = 300000;
-    const MAX_CLUMPS_PER_FACE = 16; // safety cap for low-detail / large-polygon planets
-    let   nTrees = 0;
+    const MAX_CLUMPS_PER_FACE = 16;
 
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
@@ -287,6 +297,7 @@ const VEG = (() => {
 
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
+    const _q2  = new THREE.Quaternion();
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
@@ -305,10 +316,9 @@ const VEG = (() => {
       const ne     = (cl / baseR - 1) / ps;
       const mapped = ne < 0 ? ne * negScale : ne * posScale;
 
-      // Compare mapped ne to palette thresholds so bands match terrain colors exactly.
-      const wantTree  = mapped >= TREE_NE_MIN  && mapped <= TREE_NE_MAX  && nTrees < TREE_MAX;
-      const wantGrass = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX;
-      if (!wantTree && !wantGrass) continue;
+      const wantGrass   = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX;
+      const wantAnyTree = mapped >= 0.042 && mapped <= 0.178;
+      if (!wantGrass && !wantAnyTree) continue;
 
       // Face normal via cross product (v1-v0) x (v2-v0), normalised.
       const e1x = v1x-v0x, e1y = v1y-v0y, e1z = v1z-v0z;
@@ -324,33 +334,46 @@ const VEG = (() => {
       _nv.set(fnx, fny, fnz);
       _q.setFromUnitVectors(_yUp, _nv);
 
-      const placeTree = wantTree && (!wantGrass || rng() < 0.35);
+      const treeEps  = grassH * 0.10;
+      const grassEps = grassH * 0.05;
 
-      if (placeTree) {
-        nTrees++;
-        _m.makeRotationFromQuaternion(_q);
-        const eps = grassH * 0.05;
-        _m.setPosition(cx + fnx*eps, cy + fny*eps, cz + fnz*eps);
-        const v  = Math.floor(rng() * 5);
-        const sc = treeSc / VARIANT_HEIGHTS[v];
-        const lp = [], lc = [];
-        BUILDERS[v](lp, lc, sc);
-        treePosArr[v].push(...applyMat4(lp, _m));
-        treeColArr[v].push(...lc);
-      } else if (wantGrass) {
-        // World-space face area = local area (fnl*0.5) × sz² (pivot scale squared).
-        // Multiplying both together gives consistent visual density across all planet sizes.
-        const n   = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * sz * sz * GRASS_DENSITY)));
-        const eps = grassH * 0.05;
+      // Per-variant placement: density-based count, barycentric position, random yaw + size
+      if (wantAnyTree) {
+        for (let vi = 0; vi < 5; vi++) {
+          const [neMin, neMax, dens, maxN] = VARIANT_BANDS[vi];
+          if (mapped < neMin || mapped > neMax) continue;
+          const n = Math.min(maxN, Math.max(0, Math.round(fnl * 0.5 * sz * sz * dens)));
+          for (let k = 0; k < n; k++) {
+            let bu = rng(), bv = rng();
+            if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
+            const px = v0x + bu*(v1x-v0x) + bv*(v2x-v0x);
+            const py = v0y + bu*(v1y-v0y) + bv*(v2y-v0y);
+            const pz = v0z + bu*(v1z-v0z) + bv*(v2z-v0z);
+            // Random yaw around face normal then align to surface
+            _q2.setFromAxisAngle(_nv, rng() * Math.PI * 2);
+            _q2.multiply(_q);
+            _m.makeRotationFromQuaternion(_q2);
+            _m.setPosition(px + fnx*treeEps, py + fny*treeEps, pz + fnz*treeEps);
+            const scVar = 0.65 + rng() * 0.70;
+            const sc = (treeSc / VARIANT_HEIGHTS[vi]) * scVar;
+            const lp = [], lc = [];
+            BUILDERS[vi](lp, lc, sc);
+            treePosArr[vi].push(...applyMat4(lp, _m));
+            treeColArr[vi].push(...lc);
+          }
+        }
+      }
+
+      if (wantGrass) {
+        const n = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * sz * sz * GRASS_DENSITY)));
         for (let k = 0; k < n; k++) {
           let u = rng(), v = rng();
-          if (u + v > 1) { u = 1 - u; v = 1 - v; } // fold into triangle
+          if (u + v > 1) { u = 1 - u; v = 1 - v; }
           const px = v0x + u*(v1x-v0x) + v*(v2x-v0x);
           const py = v0y + u*(v1y-v0y) + v*(v2y-v0y);
           const pz = v0z + u*(v1z-v0z) + v*(v2z-v0z);
           _m.makeRotationFromQuaternion(_q);
-          _m.setPosition(px + fnx*eps, py + fny*eps, pz + fnz*eps);
-          // 65% turf carpet, 35% accent plant (clump/tuft/wispy)
+          _m.setPosition(px + fnx*grassEps, py + fny*grassEps, pz + fnz*grassEps);
           const gv = rng() < 0.65 ? 0 : 1 + Math.floor(rng() * 3);
           const lp = [], lc = [];
           GRASS_BUILDERS[gv](lp, lc, grassH, rng);
