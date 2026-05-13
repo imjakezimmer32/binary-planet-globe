@@ -251,10 +251,13 @@ const VEG = (() => {
     const treeColArr = [[], [], [], [], []];
     const grassPos = [[]], grassCol = [[]];
 
-    const TREE_MAX        = 180;
-    const GRASS_MAX       = 16000;
-    const CLUMPS_PER_FACE = 3; // multiple placements per green polygon for full coverage
-    let   nTrees = 0, nGrass = 0;
+    const TREE_MAX            = 180;
+    // Chunks per sq local-unit of face area — scales with polygon size automatically.
+    // At detail-8 (~9.6e-6 sq units/face) this gives ~3 chunks per face.
+    // Larger polygons (lower detail or bigger baseR) get proportionally more.
+    const GRASS_DENSITY       = 300000;
+    const MAX_CLUMPS_PER_FACE = 16; // safety cap for low-detail / large-polygon planets
+    let   nTrees = 0;
 
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
@@ -288,8 +291,6 @@ const VEG = (() => {
     const _nv  = new THREE.Vector3();
 
     for (let fi = 0; fi < totalFaces; fi++) {
-      if (nTrees >= TREE_MAX && nGrass >= GRASS_MAX) break;
-
       const base = fi * 9;
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
       const v1x = posArr[base+3], v1y = posArr[base+4], v1z = posArr[base+5];
@@ -306,7 +307,7 @@ const VEG = (() => {
 
       // Compare mapped ne to palette thresholds so bands match terrain colors exactly.
       const wantTree  = mapped >= TREE_NE_MIN  && mapped <= TREE_NE_MAX  && nTrees < TREE_MAX;
-      const wantGrass = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX && nGrass < GRASS_MAX;
+      const wantGrass = mapped >= GRASS_NE_MIN && mapped <= GRASS_NE_MAX;
       if (!wantTree && !wantGrass) continue;
 
       // Face normal via cross product (v1-v0) x (v2-v0), normalised.
@@ -337,8 +338,8 @@ const VEG = (() => {
         treePosArr[v].push(...applyMat4(lp, _m));
         treeColArr[v].push(...lc);
       } else if (wantGrass) {
-        // Place multiple turf instances at random barycentric positions within this face.
-        const n   = Math.min(CLUMPS_PER_FACE, GRASS_MAX - nGrass);
+        // fnl (pre-normalisation magnitude) = 2 × face area — free from the cross product above.
+        const n   = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * GRASS_DENSITY)));
         const eps = grassH * 0.05;
         for (let k = 0; k < n; k++) {
           let u = rng(), v = rng();
@@ -348,7 +349,6 @@ const VEG = (() => {
           const pz = v0z + u*(v1z-v0z) + v*(v2z-v0z);
           _m.makeRotationFromQuaternion(_q);
           _m.setPosition(px + fnx*eps, py + fny*eps, pz + fnz*eps);
-          nGrass++;
           // 65% turf carpet, 35% accent plant (clump/tuft/wispy)
           const gv = rng() < 0.65 ? 0 : 1 + Math.floor(rng() * 3);
           const lp = [], lc = [];
