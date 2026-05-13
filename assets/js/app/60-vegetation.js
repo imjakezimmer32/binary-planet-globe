@@ -24,7 +24,7 @@ const VEG = (() => {
   // Elevation bands (raw ne = (dist/baseR - 1) / peakScale)
   const TREE_NE_MIN  = 0.110;
   const TREE_NE_MAX  = 0.148;
-  const GRASS_NE_MIN = 0.010;
+  const GRASS_NE_MIN = 0.040; // start at lowland-green; no grass on sand (0–0.04) or grey/water
   const GRASS_NE_MAX = 0.148;
 
   // Max camera-to-planet-pivot world distance to show vegetation.
