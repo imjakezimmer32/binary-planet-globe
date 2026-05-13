@@ -685,6 +685,8 @@ function onMobilePointerDown(e) {
 function onMobilePointerMove(e) {
   if (!mobPointers.has(e.pointerId)) {
     if (!walkMode.active) return;
+    if (walkJoystickPointerId !== null && e.pointerId === walkJoystickPointerId) return;
+    if (typeof isWalkLookBlockedTarget === 'function' && isWalkLookBlockedTarget(e.target)) return;
     mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (mobPointers.size === 1) {
       mobSingleLX = e.clientX;
@@ -702,33 +704,14 @@ function onMobilePointerMove(e) {
     if (walkJoystickPointerId !== null && e.pointerId === walkJoystickPointerId) {
       mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (mobPointers.size >= 2) {
-        const pair = mobPinchPair();
-        if (pair) {
-          const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
-          mobMidX = (pair.a.x + pair.b.x) * 0.5;
-          mobMidY = (pair.a.y + pair.b.y) * 0.5;
-          if (mobPinchDist > 10 && dist > 10 && walkCameraMode === 'tp') {
-            const ratio = mobPinchDist / dist;
-            setWalkTpDistanceTarget(walkTpDistanceTarget * Math.pow(ratio, 1.08));
-          }
-          mobPinchDist = dist;
-        }
-      } else if (mobPointers.size >= 1) {
-        const p = mobPointers.values().next().value;
-        if (p) {
-          mobSingleLX = p.x;
-          mobSingleLY = p.y;
-          mobSingleReady = true;
-        }
-      }
       return;
     }
     if (typeof e.preventDefault === 'function') e.preventDefault();
     if (prev) {
       queueWalkLook(e.clientX - prev.x, e.clientY - prev.y, true);
     }
-    if (mobPointers.size >= 2) {
+    if (mobPointers.size >= 2 && walkCameraMode === 'tp' &&
+        (walkJoystickPointerId === null || !mobPointers.has(walkJoystickPointerId))) {
       const pair = mobPinchPair();
       if (pair) {
         const dist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
