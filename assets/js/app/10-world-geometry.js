@@ -613,7 +613,7 @@ let comAngle = 0;
 const SCALE_MIN = 1.0, SCALE_MAX = 400;
 const SCALE_BASE_MULT = 3.0; // User request: legacy 3x should read as new 1x.
 const SCALE_LOG = Math.log(SCALE_MAX / SCALE_MIN);
-// Above this UI scale, terrain uses detail 0 (lowest tier) for performance — not planet visibility.
+// Legacy zoom tier for `curDetail` (new planets' first build hint); terrain subdivisions use shell radius.
 const PLANET_DETAIL_ZERO_UI = 15.0;
 const PLANET_VIEW_DETAIL_CAP = 7;
 function scaleUiToWorld(s) { return s * SCALE_BASE_MULT; }
@@ -621,7 +621,7 @@ function scaleWorldToUi(s) { return s / SCALE_BASE_MULT; }
 function sliderToScale(v) { return scaleUiToWorld(SCALE_MIN * Math.exp(SCALE_LOG * v)); }
 function scaleToDetail(worldScale) {
   const s = scaleWorldToUi(worldScale);
-  // User tuning: detail 1 at 10× UI; lowest mesh tier at 15× UI (pivots stay visible — see updateDynamicCameraFar).
+  // User tuning: tier steps vs solar zoom (see updateDynamicCameraFar). Not used for terrain facet LOD anymore.
   if (s >= PLANET_DETAIL_ZERO_UI) return 0;
   if (s >= 10.0) return 1;
   if (s >= 8.0)  return 2;
@@ -653,19 +653,16 @@ function desiredDetailForCurrentView(scaleValue) {
   return cameraMode === 'planet' ? PLANET_VIEW_DETAIL_CAP : scaleToDetail(scaleValue);
 }
 
-/**
- * UI smallest size knob (matches planet radial editor) — "normal" shell for baseline mesh budget.
- */
-const PLANET_MESH_SIZE_BASELINE = 0.1;
 /** Three.js icosahedron subdivisions become huge past ~8; also caps GPU cost. */
 const PLANET_MESH_DETAIL_HARD_MAX = 8;
 /**
- * World-space shell radius (physics units) at baseline: mid base × smallest size.
- * Worlds near this radius use viewer cap alone; larger add subdivisions, smaller subtract (clamped).
+ * Icosahedron detail so world-space facets stay ~fixed size: each ~2× growth in shell
+ * radius adds one subdivision. `PLANET_POLYGON_REF_SHELL_RADIUS` is the shell size at
+ * which `PLANET_POLYGON_BASE_DETAIL` applies (tuned for default binary planets).
  */
-function getPlanetMeshReferenceWorldRadius() {
-  return 0.6 * PLANET_MESH_SIZE_BASELINE;
-}
+const PLANET_POLYGON_REF_SHELL_RADIUS = 0.75;
+const PLANET_POLYGON_BASE_DETAIL = 7;
+const PLANET_POLYGON_DETAIL_MIN = 4;
 
 /** World radius of the scaled body (geometry base × pivot size). */
 function getPlanetWorldShellRadius(mp) {
@@ -673,25 +670,16 @@ function getPlanetWorldShellRadius(mp) {
   return (mp.obj.baseRadius || 0.8) * Math.max(mp.obj.state?.size ?? 1, 0.05);
 }
 
-/**
- * Icosahedron detail for one planet: zoom LOD sets a *base* tier (capped low so
- * `extra` from world radius can still fit under HARD_MAX). `extra` is floor(log₂ R/R₀)
- * so each ~2× growth in shell radius adds one subdivision step.
- */
-function terrainDetailForManagedPlanet(mp, viewerCap) {
-  const vc = viewerCap | 0;
-  // Zoom LOD: coarser camera zoom lowers base tier; shell growth adds `extra` on top (max 8).
-  const viewerBase = Math.max(0, Math.min(3, Math.floor(vc / 3)));
+function terrainDetailForManagedPlanet(mp) {
   const R = getPlanetWorldShellRadius(mp);
-  const R0 = getPlanetMeshReferenceWorldRadius();
-  const ratio = R / Math.max(R0, 1e-6);
-  const extra = Math.max(-2, Math.min(5, Math.floor(Math.log2(Math.max(1e-5, ratio)))));
-  return Math.max(1, Math.min(PLANET_MESH_DETAIL_HARD_MAX, viewerBase + extra));
+  const ratio = R / Math.max(PLANET_POLYGON_REF_SHELL_RADIUS, 1e-6);
+  const d = PLANET_POLYGON_BASE_DETAIL + Math.floor(Math.log2(Math.max(1e-5, ratio)));
+  return Math.max(PLANET_POLYGON_DETAIL_MIN, Math.min(PLANET_MESH_DETAIL_HARD_MAX, d));
 }
 
 function rebuildManagedPlanetTerrain(mp) {
   if (!mp?.obj?.rebuild) return;
-  const d = terrainDetailForManagedPlanet(mp, curDetail);
+  const d = terrainDetailForManagedPlanet(mp);
   if (d > 0) {
     mp.obj.rebuild(d);
     mp.obj.syncGrid();
@@ -709,7 +697,7 @@ function applyDetailForCurrentView(scaleValue) {
   const cap = desiredDetailForCurrentView(scaleValue);
   if (cap === curDetail) return;
   curDetail = cap;
-  rebuildAllManagedPlanetTerrainMeshes();
+  // Terrain facet size follows shell radius only (terrainDetailForManagedPlanet), not zoom.
 }
 
 function setPlanetsRenderable(enabled) {
