@@ -672,6 +672,7 @@ function onMobilePointerDown(e) {
     mobSingleReady = true;
   }
   if (mobPointers.size === 2) {
+    clearWalkTouchLookState();
     const pair = mobPinchPair();
     if (pair) {
       mobPinchDist = Math.hypot(pair.a.x - pair.b.x, pair.a.y - pair.b.y);
@@ -696,7 +697,8 @@ function onMobilePointerMove(e) {
   mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   if (walkMode.active) {
-    if (walkTouchLookId !== null) return;
+    // Touch-look uses the first touch id; allow two-finger pinch once both pointers are tracked.
+    if (walkTouchLookId !== null && mobPointers.size < 2) return;
     if (walkJoystickPointerId !== null && e.pointerId === walkJoystickPointerId) {
       mobPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (typeof e.preventDefault === 'function') e.preventDefault();
