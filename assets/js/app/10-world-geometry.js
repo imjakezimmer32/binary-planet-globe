@@ -324,6 +324,64 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
   };
 }
 
+/**
+ * Terrain uses non-indexed triangles (for per-face vertex colors). Default face normals plus
+ * flat shading make each facet a single Lambert shade, so a moving point light looks like it
+ * only "hits" polygon edges. Merge normals at identical positions for smooth falloff.
+ */
+function applySmoothVertexNormalsForNonIndexedTerrain(geo) {
+  const pos = geo.attributes.position;
+  if (!pos || pos.count < 3) return;
+  const triCount = Math.floor(pos.count / 3);
+  const bucket = new Map();
+  const p0 = new THREE.Vector3();
+  const p1 = new THREE.Vector3();
+  const p2 = new THREE.Vector3();
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const fn = new THREE.Vector3();
+
+  for (let f = 0; f < triCount; f++) {
+    const i0 = f * 3;
+    const i1 = i0 + 1;
+    const i2 = i0 + 2;
+    p0.fromBufferAttribute(pos, i0);
+    p1.fromBufferAttribute(pos, i1);
+    p2.fromBufferAttribute(pos, i2);
+    e1.subVectors(p1, p0);
+    e2.subVectors(p2, p0);
+    fn.crossVectors(e1, e2);
+    if (fn.lengthSq() < 1e-22) continue;
+    fn.normalize();
+    for (const vi of [i0, i1, i2]) {
+      const k = `${pos.getX(vi)},${pos.getY(vi)},${pos.getZ(vi)}`;
+      let a = bucket.get(k);
+      if (!a) {
+        a = [0, 0, 0];
+        bucket.set(k, a);
+      }
+      a[0] += fn.x;
+      a[1] += fn.y;
+      a[2] += fn.z;
+    }
+  }
+
+  const nArr = new Float32Array(pos.count * 3);
+  for (let f = 0; f < triCount; f++) {
+    for (let k = 0; k < 3; k++) {
+      const vi = f * 3 + k;
+      const key = `${pos.getX(vi)},${pos.getY(vi)},${pos.getZ(vi)}`;
+      const a = bucket.get(key);
+      const len = Math.hypot(a[0], a[1], a[2]) || 1;
+      const inv = 1 / len;
+      nArr[vi * 3] = a[0] * inv;
+      nArr[vi * 3 + 1] = a[1] * inv;
+      nArr[vi * 3 + 2] = a[2] * inv;
+    }
+  }
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nArr, 3));
+}
+
 // ── Planet factory ────────────────────────────────────────────────
 function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   const pivot = new THREE.Group();
@@ -351,6 +409,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     const idxGeo  = buildGlobe(baseR, buildDetail, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
     const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, seed);
+    applySmoothVertexNormalsForNonIndexedTerrain(flatGeo);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
     const depthBack = new THREE.Mesh(flatGeo,
@@ -359,7 +418,8 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     depthBack.renderOrder = 0;
 
     const terrain = new THREE.Mesh(flatGeo, new THREE.MeshLambertMaterial({
-      vertexColors: true, flatShading: true,
+      vertexColors: true,
+      flatShading: false,
       polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
     }));
     terrain.renderOrder = 0;
