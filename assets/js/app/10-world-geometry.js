@@ -403,13 +403,17 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     built = [];
 
     const ps = state.peakScale, wl = state.waterLevel;
-    const liquidState = getLiquidState(wl, baseR);
+    // World shell lives in spin-local space at full radius (no pivot scale) so facet size
+    // tracks LOD only — avoids stretching the same mesh with pivot.scale = size.
+    const sz = Math.max(state.size ?? 1, 0.05);
+    const shellR = baseR * sz;
+    const liquidState = getLiquidState(wl, shellR);
     // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
     const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
 
-    const idxGeo  = buildGlobe(baseR, buildDetail, seed, ps, wl);
+    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl);
     const flatGeo = idxGeo.toNonIndexed();
-    const colorMeta = colorizeGlobe(flatGeo, baseR, ps, wl, seed);
+    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, seed);
     applySmoothVertexNormalsForNonIndexedTerrain(flatGeo);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
@@ -465,7 +469,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     wire.renderOrder = 2;
 
     const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(baseR * 1.10, 24, 24),
+      new THREE.SphereGeometry(shellR * 1.10, 24, 24),
       new THREE.MeshBasicMaterial({
         color: liquidState.hasLava ? 0xff3c1a : 0x44aaff,
         transparent: true,
@@ -481,7 +485,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     pickables = [terrain];
     spin.add(...built);
     if (typeof VEG !== 'undefined') {
-      vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, baseR, state.peakScale, state.waterLevel, seed, state.size);
+      vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, shellR, state.peakScale, state.waterLevel, seed, 1);
     }
   }
 
@@ -653,8 +657,8 @@ function desiredDetailForCurrentView(scaleValue) {
   return cameraMode === 'planet' ? PLANET_VIEW_DETAIL_CAP : scaleToDetail(scaleValue);
 }
 
-/** Three.js icosahedron subdivisions become huge past ~8; also caps GPU cost. */
-const PLANET_MESH_DETAIL_HARD_MAX = 8;
+/** Three.js icosahedron subdivisions get very heavy past ~9; caps GPU cost. */
+const PLANET_MESH_DETAIL_HARD_MAX = 9;
 /**
  * Icosahedron detail so world-space facets stay ~fixed size: each ~2× growth in shell
  * radius adds one subdivision. `PLANET_POLYGON_REF_SHELL_RADIUS` is the shell size at

@@ -287,9 +287,9 @@ function animate() {
     );
   });
 
-  // Apply per-planet size edits only; global scale does not resize bodies.
+  // Terrain meshes are rebuilt at full shell radius (base × size); pivot stays unit scale.
   managedPlanets.forEach(mp => {
-    mp.obj.pivot.scale.setScalar(mp.obj.state.size);
+    mp.obj.pivot.scale.setScalar(1);
     mp.obj.spin.rotation.y = mp.spinAngle;
   });
 
