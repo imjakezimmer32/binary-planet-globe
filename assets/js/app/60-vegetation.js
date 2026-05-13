@@ -1,7 +1,7 @@
 // ── Vegetation ─────────────────────────────────────────────────────
-// Low-poly grass + 5 tree variants for planet surfaces.
-// Depends on: THREE (global), noise3 (10-world-geometry.js, called lazily).
-// Exposes: VEG.spawnVegetationOnPlanet, VEG.clearVegetation
+// Low-poly grass (3 variants) + 5 tree variants for planet surfaces.
+// Depends on: THREE (global).
+// Exposes: VEG.spawnVegetationOnPlanet, VEG.clearVegetation, VEG.refreshVisibility
 const VEG = (() => {
   const T_DARK  = [0.22, 0.14, 0.07];
   const T_MID   = [0.30, 0.18, 0.09];
@@ -19,16 +19,19 @@ const VEG = (() => {
   const GRASS_H = CHAR_H * 0.25;   // target grass height in world units
 
   // Inherent height of each tree variant when built at sc=1.
-  // Used to normalise so every variant's tip lands at ~TREE_H world units.
   const VARIANT_HEIGHTS = [1.18, 1.34, 1.44, 0.64, 0.90];
 
-  // Elevation bands (raw ne = d/ps, before palette stretch)
-  // Trees  – darker highland-green strip just before the treeline-brown
+  // Elevation bands (raw ne = (dist/baseR - 1) / peakScale)
   const TREE_NE_MIN  = 0.110;
   const TREE_NE_MAX  = 0.148;
-  // Grass  – all green, plus a slight toe into the sandy shore band
   const GRASS_NE_MIN = 0.010;
   const GRASS_NE_MAX = 0.148;
+
+  // Max camera-to-planet-pivot world distance to show vegetation.
+  // Covers binary companion (~3.5 sep) and typical moons; hides far solar orbiters.
+  const VEG_DIST = 12;
+
+  const _refPos = new THREE.Vector3();
 
   function pushTri(pos, col, v0, v1, v2, c) {
     pos.push(v0[0], v0[1], v0[2], v1[0], v1[1], v1[2], v2[0], v2[1], v2[2]);
@@ -80,7 +83,6 @@ const VEG = (() => {
   }
 
   // ── 5 tree variants (local Y-up space, sc = normalised unit) ─────
-  // sc is computed per variant so the tip of each tree lands at ~1×sc above ground.
 
   // Variant 0: Pine — triple-stacked cones (inherent height 1.18 sc)
   function v0Pine(pos, col, sc) {
@@ -128,19 +130,53 @@ const VEG = (() => {
 
   const BUILDERS = [v0Pine, v1Round, v2Spire, v3Bush, v4Palm];
 
-  // ── Grass clump — 3 crossed double-sided blades ───────────────────
-  function buildGrass(pos, col, targetH, rng) {
-    const h = targetH * (1.0 + (rng() - 0.5) * 0.4);
-    const w = targetH * 2.8;
+  // ── 3 grass variants ──────────────────────────────────────────────
+
+  // Variant 0: Clump — 3 crossed wide double-sided blades with slight lean.
+  function buildGrassClump(pos, col, h, rng) {
+    const w = h * 2.8;
     for (let i = 0; i < 3; i++) {
       const a    = (i / 3) * Math.PI + rng() * 0.4;
       const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
-      const lean = (rng() - 0.5) * targetH * 0.5;
+      const lean = (rng() - 0.5) * h * 0.5;
       const c    = [GS_A, GS_B, GS_C][i];
       pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, h, lean*0.5], c);
       pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, h, lean*0.5], c);
     }
   }
+
+  // Variant 1: Tuft — 5 short upright blades radiating outward in a ring.
+  function buildGrassTuft(pos, col, h, rng) {
+    const th = h * 0.75;
+    for (let i = 0; i < 5; i++) {
+      const a  = (i / 5) * Math.PI * 2 + rng() * 0.25;
+      const sr = h * 0.14;
+      const bx = Math.cos(a) * sr,  bz = Math.sin(a) * sr;
+      const hw = h * 0.28;
+      const tx = Math.cos(a + Math.PI * 0.5) * hw;
+      const tz = Math.sin(a + Math.PI * 0.5) * hw;
+      const lx = Math.cos(a) * h * 0.18, lz = Math.sin(a) * h * 0.18;
+      const c  = i % 2 === 0 ? G_MID : G_LT;
+      pushTri(pos, col, [bx-tx, 0, bz-tz], [bx+tx, 0, bz+tz], [bx+lx, th, bz+lz], c);
+      pushTri(pos, col, [bx+tx, 0, bz+tz], [bx-tx, 0, bz-tz], [bx+lx, th, bz+lz], c);
+    }
+  }
+
+  // Variant 2: Wispy — 2 tall thin blades with strong lean for wind-blown look.
+  function buildGrassWispy(pos, col, h, rng) {
+    const th = h * 1.5;
+    const w  = h * 0.9;
+    for (let i = 0; i < 2; i++) {
+      const a    = (i / 2) * Math.PI + rng() * 0.5;
+      const dx   = Math.cos(a) * w, dz = Math.sin(a) * w;
+      const lean = (rng() - 0.5) * h * 1.1;
+      const c    = i === 0 ? GS_A : G_DARK;
+      pushTri(pos, col, [-dx, 0, -dz], [ dx, 0,  dz], [lean, th, lean * 0.4], c);
+      pushTri(pos, col, [ dx, 0,  dz], [-dx, 0, -dz], [lean, th, lean * 0.4], c);
+    }
+  }
+
+  const GRASS_BUILDERS = [buildGrassClump, buildGrassTuft, buildGrassWispy];
 
   // ── Helpers ───────────────────────────────────────────────────────
   function makeMat(doubleSide) {
@@ -167,27 +203,22 @@ const VEG = (() => {
     return out;
   }
 
-  function fibPt(i, n) {
-    const phi = Math.acos(1 - 2 * (i + 0.5) / n);
-    const th  = Math.PI * (1 + Math.sqrt(5)) * i;
-    return [Math.sin(phi)*Math.cos(th), Math.cos(phi), Math.sin(phi)*Math.sin(th)];
-  }
-
   // ── Public API ────────────────────────────────────────────────────
 
+  // Spawns vegetation attached to terrain face centroids of flatGeo (no floaters).
   // planetSize = mp.obj.state.size (pivot scale); vegetation geometry lives in
   // spin (pre-scale) so divide world-unit targets by size to get local units.
-  function spawnVegetationOnPlanet(spinGroup, baseR, peakScale, waterLevel, planetSeed, planetSize) {
+  // All meshes start hidden; call refreshVisibility to show in walk mode.
+  function spawnVegetationOnPlanet(spinGroup, flatGeo, baseR, peakScale, waterLevel, planetSeed, planetSize) {
     const meshes = [];
     if (!(waterLevel > 0.0001)) return meshes;
 
-    const ps   = Math.max(peakScale, 0.001);
-    const sz   = Math.max(planetSize || 1, 0.05);
-    const liqR = baseR * (0.80 + Math.min(waterLevel, 1) * 0.42);
+    const ps  = Math.max(peakScale, 0.001);
+    const sz  = Math.max(planetSize || 1, 0.05);
 
     // Heights in spin-local space (world height = local × sz via pivot.scale)
-    const treeSc  = TREE_H  / sz;
-    const grassH  = GRASS_H / sz;
+    const treeSc = TREE_H / sz;
+    const grassH = GRASS_H / sz;
 
     let rngS = ((planetSeed * 997 + 1) * 65537) >>> 0;
     function rng() {
@@ -197,46 +228,52 @@ const VEG = (() => {
 
     const treePosArr = [[], [], [], [], []];
     const treeColArr = [[], [], [], [], []];
-    const grassPos   = [], grassCol = [];
+    // Separate geometry per grass variant for visual batching.
+    const grassPos = [[], [], []], grassCol = [[], [], []];
 
-    const SAMPLE_N  = 4800;
     const TREE_MAX  = 180;
-    const GRASS_MAX = 420;
+    const GRASS_MAX = 1400; // abundant grass spread all over green terrain
     let   nTrees = 0, nGrass = 0;
+
+    // Sample terrain faces evenly; face centroid guarantees vegetation is on terrain surface.
+    const posArr     = flatGeo.attributes.position.array;
+    const totalFaces = (posArr.length / 9) | 0;
+    // 5000 target samples ensures grass band is densely covered.
+    const stride = Math.max(1, Math.floor(totalFaces / 5000));
 
     const _yUp = new THREE.Vector3(0, 1, 0);
     const _q   = new THREE.Quaternion();
     const _m   = new THREE.Matrix4();
     const _nv  = new THREE.Vector3();
 
-    for (let i = 0; i < SAMPLE_N; i++) {
+    for (let fi = 0; fi < totalFaces; fi += stride) {
       if (nTrees >= TREE_MAX && nGrass >= GRASS_MAX) break;
 
-      const [fx, fy, fz] = fibPt(i, SAMPLE_N);
-      const jx = fx + (rng() - 0.5) * 0.07;
-      const jy = fy + (rng() - 0.5) * 0.07;
-      const jz = fz + (rng() - 0.5) * 0.07;
-      const jl = Math.sqrt(jx*jx + jy*jy + jz*jz);
-      const nx = jx/jl, ny = jy/jl, nz = jz/jl;
+      const base = fi * 9;
+      // Face centroid
+      const cx = (posArr[base]   + posArr[base+3] + posArr[base+6]) / 3;
+      const cy = (posArr[base+1] + posArr[base+4] + posArr[base+7]) / 3;
+      const cz = (posArr[base+2] + posArr[base+5] + posArr[base+8]) / 3;
 
-      const d = (noise3(nx*1.7+planetSeed, ny*1.7+planetSeed, nz*1.7+planetSeed) * 0.14
-               + noise3(nx*4.0+planetSeed, ny*4.0+planetSeed, nz*4.0+planetSeed) * 0.04) * ps;
+      const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
+      if (cl < 1e-6) continue;
 
-      if (baseR * (1 + d) < liqR) continue;
-
-      const ne = d / ps;
+      // Normalised elevation matches the terrain colorizer formula exactly.
+      const ne = (cl / baseR - 1) / ps;
 
       const wantTree  = ne >= TREE_NE_MIN  && ne <= TREE_NE_MAX  && nTrees < TREE_MAX;
       const wantGrass = ne >= GRASS_NE_MIN && ne <= GRASS_NE_MAX && nGrass < GRASS_MAX;
       if (!wantTree && !wantGrass) continue;
 
+      // Radial outward direction at centroid
+      const nx = cx/cl, ny = cy/cl, nz = cz/cl;
       _nv.set(nx, ny, nz);
       _q.setFromUnitVectors(_yUp, _nv);
       _m.makeRotationFromQuaternion(_q);
-      const surfR = baseR * (1 + d) + grassH * 0.1;
-      _m.setPosition(nx * surfR, ny * surfR, nz * surfR);
+      // Place at the exact face centroid — zero gap, zero float.
+      _m.setPosition(cx, cy, cz);
 
-      // In the overlapping band trees take priority ~1 in 3; rest become grass
+      // In the overlapping band trees take priority ~1 in 3; rest become grass.
       const placeTree = wantTree && (!wantGrass || rng() < 0.35);
 
       if (placeTree) {
@@ -249,10 +286,11 @@ const VEG = (() => {
         treeColArr[v].push(...lc);
       } else if (wantGrass) {
         nGrass++;
+        const gv = Math.floor(rng() * 3); // randomly pick 1 of 3 grass variants
         const lp = [], lc = [];
-        buildGrass(lp, lc, grassH, rng);
-        grassPos.push(...applyMat4(lp, _m));
-        grassCol.push(...lc);
+        GRASS_BUILDERS[gv](lp, lc, grassH, rng);
+        grassPos[gv].push(...applyMat4(lp, _m));
+        grassCol[gv].push(...lc);
       }
     }
 
@@ -261,13 +299,17 @@ const VEG = (() => {
       if (!treePosArr[v].length) continue;
       const mesh = new THREE.Mesh(toGeo(treePosArr[v], treeColArr[v]), treeMat);
       mesh.frustumCulled = false;
+      mesh.visible = false;
       spinGroup.add(mesh);
       meshes.push(mesh);
     }
 
-    if (grassPos.length) {
-      const mesh = new THREE.Mesh(toGeo(grassPos, grassCol), makeMat(true));
+    const grassMat = makeMat(true);
+    for (let gv = 0; gv < 3; gv++) {
+      if (!grassPos[gv].length) continue;
+      const mesh = new THREE.Mesh(toGeo(grassPos[gv], grassCol[gv]), grassMat);
       mesh.frustumCulled = false;
+      mesh.visible = false;
       spinGroup.add(mesh);
       meshes.push(mesh);
     }
@@ -285,5 +327,21 @@ const VEG = (() => {
     }
   }
 
-  return { spawnVegetationOnPlanet, clearVegetation };
+  // Show vegetation on planets within VEG_DIST of camPos (world space) when walkActive.
+  // Called every frame from the render loop.
+  function refreshVisibility(managedPlanets, camPos, walkActive) {
+    if (!managedPlanets) return;
+    for (let i = 0; i < managedPlanets.length; i++) {
+      const mp = managedPlanets[i];
+      if (!mp?.obj?.pivot || !mp?.obj?.setVegVisible) continue;
+      if (!walkActive) {
+        mp.obj.setVegVisible(false);
+        continue;
+      }
+      mp.obj.pivot.getWorldPosition(_refPos);
+      mp.obj.setVegVisible(_refPos.distanceTo(camPos) <= VEG_DIST);
+    }
+  }
+
+  return { spawnVegetationOnPlanet, clearVegetation, refreshVisibility };
 })();

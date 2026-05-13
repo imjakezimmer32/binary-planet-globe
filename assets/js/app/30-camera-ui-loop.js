@@ -334,6 +334,11 @@ function animate() {
   updateCamera(curScale);
   updateDynamicCameraFar();
 
+  // Show vegetation only in walk mode, on planets within viewing distance.
+  if (typeof VEG !== 'undefined' && typeof managedPlanets !== 'undefined') {
+    VEG.refreshVisibility(managedPlanets, camera.position, walkMode.active);
+  }
+
   renderer.render(scene, camera);
 }
 animate();
