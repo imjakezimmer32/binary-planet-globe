@@ -39,10 +39,16 @@
       <span id="planet-panel-title">Planets</span>
       <span id="planet-count" class="pp-count" aria-hidden="true">0</span>
     </div>
+    <button type="button" id="planet-settings-btn" class="planet-settings-btn" aria-expanded="false" aria-controls="planet-settings-popover" aria-label="Planet shape settings" title="Land & sea shape">⚙</button>
     <button type="button" id="add-planet-btn" aria-label="Add planet">+</button>
     <button type="button" id="add-twin-btn" aria-label="Add moon to selected planet orbit" title="Add moon to selected planet orbit">☾</button>
   </div>
   <div id="planet-panel-body">
+    <div id="planet-settings-popover" class="planet-settings-popover" hidden>
+      <div class="planet-settings-popover-title">Land &amp; sea shape</div>
+      <p class="planet-settings-popover-hint">Rebuilds every planet with the same large-scale layout. New moons match their parent.</p>
+      <div id="geography-style-choices" class="geography-style-choices" role="radiogroup" aria-label="Geography layout"></div>
+    </div>
     <div id="planet-list"></div>
     <div id="sun-orbit-sliders" aria-label="Sun orbit distance and tilt">
       <div class="pe-row">

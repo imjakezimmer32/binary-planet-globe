@@ -29,7 +29,112 @@ function getLiquidState(wl, baseR) {
   };
 }
 
-function buildGlobe(radius, detail, seed, ps, wl) {
+function fracUnit(x) {
+  return x - Math.floor(x);
+}
+/** Deterministic unit vector from seed (stable across rebuilds). */
+function hashDir3(seed, salt) {
+  const x = fracUnit(Math.sin(seed * 127.1 + salt * 311.7) * 43758.5453);
+  const y = fracUnit(Math.sin(seed * 269.5 + salt * 419.2) * 23421.8761);
+  const z = fracUnit(Math.sin(seed * 419.3 + salt * 913.4) * 91234.1234);
+  const len = Math.hypot(x, y, z) || 1;
+  return [x / len, y / len, z / len];
+}
+
+const GEOGRAPHY_STYLE_OPTIONS = [
+  { id: 'natural', label: 'Natural', blurb: 'Classic noise—mixed continents and oceans.' },
+  { id: 'pangaea', label: 'Pangaea', blurb: 'One dominant super-continent bias, quieter seas.' },
+  { id: 'archipelago', label: 'Archipelago', blurb: 'Many small land fragments and winding channels.' },
+  { id: 'dual', label: 'Dual continents', blurb: 'Two large land masses on opposite sides.' },
+  { id: 'polar', label: 'Polar caps', blurb: 'Highlands near the poles; more ocean mid-latitudes.' },
+  { id: 'rift', label: 'Rift range', blurb: 'A long mountain belt along a great circle.' },
+  { id: 'atolls', label: 'Atoll chains', blurb: 'Tilted ring of islands—lagoon and reef vibes.' },
+];
+const GEOGRAPHY_STYLE_STORAGE_KEY = 'astrabound-planet-geography-style';
+const DEFAULT_GEOGRAPHY_STYLE = 'natural';
+
+function normalizeGeographyStyle(id) {
+  if (!id) return DEFAULT_GEOGRAPHY_STYLE;
+  return GEOGRAPHY_STYLE_OPTIONS.some(o => o.id === id) ? id : DEFAULT_GEOGRAPHY_STYLE;
+}
+
+function getGlobalGeographyStyle() {
+  try {
+    return normalizeGeographyStyle(localStorage.getItem(GEOGRAPHY_STYLE_STORAGE_KEY));
+  } catch (e) {
+    return DEFAULT_GEOGRAPHY_STYLE;
+  }
+}
+
+function setGlobalGeographyStyle(id) {
+  const n = normalizeGeographyStyle(id);
+  try {
+    localStorage.setItem(GEOGRAPHY_STYLE_STORAGE_KEY, n);
+  } catch (e) { /* ignore */ }
+  return n;
+}
+
+function clampGeographyDelta(v) {
+  return Math.max(-0.13, Math.min(0.13, v));
+}
+
+/**
+ * Macro-scale height bias (same units as the base noise sum before × ps).
+ * Combined with fine noise in buildGlobe to sculpt coastlines / continents.
+ */
+function geographyElevationDelta(nx, ny, nz, seed, styleId) {
+  const s = seed;
+  let raw = 0;
+  switch (normalizeGeographyStyle(styleId)) {
+    case 'natural':
+      raw = 0;
+      break;
+    case 'pangaea': {
+      const w = noise3(nx * 0.28 + s * 0.05, ny * 0.28 + s * 0.09, nz * 0.28 + s * 0.12);
+      raw = w > 0 ? 0.12 * w * w + 0.045 * w : 0.032 * w;
+      break;
+    }
+    case 'archipelago': {
+      const macro = noise3(nx * 0.38 + s, ny * 0.38 + s * 0.43, nz * 0.38 + s * 0.21);
+      const islandR = 1 - Math.abs(noise3(nx * 1.82 + s, ny * 1.82 + s * 0.3, nz * 1.82 + s * 0.55));
+      const speck = Math.abs(noise3(nx * 6.3 + s, ny * 6.3 + s * 0.7, nz * 6.3 + s * 0.45));
+      raw = -0.042 * macro + 0.058 * islandR + 0.036 * speck - 0.014;
+      break;
+    }
+    case 'dual': {
+      const [ax, ay, az] = hashDir3(s, 11);
+      const d = nx * ax + ny * ay + nz * az;
+      const b = Math.exp(-2.85 * (1 - d * d));
+      raw = 0.094 * b - 0.036;
+      break;
+    }
+    case 'polar': {
+      const [px, py, pz] = hashDir3(s, 19);
+      const lat = nx * px + ny * py + nz * pz;
+      raw = 0.084 * (lat * lat * 2.05 - 0.39);
+      break;
+    }
+    case 'rift': {
+      const [rx, ry, rz] = hashDir3(s, 29);
+      const u = nx * rx + ny * ry + nz * rz;
+      raw = 0.098 * Math.exp(-23.5 * u * u) - 0.024;
+      break;
+    }
+    case 'atolls': {
+      const [qx, qy, qz] = hashDir3(s, 37);
+      const lat = nx * qx + ny * qy + nz * qz;
+      const belt = Math.exp(-13.5 * Math.pow(Math.abs(lat) - 0.48, 2));
+      const wobble = 0.52 + 0.48 * noise3(nx * 2.45 + s, ny * 2.45 + s * 0.6, nz * 2.45 + s * 0.35);
+      raw = 0.079 * belt * wobble - 0.02;
+      break;
+    }
+    default:
+      raw = 0;
+  }
+  return clampGeographyDelta(raw);
+}
+
+function buildGlobe(radius, detail, seed, ps, wl, geographyStyle) {
   // ps = peakScale, wl = waterLevel (explicit per-planet)
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
@@ -40,8 +145,10 @@ function buildGlobe(radius, detail, seed, ps, wl) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
-    const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
-             + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
+    const nLo = noise3(nx * 1.7 + seed, ny * 1.7 + seed, nz * 1.7 + seed) * 0.14
+      + noise3(nx * 4.0 + seed, ny * 4.0 + seed, nz * 4.0 + seed) * 0.04;
+    const geoDelta = geographyElevationDelta(nx, ny, nz, seed, geographyStyle);
+    const d = (nLo + geoDelta) * ps;
     // Clamp low terrain only when a liquid exists so 0 stays dry.
     const rawR = radius * (1 + d);
     const r = hasLiquid ? Math.max(rawR, liquidR) : rawR;
@@ -391,7 +498,11 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   let built = [], pickables = [], vegMeshes = [];
 
   // Per-planet state — independent of any global
-  const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
+  const state = Object.assign(
+    { peakScale: 1.0, waterLevel: 0.48, size: 1.0, geographyStyle: getGlobalGeographyStyle() },
+    initState || {}
+  );
+  state.geographyStyle = normalizeGeographyStyle(state.geographyStyle);
 
   let lastBuiltSz = Math.max(state.size ?? 1, 0.05);
 
@@ -415,7 +526,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
     const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
 
-    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl);
+    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl, state.geographyStyle);
     const flatGeo = idxGeo.toNonIndexed();
     const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, seed);
     applySmoothVertexNormalsForNonIndexedTerrain(flatGeo);
