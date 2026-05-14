@@ -39,19 +39,10 @@
       <span id="planet-panel-title">Planets</span>
       <span id="planet-count" class="pp-count" aria-hidden="true">0</span>
     </div>
-    <button type="button" id="terrain-style-btn" class="terrain-style-btn" aria-expanded="false" aria-controls="terrain-style-popover" aria-label="World look: colors and land shape" title="World look">⚙</button>
     <button type="button" id="add-planet-btn" aria-label="Add planet">+</button>
     <button type="button" id="add-twin-btn" aria-label="Add moon to selected planet orbit" title="Add moon to selected planet orbit">☾</button>
   </div>
   <div id="planet-panel-body">
-    <div id="terrain-style-popover" class="terrain-style-popover" hidden>
-      <div class="terrain-style-popover-title">Surface colors</div>
-      <p class="terrain-style-popover-hint">Paint and oceans for every planet. New moons match their parent.</p>
-      <div id="terrain-style-choices" class="terrain-style-choices" role="radiogroup" aria-label="Surface color style"></div>
-      <div class="terrain-style-popover-title terrain-style-popover-title--sub">Land & sea shape</div>
-      <p class="terrain-style-popover-hint">Large-scale layout of continents and channels. Rebuilds all planets.</p>
-      <div id="geography-style-choices" class="terrain-style-choices" role="radiogroup" aria-label="Geography layout"></div>
-    </div>
     <div id="planet-list"></div>
     <div id="sun-orbit-sliders" aria-label="Sun orbit distance and tilt">
       <div class="pe-row">
@@ -112,7 +103,18 @@
 </div>
 
 <div id="galaxy-menu">
-  <button id="galaxy-btn">⬡ Sol System</button>
+  <div class="galaxy-menu-row">
+    <button type="button" id="galaxy-btn">⬡ Sol System</button>
+    <button type="button" id="terrain-style-btn" class="terrain-style-btn" aria-expanded="false" aria-controls="terrain-style-popover" aria-label="World look: colors and land shape" title="World look">⚙</button>
+  </div>
+  <div id="terrain-style-popover" class="terrain-style-popover terrain-style-popover--galaxy" hidden>
+    <div class="terrain-style-popover-title">Surface colors</div>
+    <p class="terrain-style-popover-hint">Paint and oceans for every planet. New moons match their parent.</p>
+    <div id="terrain-style-choices" class="terrain-style-choices" role="radiogroup" aria-label="Surface color style"></div>
+    <div class="terrain-style-popover-title terrain-style-popover-title--sub">Land & sea shape</div>
+    <p class="terrain-style-popover-hint">Large-scale layout of continents and channels. Rebuilds all planets.</p>
+    <div id="geography-style-choices" class="terrain-style-choices" role="radiogroup" aria-label="Geography layout"></div>
+  </div>
   <div id="galaxy-list"></div>
 </div>
 
