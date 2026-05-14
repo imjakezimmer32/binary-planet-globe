@@ -417,7 +417,6 @@ function createSunOrbitPlanet({
   scene.add(newP.pivot);
   newP.pivot.visible = planetsRenderable;
   newP.pivot.position.set(0, 0, 0);
-  newP.setGrid(gridOn);
   registerPlanet(
     newP,
     name || `Planet ${idx+1}`,
@@ -472,7 +471,6 @@ function createPlanetMoonOrbit(parentIdx) {
     _orbitParentWorld.y,
     _orbitParentWorld.z + Math.sin(orbitAngle) * orbitR
   );
-  moon.setGrid(gridOn);
   const sameParentCount = managedPlanets.filter(mp => mp.orbitCenter === 'planet' && mp.orbitParentId === parent.id).length + 1;
   registerPlanet(
     moon,
@@ -1703,7 +1701,5 @@ rebuildPlanetList();
 updateTwinButtonVisibility();
 updateWalkButtonVisibility();
 if (isNarrowPlanetUI()) setPlanetPanelOpen(false);
-// Initial terrain rebuild runs from 30-camera-ui-loop.js after `gridOn` exists — syncGrid()
-// reads gridOn; running rebuild here (before script 30) could throw and leave binary planets
-// on their createPlanet() placeholder detail.
+// Initial terrain rebuild runs from 30-camera-ui-loop.js after managedPlanets exists.
 
