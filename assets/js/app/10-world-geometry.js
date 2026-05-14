@@ -74,64 +74,79 @@ function setGlobalGeographyStyle(id) {
   return n;
 }
 
-function clampGeographyDelta(v) {
-  return Math.max(-0.13, Math.min(0.13, v));
-}
-
 /**
- * Macro-scale height bias (same units as the base noise sum before × ps).
- * Combined with fine noise in buildGlobe to sculpt coastlines / continents.
+ * Radial terrain displacement before × peakScale (same numeric scale as the
+ * classic two-octave noise). Each geography preset is its own recipe — not
+ * the same noise with a tiny additive bias.
  */
-function geographyElevationDelta(nx, ny, nz, seed, styleId) {
+function globeTerrainDisplacement(nx, ny, nz, seed, geographyStyle) {
   const s = seed;
-  let raw = 0;
-  switch (normalizeGeographyStyle(styleId)) {
-    case 'natural':
-      raw = 0;
-      break;
+  const sty = normalizeGeographyStyle(geographyStyle);
+
+  if (sty === 'natural') {
+    return noise3(nx * 1.7 + s, ny * 1.7 + s, nz * 1.7 + s) * 0.14
+      + noise3(nx * 4.0 + s, ny * 4.0 + s, nz * 4.0 + s) * 0.04;
+  }
+
+  let h = 0;
+
+  switch (sty) {
     case 'pangaea': {
-      const w = noise3(nx * 0.28 + s * 0.05, ny * 0.28 + s * 0.09, nz * 0.28 + s * 0.12);
-      raw = w > 0 ? 0.12 * w * w + 0.045 * w : 0.032 * w;
+      const [ax, ay, az] = hashDir3(s, 101);
+      const u = nx * ax + ny * ay + nz * az;
+      const cap = Math.pow(Math.max(0, u + 0.22) / 1.22, 0.55);
+      const uplift = 0.22 * cap * (0.48 + 0.52 * noise3(nx * 0.14 + s * 0.1, ny * 0.14 + s * 0.14, nz * 0.14 + s * 0.09));
+      const abyss = -0.11 * Math.pow(Math.max(0, -u), 1.15);
+      const detail = noise3(nx * 3.1 + s, ny * 3.1 + s, nz * 3.1 + s) * 0.042;
+      h = uplift + abyss + detail;
       break;
     }
     case 'archipelago': {
-      const macro = noise3(nx * 0.38 + s, ny * 0.38 + s * 0.43, nz * 0.38 + s * 0.21);
-      const islandR = 1 - Math.abs(noise3(nx * 1.82 + s, ny * 1.82 + s * 0.3, nz * 1.82 + s * 0.55));
-      const speck = Math.abs(noise3(nx * 6.3 + s, ny * 6.3 + s * 0.7, nz * 6.3 + s * 0.45));
-      raw = -0.042 * macro + 0.058 * islandR + 0.036 * speck - 0.014;
+      const plate = noise3(nx * 0.52 + s, ny * 0.52 + s * 0.33, nz * 0.52 + s * 0.61);
+      const ridge = Math.pow(Math.max(0, 1 - Math.abs(plate)), 2.35);
+      const speck = Math.abs(noise3(nx * 8.5 + s, ny * 8.5 + s * 0.7, nz * 8.5 + s * 0.45));
+      const swell = noise3(nx * 0.18 + s, ny * 0.18 + s, nz * 0.18 + s) * 0.028;
+      h = -0.11 + swell + 0.095 * ridge * (0.28 + speck) + noise3(nx * 4.2 + s, ny * 4.2 + s, nz * 4.2 + s) * 0.036;
       break;
     }
     case 'dual': {
-      const [ax, ay, az] = hashDir3(s, 11);
+      const [ax, ay, az] = hashDir3(s, 207);
       const d = nx * ax + ny * ay + nz * az;
-      const b = Math.exp(-2.85 * (1 - d * d));
-      raw = 0.094 * b - 0.036;
+      const lobe = Math.exp(-6.4 * (d - 0.66) * (d - 0.66)) + Math.exp(-6.4 * (d + 0.66) * (d + 0.66));
+      h = 0.16 * lobe - 0.035 + noise3(nx * 3.6 + s, ny * 3.6 + s, nz * 3.6 + s) * 0.04;
       break;
     }
     case 'polar': {
-      const [px, py, pz] = hashDir3(s, 19);
-      const lat = nx * px + ny * py + nz * pz;
-      raw = 0.084 * (lat * lat * 2.05 - 0.39);
+      const [px, py, pz] = hashDir3(s, 309);
+      const L = Math.abs(nx * px + ny * py + nz * pz);
+      const caps = 0.21 * Math.pow(L, 1.75);
+      const tropics = -0.1 * (1 - L) * (1 - L);
+      h = caps + tropics + noise3(nx * 2.9 + s, ny * 2.9 + s, nz * 2.9 + s) * 0.038;
       break;
     }
     case 'rift': {
-      const [rx, ry, rz] = hashDir3(s, 29);
+      const [rx, ry, rz] = hashDir3(s, 401);
       const u = nx * rx + ny * ry + nz * rz;
-      raw = 0.098 * Math.exp(-23.5 * u * u) - 0.024;
+      const spine = Math.exp(-24 * u * u);
+      const serr = (1 - Math.abs(noise3(nx * 5.8 + s, ny * 5.8 + s, nz * 5.8 + s))) * 0.09;
+      h = 0.15 * spine + serr - 0.065 + noise3(nx * 2.3 + s, ny * 2.3 + s, nz * 2.3 + s) * 0.032;
       break;
     }
     case 'atolls': {
-      const [qx, qy, qz] = hashDir3(s, 37);
-      const lat = nx * qx + ny * qy + nz * qz;
-      const belt = Math.exp(-13.5 * Math.pow(Math.abs(lat) - 0.48, 2));
-      const wobble = 0.52 + 0.48 * noise3(nx * 2.45 + s, ny * 2.45 + s * 0.6, nz * 2.45 + s * 0.35);
-      raw = 0.079 * belt * wobble - 0.02;
+      const [qx, qy, qz] = hashDir3(s, 503);
+      const L = nx * qx + ny * qy + nz * qz;
+      const t = Math.abs(L);
+      const ring = Math.exp(-48 * (t - 0.5) * (t - 0.5));
+      const w = noise3(nx * 2.0 + s, ny * 2.0 + s * 0.55, nz * 2.0 + s * 0.33);
+      h = -0.095 * (1 - ring) + 0.125 * ring * (0.32 + 0.68 * w * w) + noise3(nx * 7.5 + s, ny * 7.5 + s, nz * 7.5 + s) * 0.03;
       break;
     }
     default:
-      raw = 0;
+      h = noise3(nx * 1.7 + s, ny * 1.7 + s, nz * 1.7 + s) * 0.14
+        + noise3(nx * 4.0 + s, ny * 4.0 + s, nz * 4.0 + s) * 0.04;
   }
-  return clampGeographyDelta(raw);
+
+  return Math.max(-0.26, Math.min(0.3, h));
 }
 
 function buildGlobe(radius, detail, seed, ps, wl, geographyStyle) {
@@ -145,10 +160,7 @@ function buildGlobe(radius, detail, seed, ps, wl, geographyStyle) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
-    const nLo = noise3(nx * 1.7 + seed, ny * 1.7 + seed, nz * 1.7 + seed) * 0.14
-      + noise3(nx * 4.0 + seed, ny * 4.0 + seed, nz * 4.0 + seed) * 0.04;
-    const geoDelta = geographyElevationDelta(nx, ny, nz, seed, geographyStyle);
-    const d = (nLo + geoDelta) * ps;
+    const d = globeTerrainDisplacement(nx, ny, nz, seed, geographyStyle) * ps;
     // Clamp low terrain only when a liquid exists so 0 stays dry.
     const rawR = radius * (1 + d);
     const r = hasLiquid ? Math.max(rawR, liquidR) : rawR;
@@ -860,9 +872,11 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 //   20-planet-management.js).
 //
 // • Terrain = displaced icosphere from createPlanet → buildGlobe (noise moves
-//   vertices along the radius). For *resizing* the planet, icosahedron detail is
-//   chosen so subdivisions track shell radius (~constant mean edge length in
-//   world units; triangle count grows with area). See terrainDetailForManagedPlanet.
+//   vertices along the radius). Geography presets replace the height recipe via
+//   globeTerrainDisplacement (not the same classic noise with a tiny offset).
+//   For *resizing* the planet, icosahedron detail is chosen so subdivisions track
+//   shell radius (~constant mean edge length in world units; triangle count grows
+//   with area). See terrainDetailForManagedPlanet.
 //
 // • “SCALE” on the HUD (curScale / targetScale) moves the *camera orbit radius*
 //   (see updateCamera in 00-core-camera-walk.js); it does not resize planet
