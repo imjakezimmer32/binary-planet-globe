@@ -221,18 +221,19 @@ const WALK_CFG = {
   /**
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
+   * Values follow the same net scale as min gravity 0.10 → 0.12 → 0.08 (×0.8 vs original 0.10 baseline).
    */
   walkGravityMin: 0.08,
-  walkGravityMax: 0.20,
+  walkGravityMax: 0.208,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.22,
-  walkMaxFallMax: 0.40,
+  walkMaxFallMin: 0.224,
+  walkMaxFallMax: 0.416,
   /**
-   * Airborne radial gravity curve: fall slightly stronger than rise for a readable arc.
-   * Rise kept close to 1 so ascent is smooth; fall mul modest so drops are decisive without feeling harsh.
+   * Airborne radial gravity curve (multipliers on `walkG`). Scaled ×0.8 vs original 1.16 / 1.78
+   * to match the same min-gravity lineage (0.10 → 0.12 → 0.08).
    */
-  jumpGravityRiseMul: 1.06,
-  jumpGravityFallMul: 1.48,
+  jumpGravityRiseMul: 0.928,
+  jumpGravityFallMul: 1.424,
   /**
    * Jump apex above feet (world units along radial “up”); launch speed = sqrt(2 × g × height).
    */
