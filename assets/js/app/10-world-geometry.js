@@ -731,6 +731,26 @@ function applySmoothVertexNormalsForNonIndexedTerrain(geo) {
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nArr, 3));
 }
 
+/** Copy known scalar fields from an init blob — avoids aliasing another planet's `state` object. */
+function mergePlanetInitState(rawInit) {
+  if (!rawInit || typeof rawInit !== 'object') return {};
+  const out = {};
+  const numericKeys = ['peakScale', 'waterLevel', 'size', 'planetSeed', 'axisTilt'];
+  for (let i = 0; i < numericKeys.length; i++) {
+    const k = numericKeys[i];
+    if (!(k in rawInit)) continue;
+    const n = Number(rawInit[k]);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  if ('terrainStyle' in rawInit && rawInit.terrainStyle != null && rawInit.terrainStyle !== '') {
+    out.terrainStyle = String(rawInit.terrainStyle);
+  }
+  if ('geographyStyle' in rawInit && rawInit.geographyStyle != null && rawInit.geographyStyle !== '') {
+    out.geographyStyle = String(rawInit.geographyStyle);
+  }
+  return out;
+}
+
 // ── Planet factory ────────────────────────────────────────────────
 function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   const pivot = new THREE.Group();
@@ -747,11 +767,16 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       size: 1.0,
       terrainStyle: getGlobalTerrainStyle(),
       geographyStyle: getGlobalGeographyStyle(),
+      planetSeed: seed,
+      axisTilt: axisTilt,
     },
-    initState || {}
+    mergePlanetInitState(initState)
   );
   state.terrainStyle = normalizeTerrainStyle(state.terrainStyle);
   state.geographyStyle = normalizeGeographyStyle(state.geographyStyle);
+  state.planetSeed = Number.isFinite(Number(state.planetSeed)) ? Number(state.planetSeed) : seed;
+  state.axisTilt = Number.isFinite(Number(state.axisTilt)) ? Number(state.axisTilt) : axisTilt;
+  spin.rotation.z = state.axisTilt;
 
   let lastBuiltSz = Math.max(state.size ?? 1, 0.05);
 
@@ -775,9 +800,10 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
     const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
 
-    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl, state.geographyStyle);
+    const psd = state.planetSeed;
+    const idxGeo  = buildGlobe(shellR, buildDetail, psd, ps, wl, state.geographyStyle);
     const flatGeo = idxGeo.toNonIndexed();
-    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, seed, state.terrainStyle);
+    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, psd, state.terrainStyle);
     applySmoothVertexNormalsForNonIndexedTerrain(flatGeo);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
@@ -843,7 +869,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     pickables = [terrain];
     spin.add(...built);
     if (!skipVeg && typeof VEG !== 'undefined') {
-      vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, shellR, state.peakScale, state.waterLevel, seed, 1);
+      vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, shellR, state.peakScale, state.waterLevel, psd, 1);
     }
   }
 
@@ -891,9 +917,27 @@ const sysGroup = new THREE.Group();
 scene.add(sysGroup);
 
 // Same baseRadius so the starting pair share the same LOD-vs-radius curve.
-const p1 = createPlanet(1.00, 7, 0.00,  0.22);
-const p2 = createPlanet(1.00, 7, 5.37, -0.38);
+var p1 = createPlanet(1.00, 7, 0.00,  0.22);
+var p2 = createPlanet(1.00, 7, 5.37, -0.38);
 sysGroup.add(p1.pivot, p2.pivot);
+
+/** Binary mass model: always read `managedPlanets[0]` / `[1]` when those entries are the binary pair (single source of truth). */
+function getBinaryMassesForPhysics() {
+  if (typeof managedPlanets !== 'undefined' && managedPlanets.length >= 2) {
+    const a = managedPlanets[0];
+    const b = managedPlanets[1];
+    if (a?.isBinary && b?.isBinary && a.obj?.state && b.obj?.state) {
+      return {
+        mass1: BASE_M1 * Math.pow(Math.max(a.obj.state.size, 0.2), 3),
+        mass2: BASE_M2 * Math.pow(Math.max(b.obj.state.size, 0.2), 3),
+      };
+    }
+  }
+  return {
+    mass1: BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3),
+    mass2: BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3),
+  };
+}
 
 // ── Orbit trails (in sysGroup local space = binary-relative) ──────
 const TRAIL_LEN = 520;
@@ -1124,6 +1168,12 @@ dialWarp.addEventListener('input', () => {
   timeWarp = parseFloat(dialWarp.value);
   lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
   syncSunRadialReadouts();
+});
+if (dialScale) dialScale.addEventListener('change', () => {
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
+});
+if (dialWarp) dialWarp.addEventListener('change', () => {
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 });
 
 /** Matches initial HTML dial default (1×). Called when entering walk mode. */

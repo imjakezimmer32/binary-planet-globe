@@ -413,7 +413,14 @@ function createSunOrbitPlanet({
   const idx   = managedPlanets.length;
   const seed  = Math.random() * 99;
   const color = PLANET_COLORS[idx % PLANET_COLORS.length];
-  const newP  = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, initState);
+  const mergedInit = Object.assign(
+    {
+      terrainStyle: getGlobalTerrainStyle(),
+      geographyStyle: getGlobalGeographyStyle(),
+    },
+    mergePlanetInitState(initState)
+  );
+  const newP  = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, mergedInit);
   scene.add(newP.pivot);
   newP.pivot.visible = planetsRenderable;
   newP.pivot.position.set(0, 0, 0);
@@ -439,6 +446,7 @@ function createSunOrbitPlanet({
   ensureSunTrail(mp);
   rebuildManagedPlanetTerrain(mp);
   syncTrailVisibility();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
   return newIdx;
 }
 
@@ -458,13 +466,13 @@ function createPlanetMoonOrbit(parentIdx) {
   const spinRateBase = 0.008 + Math.random() * 0.008;
   const tilt = (Math.random() - 0.5) * 0.6;
   const baseRadius = Math.max(0.22, Math.min(0.65, parentRadius * (0.28 + Math.random() * 0.2)));
-  const moon = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, {
+  const moon = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, mergePlanetInitState({
     peakScale: parent.obj.state.peakScale,
     waterLevel: parent.obj.state.waterLevel,
     size: Math.max(0.25, parent.obj.state.size * (0.35 + Math.random() * 0.25)),
     terrainStyle: parent.obj.state.terrainStyle || getGlobalTerrainStyle(),
     geographyStyle: parent.obj.state.geographyStyle || getGlobalGeographyStyle(),
-  });
+  }));
   scene.add(moon.pivot);
   moon.pivot.visible = planetsRenderable;
   parent.obj.pivot.getWorldPosition(_orbitParentWorld);
@@ -492,6 +500,7 @@ function createPlanetMoonOrbit(parentIdx) {
   ensureMoonTrail(managedPlanets[moonIdx]);
   rebuildManagedPlanetTerrain(managedPlanets[moonIdx]);
   syncTrailVisibility();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
   return moonIdx;
 }
 
@@ -548,7 +557,26 @@ const planetRadialState = {
   /** Frozen HTML ring diameter (px) while editing this selection so size edits do not resize the UI */
   ringSizePxLock: null,
   ringLockSelectionIdx: null,
+  /** Planet list index this radial gesture belongs to (survives selection changes mid-drag). */
+  editingPlanetIdx: null,
 };
+/** While HTML range dials are gripped/focused, edits stay on that planet even if the list selection changes. */
+let _planetDialLockIdx = null;
+function lockPlanetEditDialTarget() {
+  if (selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]) {
+    _planetDialLockIdx = selectedPlanetIdx;
+  }
+}
+function clearPlanetEditDialTarget() {
+  _planetDialLockIdx = null;
+}
+function resolvePlanetEditIndex() {
+  if (planetRadialState.dragPointerId !== null && planetRadialState.editingPlanetIdx !== null) {
+    return planetRadialState.editingPlanetIdx;
+  }
+  if (_planetDialLockIdx !== null && managedPlanets[_planetDialLockIdx]) return _planetDialLockIdx;
+  return selectedPlanetIdx;
+}
 const sunRadialEditorEl = $('sun-radial-editor');
 const sunRadialRingEl = $('sun-radial-ring');
 const sunRadialGuideEl = $('sun-radial-guide');
@@ -814,19 +842,19 @@ function applySunOrbitFromSliders() {
   const inc = (tiltClamped * Math.PI) / 180;
   reapplySunOrbiterCircularOrbit(mp, r, inc);
   updateSunOrbitSliderLabels();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 }
 
-function finalizePlanetSizeAfterRadialDrag() {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  if (!mp) return;
+function finalizePlanetSizeAfterRadialDrag(lockedPlanetIdx) {
+  const idx = lockedPlanetIdx !== undefined && lockedPlanetIdx !== null ? lockedPlanetIdx : resolvePlanetEditIndex();
+  if (idx === null || idx === undefined || !managedPlanets[idx]) return;
+  const mp = managedPlanets[idx];
   mp.obj.state.size = quantizePlanetEditValue(
     'size',
     clampPlanetEditValue('size', mp.obj.state.size)
   );
   if (mp.isBinary) {
-    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const { mass1: mass1Now, mass2: mass2Now } = getBinaryMassesForPhysics();
     refreshBinaryPairForMassChange(mass1Now, mass2Now);
     binaryPrevMass1 = mass1Now;
     binaryPrevMass2 = mass2Now;
@@ -836,12 +864,13 @@ function finalizePlanetSizeAfterRadialDrag() {
   if (mp.obj.clearScalePreview) mp.obj.clearScalePreview();
   rebuildManagedPlanetTerrain(mp);
   if (typeof resetPlanetViewShellRadiusSmoothed === 'function') resetPlanetViewShellRadiusSmoothed();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 }
 
 function applyPlanetEditSetting(setting, rawValue, skipVeg) {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  if (!mp) return;
+  const idx = resolvePlanetEditIndex();
+  if (idx === null || idx === undefined || !managedPlanets[idx]) return;
+  const mp = managedPlanets[idx];
   const inRadialSizeDrag = setting === 'size' && planetRadialState.dragSetting === 'size';
   const rawClamped = clampPlanetEditValue(setting, rawValue);
   let nextValue;
@@ -863,8 +892,7 @@ function applyPlanetEditSetting(setting, rawValue, skipVeg) {
       mp.obj.setScalePreview(nextValue);
     } else {
       if (mp.isBinary && !inRadialSizeDrag) {
-        const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-        const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+        const { mass1: mass1Now, mass2: mass2Now } = getBinaryMassesForPhysics();
         refreshBinaryPairForMassChange(mass1Now, mass2Now);
         binaryPrevMass1 = mass1Now;
         binaryPrevMass2 = mass2Now;
@@ -884,6 +912,7 @@ function applyPlanetEditSetting(setting, rawValue, skipVeg) {
 
 function hidePlanetRadialEditor() {
   const wasSizeRadialDrag = planetRadialState.dragSetting === 'size';
+  const radialLockIdx = planetRadialState.editingPlanetIdx;
   _prevPlanetEdCx = _prevPlanetEdCy = _prevPlanetEdRing = null;
   if (planetRadialEditorEl) planetRadialEditorEl.style.display = 'none';
   planetRadialState.visible = false;
@@ -897,7 +926,8 @@ function hidePlanetRadialEditor() {
   planetRadialState.ringLockSelectionIdx = null;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
-  if (wasSizeRadialDrag) finalizePlanetSizeAfterRadialDrag();
+  if (wasSizeRadialDrag) finalizePlanetSizeAfterRadialDrag(radialLockIdx);
+  planetRadialState.editingPlanetIdx = null;
 }
 
 function updatePlanetRadialKnobPositions(mp) {
@@ -1123,6 +1153,7 @@ function applySunEditSetting(setting, rawValue) {
     if (lblWarp) lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
   }
   syncSunRadialReadouts();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 }
 function hideSunRadialEditor() {
   _prevSunEdCx = _prevSunEdCy = _prevSunEdRing = null;
@@ -1361,6 +1392,14 @@ if (planetPanelHeader) {
 
 function selectPlanet(idx) {
   selectedPlanetIdx = idx;
+  _prevPlanetReadoutMpId = null;
+  _prevPlanetReadoutSize = null;
+  _prevPlanetReadoutPeak = null;
+  _prevPlanetReadoutWater = null;
+  _prevPlanetKnobR = null;
+  _prevPlanetKnobSize = null;
+  _prevPlanetKnobPeak = null;
+  _prevPlanetKnobWater = null;
   panOffset.set(0, 0, 0);
   rebuildPlanetList();
   const mp = idx !== null && idx !== undefined ? managedPlanets[idx] : null;
@@ -1377,7 +1416,18 @@ function selectPlanet(idx) {
   updateWalkButtonVisibility();
   updatePlanetSelectionEditor();
   rebuildGalaxyMenu();
+  if (!terrainStylePopover?.hasAttribute('hidden')) {
+    syncTerrainStyleChoiceMarks();
+    syncGeographyStyleChoiceMarks();
+  }
 }
+
+// Keep slider edits on the planet that started the drag — changing the list mid-drag must not retarget.
+[dialSizeE, dialPeakE, dialWaterE].forEach(el => {
+  if (!el) return;
+  el.addEventListener('pointerdown', lockPlanetEditDialTarget, true);
+  el.addEventListener('focus', lockPlanetEditDialTarget);
+});
 
 // Size: scale-preview is free, run immediately on every event.
 dialSizeE.addEventListener('input',  () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value),  true));
@@ -1392,18 +1442,23 @@ dialPeakE.addEventListener('input',  () => { _pendingDialPeak  = parseFloat(dial
 dialWaterE.addEventListener('input', () => { _pendingDialWater = parseFloat(dialWaterE.value); if (!_dialDragRafId) _dialDragRafId = requestAnimationFrame(_flushDialDrag); });
 // On release: reset scale preview (size dial), then full rebuild restores correct geometry + veg.
 const _restoreVegOnDialRelease = () => {
-  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-  if (!mp) return;
+  const idx = resolvePlanetEditIndex();
+  if (idx === null || idx === undefined || !managedPlanets[idx]) {
+    clearPlanetEditDialTarget();
+    return;
+  }
+  const mp = managedPlanets[idx];
   if (mp.obj.clearScalePreview) mp.obj.clearScalePreview();
   // Recalculate binary mass/orbit now that size is finalised.
   if (mp.isBinary) {
-    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const { mass1: mass1Now, mass2: mass2Now } = getBinaryMassesForPhysics();
     refreshBinaryPairForMassChange(mass1Now, mass2Now);
     binaryPrevMass1 = mass1Now;
     binaryPrevMass2 = mass2Now;
   }
   rebuildManagedPlanetTerrain(mp);
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
+  clearPlanetEditDialTarget();
 };
 if (dialSizeE) {
   dialSizeE.addEventListener('change', () => {
@@ -1429,9 +1484,25 @@ addTwinBtn.addEventListener('click', e => {
   addMoonFromSelectionUi();
 });
 
+function getTerrainStyleForWorldLookUi() {
+  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
+  if (mp?.obj?.state && typeof normalizeTerrainStyle === 'function') {
+    return normalizeTerrainStyle(mp.obj.state.terrainStyle);
+  }
+  return typeof getGlobalTerrainStyle === 'function' ? getGlobalTerrainStyle() : 'earth';
+}
+
+function getGeographyStyleForWorldLookUi() {
+  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
+  if (mp?.obj?.state && typeof normalizeGeographyStyle === 'function') {
+    return normalizeGeographyStyle(mp.obj.state.geographyStyle);
+  }
+  return typeof getGlobalGeographyStyle === 'function' ? getGlobalGeographyStyle() : 'natural';
+}
+
 function syncTerrainStyleChoiceMarks() {
-  if (!terrainStyleChoices || typeof getGlobalTerrainStyle !== 'function') return;
-  const cur = getGlobalTerrainStyle();
+  if (!terrainStyleChoices) return;
+  const cur = getTerrainStyleForWorldLookUi();
   terrainStyleChoices.querySelectorAll('.terrain-style-choice').forEach(btn => {
     const on = btn.dataset.style === cur;
     btn.classList.toggle('selected', on);
@@ -1440,8 +1511,8 @@ function syncTerrainStyleChoiceMarks() {
 }
 
 function syncGeographyStyleChoiceMarks() {
-  if (!geographyStyleChoices || typeof getGlobalGeographyStyle !== 'function') return;
-  const cur = getGlobalGeographyStyle();
+  if (!geographyStyleChoices) return;
+  const cur = getGeographyStyleForWorldLookUi();
   geographyStyleChoices.querySelectorAll('.terrain-style-choice').forEach(btn => {
     const on = btn.dataset.style === cur;
     btn.classList.toggle('selected', on);
@@ -1463,7 +1534,8 @@ function buildTerrainStyleChoices() {
       : `<span class="tsc-label">${opt.label}</span>`;
     b.addEventListener('click', e => {
       e.stopPropagation();
-      applyTerrainStyleEverywhere(opt.id);
+      if (selectedPlanetIdx === null || !managedPlanets[selectedPlanetIdx]) return;
+      applyTerrainStyleToSelection(opt.id);
       setTerrainStylePopoverOpen(false);
     });
     terrainStyleChoices.appendChild(b);
@@ -1485,7 +1557,8 @@ function buildGeographyStyleChoices() {
       : `<span class="tsc-label">${opt.label}</span>`;
     b.addEventListener('click', e => {
       e.stopPropagation();
-      applyGeographyStyleEverywhere(opt.id);
+      if (selectedPlanetIdx === null || !managedPlanets[selectedPlanetIdx]) return;
+      applyGeographyStyleToSelection(opt.id);
       setTerrainStylePopoverOpen(false);
     });
     geographyStyleChoices.appendChild(b);
@@ -1493,20 +1566,24 @@ function buildGeographyStyleChoices() {
   syncGeographyStyleChoiceMarks();
 }
 
-function applyTerrainStyleEverywhere(id) {
-  const norm = typeof setGlobalTerrainStyle === 'function' ? setGlobalTerrainStyle(id) : 'earth';
-  managedPlanets.forEach(mp => {
-    if (mp?.obj?.state) mp.obj.state.terrainStyle = norm;
-    rebuildManagedPlanetTerrain(mp);
-  });
+function applyTerrainStyleToSelection(id) {
+  if (selectedPlanetIdx === null || !managedPlanets[selectedPlanetIdx]?.obj?.state) return;
+  const norm = typeof normalizeTerrainStyle === 'function' ? normalizeTerrainStyle(id) : 'earth';
+  const mp = managedPlanets[selectedPlanetIdx];
+  mp.obj.state.terrainStyle = norm;
+  rebuildManagedPlanetTerrain(mp);
+  syncTerrainStyleChoiceMarks();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 }
 
-function applyGeographyStyleEverywhere(id) {
-  const norm = typeof setGlobalGeographyStyle === 'function' ? setGlobalGeographyStyle(id) : 'natural';
-  managedPlanets.forEach(mp => {
-    if (mp?.obj?.state) mp.obj.state.geographyStyle = norm;
-    rebuildManagedPlanetTerrain(mp);
-  });
+function applyGeographyStyleToSelection(id) {
+  if (selectedPlanetIdx === null || !managedPlanets[selectedPlanetIdx]?.obj?.state) return;
+  const norm = typeof normalizeGeographyStyle === 'function' ? normalizeGeographyStyle(id) : 'natural';
+  const mp = managedPlanets[selectedPlanetIdx];
+  mp.obj.state.geographyStyle = norm;
+  rebuildManagedPlanetTerrain(mp);
+  syncGeographyStyleChoiceMarks();
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 }
 
 function setTerrainStylePopoverOpen(open) {
@@ -1649,6 +1726,7 @@ if (planetRadialEditorEl) {
     if (selectedPlanetIdx === null || !planetRadialState.visible) return;
     e.preventDefault();
     e.stopPropagation();
+    planetRadialState.editingPlanetIdx = selectedPlanetIdx;
     planetRadialState.dragSetting = setting;
     planetRadialState.dragPointerId = e.pointerId;
     const mp = managedPlanets[selectedPlanetIdx];
@@ -1681,6 +1759,7 @@ if (planetRadialEditorEl) {
     if (planetRadialState.dragPointerId !== e.pointerId) return;
     e.preventDefault();
     const endedSetting = planetRadialState.dragSetting;
+    const radialLockIdx = planetRadialState.editingPlanetIdx;
     planetRadialState.dragSetting = null;
     planetRadialState.dragPointerId = null;
     planetRadialState.dragPointerStartDeg = null;
@@ -1692,12 +1771,12 @@ if (planetRadialEditorEl) {
     });
     updatePlanetRadialFocusVisuals();
     if (endedSetting === 'size') {
-      finalizePlanetSizeAfterRadialDrag();
-    } else if (endedSetting) {
-      // peak / water were rebuilt at preview detail during drag — snap to full quality now.
-      const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-      if (mp) rebuildManagedPlanetTerrain(mp);
+      finalizePlanetSizeAfterRadialDrag(radialLockIdx);
+    } else if (endedSetting && radialLockIdx !== null && radialLockIdx !== undefined) {
+      const mpEnd = managedPlanets[radialLockIdx];
+      if (mpEnd) rebuildManagedPlanetTerrain(mpEnd);
     }
+    planetRadialState.editingPlanetIdx = null;
   };
   Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
     if (!knob) return;
@@ -1811,6 +1890,313 @@ window.addEventListener('keyup', e => {
 window.addEventListener('blur', () => {
   walkInput.shiftRun = false;
 });
+
+// ── Universe persistence (localStorage): per-planet styles, added worlds, orbits ──
+const UNIVERSE_STORAGE_KEY = 'astrabound-universe-v2';
+let _universeSaveTimer = null;
+
+function disposePlanetObjectGraphics(obj) {
+  if (!obj || !obj.pivot || typeof obj.pivot.traverse !== 'function') return;
+  obj.pivot.traverse(ch => {
+    if (ch.geometry) ch.geometry.dispose();
+    if (ch.material) {
+      const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+      mats.forEach(m => { if (m && m.dispose) m.dispose(); });
+    }
+  });
+}
+
+function removeManagedPlanetEntryAt(i) {
+  const mp = managedPlanets[i];
+  if (!mp) return;
+  if (mp.obj?.pivot) {
+    if (mp.isBinary) sysGroup.remove(mp.obj.pivot);
+    else scene.remove(mp.obj.pivot);
+    disposePlanetObjectGraphics(mp.obj);
+  }
+  if (mp.trail?.line) scene.remove(mp.trail.line);
+}
+
+function clearUniverseManagedPlanetsForHydrate() {
+  for (let i = managedPlanets.length - 1; i >= 0; i--) {
+    removeManagedPlanetEntryAt(i);
+  }
+  managedPlanets.length = 0;
+}
+
+function serializePlanetBody(mp) {
+  const st = mp?.obj?.state;
+  if (!st) return null;
+  const row = {
+    name: mp.name,
+    color: mp.color,
+    isBinary: !!mp.isBinary,
+    orbitCenter: mp.orbitCenter,
+    orbitSlotKey: mp.orbitSlotKey,
+    orbitParentId: mp.orbitParentId,
+    orbitInclination: mp.orbitInclination,
+    orbitR: mp.orbitR,
+    orbitBaseR: mp.orbitBaseR,
+    orbitSpeed: mp.orbitSpeed,
+    angle: mp.angle,
+    spinRateBase: mp.spinRateBase,
+    spinAngle: mp.spinAngle,
+    baseRadius: mp.obj.baseRadius,
+    peakScale: st.peakScale,
+    waterLevel: st.waterLevel,
+    size: st.size,
+    terrainStyle: st.terrainStyle,
+    geographyStyle: st.geographyStyle,
+    planetSeed: st.planetSeed,
+    axisTilt: st.axisTilt,
+  };
+  if (mp.orbitPos) row.orbitPos = { x: mp.orbitPos.x, y: mp.orbitPos.y, z: mp.orbitPos.z };
+  if (mp.orbitVel) row.orbitVel = { x: mp.orbitVel.x, y: mp.orbitVel.y, z: mp.orbitVel.z };
+  return row;
+}
+
+function serializeUniverseSnapshot() {
+  const bodies = managedPlanets.map(serializePlanetBody).filter(Boolean);
+  const destIdx = typeof currentDestIndex !== 'undefined' ? currentDestIndex : 0;
+  return {
+    v: 2,
+    bodies,
+    comAngle: typeof comAngle === 'number' ? comAngle : 0,
+    binaryPhase: typeof binaryPhase === 'number' ? binaryPhase : 0,
+    sunSpin: typeof sunSpin === 'number' ? sunSpin : 0,
+    selectedPlanetIdx,
+    targetScale: typeof targetScale === 'number' ? targetScale : 1,
+    curScale: typeof curScale === 'number' ? curScale : 1,
+    timeWarp: typeof timeWarp === 'number' ? timeWarp : 1,
+    orbitTheta: typeof orbitTheta === 'number' ? orbitTheta : null,
+    orbitPhi: typeof orbitPhi === 'number' ? orbitPhi : null,
+    orbitZoom: typeof orbitZoom === 'number' ? orbitZoom : null,
+    cameraMode: typeof cameraMode === 'string' ? cameraMode : 'sun',
+    currentDestIndex: destIdx,
+    templateTerrain: typeof getGlobalTerrainStyle === 'function' ? getGlobalTerrainStyle() : 'earth',
+    templateGeography: typeof getGlobalGeographyStyle === 'function' ? getGlobalGeographyStyle() : 'natural',
+  };
+}
+
+function flushUniverseSaveToStorage() {
+  if (_universeSaveTimer) {
+    clearTimeout(_universeSaveTimer);
+    _universeSaveTimer = null;
+  }
+  try {
+    localStorage.setItem(UNIVERSE_STORAGE_KEY, JSON.stringify(serializeUniverseSnapshot()));
+  } catch (e) { /* quota / private mode */ }
+}
+
+function requestUniverseSave() {
+  if (_universeSaveTimer) clearTimeout(_universeSaveTimer);
+  _universeSaveTimer = setTimeout(() => {
+    _universeSaveTimer = null;
+    flushUniverseSaveToStorage();
+  }, 400);
+}
+
+function tryHydrateUniverseFromStorage() {
+  let raw;
+  try {
+    raw = localStorage.getItem(UNIVERSE_STORAGE_KEY);
+  } catch (e) {
+    return false;
+  }
+  if (!raw) return false;
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    return false;
+  }
+  if (!data || data.v !== 2 || !Array.isArray(data.bodies) || data.bodies.length < 2) return false;
+  if (!data.bodies[0].isBinary || !data.bodies[1].isBinary) return false;
+
+  clearUniverseManagedPlanetsForHydrate();
+
+  const d0 = Math.max(1, (typeof curDetail !== 'undefined' ? curDetail : 7) - 1);
+
+  for (let i = 0; i < data.bodies.length; i++) {
+    const b = data.bodies[i];
+    const seed = Number.isFinite(Number(b.planetSeed)) ? Number(b.planetSeed) : Math.random() * 99;
+    const tilt = Number.isFinite(Number(b.axisTilt)) ? Number(b.axisTilt) : 0;
+    const baseR = Number.isFinite(Number(b.baseRadius)) ? Number(b.baseRadius) : 0.8;
+    const initState = mergePlanetInitState({
+      peakScale: b.peakScale,
+      waterLevel: b.waterLevel,
+      size: b.size,
+      terrainStyle: b.terrainStyle,
+      geographyStyle: b.geographyStyle,
+      planetSeed: seed,
+      axisTilt: tilt,
+    });
+
+    if (b.isBinary) {
+      if (i > 1) continue;
+      const pl = createPlanet(baseR, d0, seed, tilt, initState);
+      if (i === 0) {
+        p1 = pl;
+        sysGroup.add(p1.pivot);
+      } else {
+        p2 = pl;
+        sysGroup.add(p2.pivot);
+      }
+      registerPlanet(
+        pl,
+        b.name || (i === 0 ? 'Planet 1' : 'Planet 2'),
+        b.color || PLANET_COLORS[i % PLANET_COLORS.length],
+        true,
+        b.orbitR || 0,
+        b.orbitSpeed || 0,
+        b.spinRateBase != null ? b.spinRateBase : (i === 0 ? 0.006 : 0.009),
+        b.spinAngle != null ? b.spinAngle : 0,
+        'binary',
+        b.orbitSlotKey ?? null,
+        b.angle != null ? b.angle : 0,
+        null,
+        b.orbitInclination ?? 0
+      );
+    } else if (b.orbitCenter === 'sun') {
+      const newP = createPlanet(baseR, d0, seed, tilt, initState);
+      scene.add(newP.pivot);
+      if (typeof planetsRenderable !== 'undefined') newP.pivot.visible = planetsRenderable;
+      registerPlanet(
+        newP,
+        b.name || `Planet ${managedPlanets.length + 1}`,
+        b.color || PLANET_COLORS[managedPlanets.length % PLANET_COLORS.length],
+        false,
+        b.orbitR,
+        b.orbitSpeed,
+        b.spinRateBase,
+        b.spinAngle,
+        'sun',
+        b.orbitSlotKey,
+        b.angle,
+        null,
+        b.orbitInclination ?? 0
+      );
+      const mp = managedPlanets[managedPlanets.length - 1];
+      if (b.orbitBaseR != null) mp.orbitBaseR = b.orbitBaseR;
+      if (b.orbitPos && b.orbitVel) {
+        mp.orbitPos = new THREE.Vector3(b.orbitPos.x, b.orbitPos.y, b.orbitPos.z);
+        mp.orbitVel = new THREE.Vector3(b.orbitVel.x, b.orbitVel.y, b.orbitVel.z);
+        mp.orbitPlaneNormal = null;
+      } else {
+        initializeSunOrbiterState(mp);
+      }
+      newP.pivot.position.set(mp.orbitPos.x, mp.orbitPos.y, mp.orbitPos.z);
+      ensureSunTrail(mp);
+      rebuildManagedPlanetTerrain(mp);
+    } else if (b.orbitCenter === 'planet') {
+      const pid = b.orbitParentId;
+      if (!Number.isFinite(pid) || pid < 0 || pid >= managedPlanets.length) {
+        /* skip orphan moon from damaged save */
+      } else {
+        const newP = createPlanet(baseR, d0, seed, tilt, initState);
+        scene.add(newP.pivot);
+        if (typeof planetsRenderable !== 'undefined') newP.pivot.visible = planetsRenderable;
+        registerPlanet(
+          newP,
+          b.name || 'Moon',
+          b.color || PLANET_COLORS[managedPlanets.length % PLANET_COLORS.length],
+          false,
+          b.orbitR,
+          b.orbitSpeed,
+          b.spinRateBase,
+          b.spinAngle,
+          'planet',
+          null,
+          b.angle,
+          pid,
+          b.orbitInclination ?? 0
+        );
+        const mp = managedPlanets[managedPlanets.length - 1];
+        const parent = managedPlanets[pid];
+        if (parent?.obj?.pivot) {
+          parent.obj.pivot.getWorldPosition(_orbitParentWorld);
+          newP.pivot.position.set(
+            _orbitParentWorld.x + Math.cos(mp.angle) * mp.orbitR,
+            _orbitParentWorld.y,
+            _orbitParentWorld.z + Math.sin(mp.angle) * mp.orbitR
+          );
+        }
+        ensureMoonTrail(mp);
+        rebuildManagedPlanetTerrain(mp);
+      }
+    }
+  }
+
+  if (typeof setGlobalTerrainStyle === 'function' && data.templateTerrain) {
+    setGlobalTerrainStyle(data.templateTerrain);
+  }
+  if (typeof setGlobalGeographyStyle === 'function' && data.templateGeography) {
+    setGlobalGeographyStyle(data.templateGeography);
+  }
+
+  if (Number.isFinite(data.binaryPhase)) binaryPhase = data.binaryPhase;
+  const { mass1, mass2 } = getBinaryMassesForPhysics();
+  binaryPrevMass1 = mass1;
+  binaryPrevMass2 = mass2;
+  applyBinaryPairState(mass1, mass2, 0);
+
+  if (Number.isFinite(data.comAngle)) comAngle = data.comAngle;
+  if (Number.isFinite(data.sunSpin)) sunSpin = data.sunSpin;
+
+  if (typeof data.selectedPlanetIdx === 'number' && data.selectedPlanetIdx >= 0 && data.selectedPlanetIdx < managedPlanets.length) {
+    selectedPlanetIdx = data.selectedPlanetIdx;
+  } else {
+    selectedPlanetIdx = null;
+  }
+
+  if (Number.isFinite(data.targetScale)) targetScale = data.targetScale;
+  if (Number.isFinite(data.curScale)) curScale = data.curScale;
+  if (Number.isFinite(data.timeWarp)) {
+    timeWarp = data.timeWarp;
+    if (typeof dialWarp !== 'undefined' && dialWarp) dialWarp.value = String(timeWarp);
+    if (typeof lblWarp !== 'undefined' && lblWarp) {
+      lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+    }
+  }
+  if (Number.isFinite(data.targetScale) && typeof dialScale !== 'undefined' && dialScale && typeof scaleWorldToSliderValue === 'function') {
+    dialScale.value = String(scaleWorldToSliderValue(targetScale));
+  }
+  if (typeof lblScale !== 'undefined' && lblScale && typeof scaleLabelText === 'function') {
+    lblScale.textContent = scaleLabelText(targetScale);
+  }
+
+  window.__UNIVERSE_PENDING_CAM__ = {
+    orbitTheta: data.orbitTheta,
+    orbitPhi: data.orbitPhi,
+    orbitZoom: data.orbitZoom,
+    curScale: data.curScale,
+    targetScale: data.targetScale,
+    timeWarp: data.timeWarp,
+    cameraMode: data.cameraMode,
+  };
+  if (Number.isFinite(data.currentDestIndex)) {
+    window.__UNIVERSE_PENDING_DEST_INDEX__ = data.currentDestIndex;
+  }
+
+  if (typeof syncTrailVisibility === 'function') syncTrailVisibility();
+  return true;
+}
+
+window.addEventListener('beforeunload', () => {
+  flushUniverseSaveToStorage();
+});
+
+tryHydrateUniverseFromStorage();
+if (selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]) {
+  const hs = managedPlanets[selectedPlanetIdx];
+  syncPlanetDialValues(hs);
+  syncPlanetEditReadouts(hs);
+  if (!hs.isBinary && hs.orbitCenter === 'sun') syncSunOrbitEditorUi(hs);
+  else syncSunOrbitEditorUi(null);
+}
+if (typeof syncSunRadialReadouts === 'function') syncSunRadialReadouts();
+if (typeof updateSunRadialKnobPositions === 'function') updateSunRadialKnobPositions();
+requestUniverseSave();
 
 rebuildPlanetList();
 updateTwinButtonVisibility();

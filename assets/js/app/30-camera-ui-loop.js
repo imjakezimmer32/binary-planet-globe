@@ -160,8 +160,7 @@ function animate() {
   if (simWarp > 0) {
     const dt    = BASE_DT * simWarp;
     const steps = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(simWarp) * 6)));
-    const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-    const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const { mass1, mass2 } = getBinaryMassesForPhysics();
     const deferBinarySizeRadial =
       planetRadialState.dragSetting === 'size' &&
       selectedPlanetIdx !== null &&
