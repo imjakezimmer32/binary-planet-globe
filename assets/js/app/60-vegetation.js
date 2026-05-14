@@ -261,11 +261,11 @@ const VEG = (() => {
     // Index matches BUILDERS: 0=Pine, 1=Round, 2=Spire, 3=Bush, 4=Palm.
     // [neMin, neMax, treesPerSqUnit]
     const VARIANT_DENSITIES = [
-      [0.135, 0.168, 18],   // Pine  — dense near peaks
-      [0.065, 0.130,  2],   // Round — spread across middle green
-      [0.120, 0.168,  7],   // Spire — medium upper+peaks
-      [0.042, 0.140,  0.4], // Bush  — very sparse lower/mid green
-      [0.042, 0.065, 18],   // Palm  — dense shoreline
+      [0.135, 0.168, 22],   // Pine  — dense near peaks
+      [0.065, 0.130,  4],   // Round — spread across middle green
+      [0.120, 0.168, 12],   // Spire — medium upper+peaks
+      [0.042, 0.140,  0.7], // Bush  — very sparse lower/mid green
+      [0.042, 0.065, 22],   // Palm  — dense shoreline
     ];
 
     // Grass clumps per square world unit — same Poisson system as trees.
@@ -351,23 +351,35 @@ const VEG = (() => {
           if (mapped < neMin || mapped > neMax) continue;
           const expected = worldFaceArea * density;
           const n = Math.floor(expected) + (rng() < (expected % 1) ? 1 : 0);
+          // Pine (0) and palm (4) clump: 45% chance each placement spawns 3 tight satellites
+          const doClump = vi === 0 || vi === 4;
           for (let k = 0; k < n; k++) {
             let bu = rng(), bv = rng();
             if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
-            const px = v0x + bu*(v1x-v0x) + bv*(v2x-v0x);
-            const py = v0y + bu*(v1y-v0y) + bv*(v2y-v0y);
-            const pz = v0z + bu*(v1z-v0z) + bv*(v2z-v0z);
-            // Random yaw around face normal then align to surface
-            _q2.setFromAxisAngle(_nv, rng() * Math.PI * 2);
-            _q2.multiply(_q);
-            _m.makeRotationFromQuaternion(_q2);
-            _m.setPosition(px + fnx*treeEps, py + fny*treeEps, pz + fnz*treeEps);
-            const scVar = 0.65 + rng() * 0.70;
-            const sc = (treeSc / VARIANT_HEIGHTS[vi]) * scVar;
-            const lp = [], lc = [];
-            BUILDERS[vi](lp, lc, sc);
-            treePosArr[vi].push(...applyMat4(lp, _m));
-            treeColArr[vi].push(...lc);
+            const clusterSize = (doClump && rng() < 0.45) ? 4 : 1;
+            for (let ci = 0; ci < clusterSize; ci++) {
+              let cbu = bu, cbv = bv;
+              if (ci > 0) {
+                cbu = bu + (rng() - 0.5) * 0.18;
+                cbv = bv + (rng() - 0.5) * 0.18;
+                if (cbu < 0) cbu = 0;
+                if (cbv < 0) cbv = 0;
+                if (cbu + cbv > 1) { const s = 1 / (cbu + cbv); cbu *= s; cbv *= s; }
+              }
+              const px = v0x + cbu*(v1x-v0x) + cbv*(v2x-v0x);
+              const py = v0y + cbu*(v1y-v0y) + cbv*(v2y-v0y);
+              const pz = v0z + cbu*(v1z-v0z) + cbv*(v2z-v0z);
+              _q2.setFromAxisAngle(_nv, rng() * Math.PI * 2);
+              _q2.multiply(_q);
+              _m.makeRotationFromQuaternion(_q2);
+              _m.setPosition(px + fnx*treeEps, py + fny*treeEps, pz + fnz*treeEps);
+              const scVar = 0.65 + rng() * 0.70;
+              const sc = (treeSc / VARIANT_HEIGHTS[vi]) * scVar;
+              const lp = [], lc = [];
+              BUILDERS[vi](lp, lc, sc);
+              treePosArr[vi].push(...applyMat4(lp, _m));
+              treeColArr[vi].push(...lc);
+            }
           }
         }
       }
