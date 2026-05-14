@@ -42,13 +42,13 @@ function hashDir3(seed, salt) {
 }
 
 const GEOGRAPHY_STYLE_OPTIONS = [
-  { id: 'natural', label: 'Natural', blurb: 'Classic noise—mixed continents and oceans.' },
-  { id: 'pangaea', label: 'Pangaea', blurb: 'One dominant super-continent bias, quieter seas.' },
-  { id: 'archipelago', label: 'Archipelago', blurb: 'Many small land fragments and winding channels.' },
-  { id: 'dual', label: 'Dual continents', blurb: 'Two large land masses on opposite sides.' },
-  { id: 'polar', label: 'Polar caps', blurb: 'Highlands near the poles; more ocean mid-latitudes.' },
-  { id: 'rift', label: 'Rift range', blurb: 'A long mountain belt along a great circle.' },
-  { id: 'atolls', label: 'Atoll chains', blurb: 'Tilted ring of islands—lagoon and reef vibes.' },
+  { id: 'natural', label: 'Natural' },
+  { id: 'pangaea', label: 'Pangaea' },
+  { id: 'archipelago', label: 'Islands' },
+  { id: 'dual', label: 'Two lands' },
+  { id: 'polar', label: 'Polar' },
+  { id: 'rift', label: 'Rift' },
+  { id: 'atolls', label: 'Atolls' },
 ];
 const GEOGRAPHY_STYLE_STORAGE_KEY = 'astrabound-planet-geography-style';
 const DEFAULT_GEOGRAPHY_STYLE = 'natural';
@@ -409,12 +409,12 @@ const TERRAIN_PAINTS = {
 const TERRAIN_STYLE_STORAGE_KEY = 'astrabound-planet-terrain-style';
 const DEFAULT_TERRAIN_STYLE = 'earth';
 const TERRAIN_STYLE_OPTIONS = [
-  { id: 'earth', label: 'Earth-like', blurb: 'Classic greens, blue water, white peaks.' },
-  { id: 'frost', label: 'Ice moon', blurb: 'Frozen seas, teal shallows, pale peaks.' },
-  { id: 'desert', label: 'Desert', blurb: 'Warm sands, rusty canyons, oasis greens when wet.' },
-  { id: 'alien', label: 'Alien', blurb: 'Purple rock, neon shallows, odd shore colors.' },
-  { id: 'volcanic', label: 'Volcanic', blurb: 'Dark basalt, ember ridges, heavy red seas.' },
-  { id: 'twilight', label: 'Twilight', blurb: 'Dusk purples and rose-lit highlands.' },
+  { id: 'earth', label: 'Earth' },
+  { id: 'frost', label: 'Ice' },
+  { id: 'desert', label: 'Desert' },
+  { id: 'alien', label: 'Alien' },
+  { id: 'volcanic', label: 'Volcanic' },
+  { id: 'twilight', label: 'Twilight' },
 ];
 
 function normalizeTerrainStyle(id) {
