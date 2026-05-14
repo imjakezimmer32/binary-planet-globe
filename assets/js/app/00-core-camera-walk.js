@@ -171,6 +171,8 @@ const WALK_CFG = {
   slipExitDeg: 39,
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
+  /** When swimming, pull the pill downward along planet up (× character height) until it is below the surface. */
+  waterAvatarSinkHeightMul: 1.22,
   lavaSpeedFactor: 0.2,
   /** Walk bob frequency (rad/s); run is faster — decoupled from low moveSpeed so hops stay lively. */
   bounceFreqWalk: 12.6,
@@ -350,6 +352,8 @@ const walkState = {
   anchorLastMatrix: new THREE.Matrix4(),
   anchorLastMatrixValid: false,
   prevFov: null,
+  /** Smoothed 0→1 while grounded on water; drives avatar sink under the surface. */
+  waterSinkSmoothed: 0,
 };
 const _walkCenter = new THREE.Vector3();
 const _walkCamPos = new THREE.Vector3();
@@ -1627,6 +1631,7 @@ function stopWalkMode() {
   walkState.missedSurfaceFrames = 0;
   walkState.lookPitch = 0;
   walkState.anchorLastMatrixValid = false;
+  walkState.waterSinkSmoothed = 0;
   clearWalkTouchLookState();
   walkJoystickTouchIds.clear();
   setWalkJoystickCapturingPointer(null);
@@ -1715,8 +1720,8 @@ function startWalkMode(idx, spawnSurface = null) {
   desktopWalkLookReady = false;
   getWalkAnchorFrameWorldMatrix(mp, walkState.anchorLastMatrix);
   walkState.anchorLastMatrixValid = true;
-  walkAvatar.position.copy(walkState.position);
-  walkAvatar.visible = true;
+  applyWalkAvatarWorldPose(walkState.surfaceType, true, 0, 0);
+  updateWalkAvatarOrientation(1e6);
   refreshWalkUi();
 }
 
@@ -1882,6 +1887,31 @@ function updateWalkCameraPose(dt) {
   }
 
   enforceCameraOutsidePlanetMeshes();
+}
+
+function updateWalkAvatarOrientation(dt) {
+  _walkBasisZ.crossVectors(walkState.forward, walkState.up);
+  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.crossVectors(_walkRight, walkState.up);
+  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.set(0, 0, 1);
+  _walkBasisZ.normalize();
+  _walkBasisMat.makeBasis(walkState.forward, walkState.up, _walkBasisZ);
+  _walkQ.setFromRotationMatrix(_walkBasisMat);
+  walkAvatar.quaternion.slerp(_walkQ, Math.min(1, dt * WALK_CFG.avatarTurnLerp));
+}
+
+/**
+ * Feet stay on the sampled surface (physics). On water, the visible capsule is shifted
+ * downward so it disappears under the surface while movement keeps waterSpeedFactor.
+ */
+function applyWalkAvatarWorldPose(surfaceMedium, grounded, bounce, dt) {
+  const inWater = grounded && surfaceMedium === 'water';
+  const target = inWater ? 1 : 0;
+  if (dt <= 0) walkState.waterSinkSmoothed = target;
+  else walkState.waterSinkSmoothed += (target - walkState.waterSinkSmoothed) * Math.min(1, dt * 9);
+  const bob = grounded && surfaceMedium !== 'water' ? bounce * WALK_CFG.bobAvatarUpFactor : 0;
+  const sink = walkState.waterSinkSmoothed * WALK_CFG.waterAvatarSinkHeightMul * WALK_CFG.characterHeight;
+  walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bob - sink);
+  walkAvatar.visible = true;
 }
 
 function getWalkSurfaceSpeedFactor(surface) {
@@ -2075,7 +2105,8 @@ function updateWalkMode(dt) {
       walkState.anchorLastMatrixValid = true;
       applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
       clampWalkPositionToAnchor(anchorMp, dt);
-      walkAvatar.position.copy(walkState.position);
+      applyWalkAvatarWorldPose(rescue.medium, walkState.grounded, 0, dt);
+      updateWalkAvatarOrientation(dt);
       updateWalkCameraPose(dt);
       return;
     }
@@ -2083,7 +2114,8 @@ function updateWalkMode(dt) {
     if (walkState.missedSurfaceFrames > 24) stopWalkMode();
     applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
     clampWalkPositionToAnchor(anchorMp, dt);
-    walkAvatar.position.copy(walkState.position);
+    applyWalkAvatarWorldPose(walkState.surfaceType, walkState.grounded, 0, dt);
+    updateWalkAvatarOrientation(dt);
     updateWalkCameraPose(dt);
     return;
   }
@@ -2307,6 +2339,7 @@ function updateWalkMode(dt) {
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
   if (moveLen < WALK_CFG.moveInputDeadzone || !walkState.grounded) bounceTarget = 0;
+  if (nextSurface.medium === 'water') bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
   const bounceFreq = (sprinting ? WALK_CFG.bounceFreqRun : WALK_CFG.bounceFreqWalk)
     + planarSpeed * WALK_CFG.bounceFreqFromSpeed;
@@ -2327,15 +2360,8 @@ function updateWalkMode(dt) {
     desiredSpeed
   );
 
-  walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bounce * WALK_CFG.bobAvatarUpFactor);
-  _walkBasisZ.crossVectors(walkState.forward, walkState.up);
-  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.crossVectors(_walkRight, walkState.up);
-  if (_walkBasisZ.lengthSq() < 1e-8) _walkBasisZ.set(0, 0, 1);
-  _walkBasisZ.normalize();
-  _walkBasisMat.makeBasis(walkState.forward, walkState.up, _walkBasisZ);
-  _walkQ.setFromRotationMatrix(_walkBasisMat);
-  walkAvatar.quaternion.slerp(_walkQ, Math.min(1, dt * WALK_CFG.avatarTurnLerp));
-  walkAvatar.visible = true;
+  applyWalkAvatarWorldPose(nextSurface.medium, walkState.grounded, bounce, dt);
+  updateWalkAvatarOrientation(dt);
 
   updateWalkCameraPose(dt);
 }
