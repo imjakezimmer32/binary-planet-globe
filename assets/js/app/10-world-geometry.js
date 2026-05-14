@@ -465,17 +465,6 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       });
     })();
 
-    // Wire uses a fixed low-detail icosphere (detail 3 = 1,920 edges) regardless of terrain
-    // detail. Full-res edges at detail 7+ = 491k–7.8M line segments — a GPU killer every frame.
-    const wireIco = new THREE.IcosahedronGeometry(shellR * 1.001, 3);
-    const wire = new THREE.LineSegments(
-      new THREE.EdgesGeometry(wireIco),
-      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
-    );
-    wireIco.dispose();
-    wire.scale.setScalar(1.0015);
-    wire.renderOrder = 2;
-
     const atmo = new THREE.Mesh(
       new THREE.SphereGeometry(shellR * 1.10, 24, 24),
       new THREE.MeshBasicMaterial({
@@ -489,7 +478,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
 
     built = [depthBack, terrain];
     if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
-    built.push(wire, atmo);
+    built.push(atmo);
     pickables = [terrain];
     spin.add(...built);
     if (!skipVeg && typeof VEG !== 'undefined') {
@@ -503,17 +492,6 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     baseRadius: baseR,
     rebuild:  build,
     setWater: () => {},
-    setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
-    syncGrid: ()  => {
-      const g = typeof gridOn !== 'undefined' ? gridOn : true;
-      built.forEach(c => { if (c.isLineSegments) c.visible = g; });
-    },
-    setWireOpacity: (v) => {
-      const a = Math.max(0, Math.min(1, v));
-      built.forEach(c => {
-        if (c.isLineSegments && c.material) c.material.opacity = a;
-      });
-    },
     getTerrainMesh: () => pickables[0] || null,
     getPickables: () => pickables,
     setVegVisible: v => { vegMeshes.forEach(m => { m.visible = v; }); },
@@ -737,7 +715,6 @@ function rebuildManagedPlanetTerrain(mp, maxDetail, skipVeg) {
   if (maxDetail !== undefined) d = Math.min(d, maxDetail);
   if (d > 0) {
     mp.obj.rebuild(d, (maxDetail !== undefined || skipVeg) ? { skipVeg: true } : undefined);
-    mp.obj.syncGrid();
   }
 }
 
