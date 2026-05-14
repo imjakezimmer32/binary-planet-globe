@@ -150,8 +150,8 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 /** Capsule height in world units (must match avatar geometry). */
 const WALK_CAPSULE_HEIGHT = 0.013;
-/** Jump apex ≈ this × capsule height (18 → ~0.23 world units at default capsule). */
-const WALK_JUMP_APEX_CAPSULE_MUL = 18;
+/** Jump apex ≈ this × capsule height (5 → ~0.065 world units at default capsule). */
+const WALK_JUMP_APEX_CAPSULE_MUL = 5;
 
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
