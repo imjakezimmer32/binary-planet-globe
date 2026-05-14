@@ -150,8 +150,8 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 /** Capsule height in world units (must match avatar geometry). */
 const WALK_CAPSULE_HEIGHT = 0.013;
-/** Jump apex ≈ this × capsule height (5 → ~0.065 world units at default capsule). */
-const WALK_JUMP_APEX_CAPSULE_MUL = 5;
+/** Jump apex ≈ this × capsule height (3 → ~0.039 world units at default capsule). */
+const WALK_JUMP_APEX_CAPSULE_MUL = 3;
 
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
@@ -222,17 +222,17 @@ const WALK_CFG = {
    * Walk fall gravity (radial, world units / s²) at smallest vs largest planet in the system.
    * Current planet lerps between them by (baseRadius × size) metric.
    */
-  walkGravityMin: 0.10,
-  walkGravityMax: 0.26,
+  walkGravityMin: 0.12,
+  walkGravityMax: 0.30,
   /** Terminal radial fall speed at smallest vs largest planet. */
-  walkMaxFallMin: 0.28,
-  walkMaxFallMax: 0.52,
+  walkMaxFallMin: 0.32,
+  walkMaxFallMax: 0.58,
   /**
-   * Airborne radial gravity curve: stronger pull when falling than when rising
-   * (shorter hang, snappier drop — not symmetric float).
+   * Airborne radial gravity curve: fall slightly stronger than rise for a readable arc.
+   * Rise kept close to 1 so ascent is smooth; fall mul modest so drops are decisive without feeling harsh.
    */
-  jumpGravityRiseMul: 1.16,
-  jumpGravityFallMul: 1.78,
+  jumpGravityRiseMul: 1.06,
+  jumpGravityFallMul: 1.48,
   /**
    * Jump apex above feet (world units along radial “up”); launch speed = sqrt(2 × g × height).
    */
