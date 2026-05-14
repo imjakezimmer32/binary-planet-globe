@@ -242,8 +242,10 @@ const WALK_CFG = {
   jumpCooldownSec: 0.2,
   /** After a jump, skip strong air landing “glue” until falling this fast (radial · velocity vs planet outward). */
   jumpAirAssistIgnoreSec: 0.28,
-  /** Above this outward radial speed, air assist does not pull toward the ground (takeoff / rise). */
-  airAssistClearRiseOutSpeed: 0.028,
+  /** Above this outward radial speed, air assist does not pull toward the ground (takeoff / rise).
+   * Keep small: with low gravity and tiny jumps, peak outward speed can stay well under 0.02; if this is
+   * too high, landing-assist “glue” fights the hop and feels like an invisible barrier. */
+  airAssistClearRiseOutSpeed: 0.0015,
   /** While `jumpAirAssistIgnoreSec` is active, keep assist off until outward speed drops below this (falling). */
   airAssistJumpFallReleaseSpeed: -0.055,
   coyoteTimeSec: 0.12,
@@ -2201,7 +2203,9 @@ function updateWalkMode(dt) {
       } else {
         const probe = WALK_CFG.groundProbeDistance;
         const assistEnd = WALK_CFG.airLandingAssistEndGap;
-        const riseClear = nextOutwardSpeed > WALK_CFG.airAssistClearRiseOutSpeed;
+        const riseClear =
+          nextOutwardSpeed > WALK_CFG.airAssistClearRiseOutSpeed
+          || (nextOutwardSpeed > 0 && walkState.velocity.dot(walkState.up) > 1e-5);
         const jumpAssistHold =
           walkState.jumpAirAssistTimer > 0
           && nextOutwardSpeed > WALK_CFG.airAssistJumpFallReleaseSpeed;
