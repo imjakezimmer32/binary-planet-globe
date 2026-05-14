@@ -418,7 +418,7 @@ function createSunOrbitPlanet({
       terrainStyle: getGlobalTerrainStyle(),
       geographyStyle: getGlobalGeographyStyle(),
     },
-    initState || {}
+    mergePlanetInitState(initState)
   );
   const newP  = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, mergedInit);
   scene.add(newP.pivot);
@@ -466,13 +466,13 @@ function createPlanetMoonOrbit(parentIdx) {
   const spinRateBase = 0.008 + Math.random() * 0.008;
   const tilt = (Math.random() - 0.5) * 0.6;
   const baseRadius = Math.max(0.22, Math.min(0.65, parentRadius * (0.28 + Math.random() * 0.2)));
-  const moon = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, {
+  const moon = createPlanet(baseRadius, Math.max(1, curDetail-1), seed, tilt, mergePlanetInitState({
     peakScale: parent.obj.state.peakScale,
     waterLevel: parent.obj.state.waterLevel,
     size: Math.max(0.25, parent.obj.state.size * (0.35 + Math.random() * 0.25)),
     terrainStyle: parent.obj.state.terrainStyle || getGlobalTerrainStyle(),
     geographyStyle: parent.obj.state.geographyStyle || getGlobalGeographyStyle(),
-  });
+  }));
   scene.add(moon.pivot);
   moon.pivot.visible = planetsRenderable;
   parent.obj.pivot.getWorldPosition(_orbitParentWorld);
@@ -835,8 +835,7 @@ function finalizePlanetSizeAfterRadialDrag() {
     clampPlanetEditValue('size', mp.obj.state.size)
   );
   if (mp.isBinary) {
-    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const { mass1: mass1Now, mass2: mass2Now } = getBinaryMassesForPhysics();
     refreshBinaryPairForMassChange(mass1Now, mass2Now);
     binaryPrevMass1 = mass1Now;
     binaryPrevMass2 = mass2Now;
@@ -874,8 +873,7 @@ function applyPlanetEditSetting(setting, rawValue, skipVeg) {
       mp.obj.setScalePreview(nextValue);
     } else {
       if (mp.isBinary && !inRadialSizeDrag) {
-        const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-        const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+        const { mass1: mass1Now, mass2: mass2Now } = getBinaryMassesForPhysics();
         refreshBinaryPairForMassChange(mass1Now, mass2Now);
         binaryPrevMass1 = mass1Now;
         binaryPrevMass2 = mass2Now;
@@ -1373,6 +1371,14 @@ if (planetPanelHeader) {
 
 function selectPlanet(idx) {
   selectedPlanetIdx = idx;
+  _prevPlanetReadoutMpId = null;
+  _prevPlanetReadoutSize = null;
+  _prevPlanetReadoutPeak = null;
+  _prevPlanetReadoutWater = null;
+  _prevPlanetKnobR = null;
+  _prevPlanetKnobSize = null;
+  _prevPlanetKnobPeak = null;
+  _prevPlanetKnobWater = null;
   panOffset.set(0, 0, 0);
   rebuildPlanetList();
   const mp = idx !== null && idx !== undefined ? managedPlanets[idx] : null;
@@ -1413,8 +1419,7 @@ const _restoreVegOnDialRelease = () => {
   if (mp.obj.clearScalePreview) mp.obj.clearScalePreview();
   // Recalculate binary mass/orbit now that size is finalised.
   if (mp.isBinary) {
-    const mass1Now = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-    const mass2Now = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+    const { mass1: mass1Now, mass2: mass2Now } = getBinaryMassesForPhysics();
     refreshBinaryPairForMassChange(mass1Now, mass2Now);
     binaryPrevMass1 = mass1Now;
     binaryPrevMass2 = mass2Now;
@@ -1448,7 +1453,7 @@ addTwinBtn.addEventListener('click', e => {
 
 function getTerrainStyleForWorldLookUi() {
   const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-  if (mp?.obj?.state?.terrainStyle && typeof normalizeTerrainStyle === 'function') {
+  if (mp?.obj?.state && typeof normalizeTerrainStyle === 'function') {
     return normalizeTerrainStyle(mp.obj.state.terrainStyle);
   }
   return typeof getGlobalTerrainStyle === 'function' ? getGlobalTerrainStyle() : 'earth';
@@ -1456,7 +1461,7 @@ function getTerrainStyleForWorldLookUi() {
 
 function getGeographyStyleForWorldLookUi() {
   const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-  if (mp?.obj?.state?.geographyStyle && typeof normalizeGeographyStyle === 'function') {
+  if (mp?.obj?.state && typeof normalizeGeographyStyle === 'function') {
     return normalizeGeographyStyle(mp.obj.state.geographyStyle);
   }
   return typeof getGlobalGeographyStyle === 'function' ? getGlobalGeographyStyle() : 'natural';
@@ -1982,15 +1987,15 @@ function tryHydrateUniverseFromStorage() {
     const seed = Number.isFinite(Number(b.planetSeed)) ? Number(b.planetSeed) : Math.random() * 99;
     const tilt = Number.isFinite(Number(b.axisTilt)) ? Number(b.axisTilt) : 0;
     const baseR = Number.isFinite(Number(b.baseRadius)) ? Number(b.baseRadius) : 0.8;
-    const initState = {
+    const initState = mergePlanetInitState({
       peakScale: b.peakScale,
       waterLevel: b.waterLevel,
       size: b.size,
-      terrainStyle: typeof normalizeTerrainStyle === 'function' ? normalizeTerrainStyle(b.terrainStyle) : 'earth',
-      geographyStyle: typeof normalizeGeographyStyle === 'function' ? normalizeGeographyStyle(b.geographyStyle) : 'natural',
+      terrainStyle: b.terrainStyle,
+      geographyStyle: b.geographyStyle,
       planetSeed: seed,
       axisTilt: tilt,
-    };
+    });
 
     if (b.isBinary) {
       if (i > 1) continue;
@@ -2095,8 +2100,7 @@ function tryHydrateUniverseFromStorage() {
   }
 
   if (Number.isFinite(data.binaryPhase)) binaryPhase = data.binaryPhase;
-  const mass1 = BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3);
-  const mass2 = BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3);
+  const { mass1, mass2 } = getBinaryMassesForPhysics();
   binaryPrevMass1 = mass1;
   binaryPrevMass2 = mass2;
   applyBinaryPairState(mass1, mass2, 0);

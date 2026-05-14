@@ -731,6 +731,26 @@ function applySmoothVertexNormalsForNonIndexedTerrain(geo) {
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nArr, 3));
 }
 
+/** Copy known scalar fields from an init blob — avoids aliasing another planet's `state` object. */
+function mergePlanetInitState(rawInit) {
+  if (!rawInit || typeof rawInit !== 'object') return {};
+  const out = {};
+  const numericKeys = ['peakScale', 'waterLevel', 'size', 'planetSeed', 'axisTilt'];
+  for (let i = 0; i < numericKeys.length; i++) {
+    const k = numericKeys[i];
+    if (!(k in rawInit)) continue;
+    const n = Number(rawInit[k]);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  if ('terrainStyle' in rawInit && rawInit.terrainStyle != null && rawInit.terrainStyle !== '') {
+    out.terrainStyle = String(rawInit.terrainStyle);
+  }
+  if ('geographyStyle' in rawInit && rawInit.geographyStyle != null && rawInit.geographyStyle !== '') {
+    out.geographyStyle = String(rawInit.geographyStyle);
+  }
+  return out;
+}
+
 // ── Planet factory ────────────────────────────────────────────────
 function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   const pivot = new THREE.Group();
@@ -750,7 +770,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       planetSeed: seed,
       axisTilt: axisTilt,
     },
-    initState || {}
+    mergePlanetInitState(initState)
   );
   state.terrainStyle = normalizeTerrainStyle(state.terrainStyle);
   state.geographyStyle = normalizeGeographyStyle(state.geographyStyle);
@@ -900,6 +920,24 @@ scene.add(sysGroup);
 var p1 = createPlanet(1.00, 7, 0.00,  0.22);
 var p2 = createPlanet(1.00, 7, 5.37, -0.38);
 sysGroup.add(p1.pivot, p2.pivot);
+
+/** Binary mass model: always read `managedPlanets[0]` / `[1]` when those entries are the binary pair (single source of truth). */
+function getBinaryMassesForPhysics() {
+  if (typeof managedPlanets !== 'undefined' && managedPlanets.length >= 2) {
+    const a = managedPlanets[0];
+    const b = managedPlanets[1];
+    if (a?.isBinary && b?.isBinary && a.obj?.state && b.obj?.state) {
+      return {
+        mass1: BASE_M1 * Math.pow(Math.max(a.obj.state.size, 0.2), 3),
+        mass2: BASE_M2 * Math.pow(Math.max(b.obj.state.size, 0.2), 3),
+      };
+    }
+  }
+  return {
+    mass1: BASE_M1 * Math.pow(Math.max(p1.state.size, 0.2), 3),
+    mass2: BASE_M2 * Math.pow(Math.max(p2.state.size, 0.2), 3),
+  };
+}
 
 // ── Orbit trails (in sysGroup local space = binary-relative) ──────
 const TRAIL_LEN = 520;
