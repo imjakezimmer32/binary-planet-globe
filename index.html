@@ -39,10 +39,16 @@
       <span id="planet-panel-title">Planets</span>
       <span id="planet-count" class="pp-count" aria-hidden="true">0</span>
     </div>
+    <button type="button" id="terrain-style-btn" class="terrain-style-btn" aria-expanded="false" aria-controls="terrain-style-popover" aria-label="Planet surface look" title="Surface look">⚙</button>
     <button type="button" id="add-planet-btn" aria-label="Add planet">+</button>
     <button type="button" id="add-twin-btn" aria-label="Add moon to selected planet orbit" title="Add moon to selected planet orbit">☾</button>
   </div>
   <div id="planet-panel-body">
+    <div id="terrain-style-popover" class="terrain-style-popover" hidden>
+      <div class="terrain-style-popover-title">Surface look</div>
+      <p class="terrain-style-popover-hint">Colors every planet in your system. New moons match their parent.</p>
+      <div id="terrain-style-choices" class="terrain-style-choices" role="radiogroup" aria-label="Terrain color style"></div>
+    </div>
     <div id="planet-list"></div>
     <div id="sun-orbit-sliders" aria-label="Sun orbit distance and tilt">
       <div class="pe-row">
