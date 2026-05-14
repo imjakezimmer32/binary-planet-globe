@@ -813,6 +813,20 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       });
     })();
 
+    const _tp = TERRAIN_PAINTS[state.terrainStyle] || TERRAIN_PAINTS.earth;
+    const atmo = new THREE.Mesh(
+      new THREE.SphereGeometry(shellR * 1.10, 24, 24),
+      new THREE.MeshBasicMaterial({
+        color: liquidState.hasLava ? _tp.atmoLava : _tp.atmoWater,
+        transparent: true,
+        opacity: liquidState.hasLava ? (0.05 + liquidState.strength * 0.09) : 0.06,
+        side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    atmo.renderOrder = 3;
+
+    built = [depthBack, terrain];
+    if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
     built.push(atmo);
     pickables = [terrain];
     spin.add(...built);
