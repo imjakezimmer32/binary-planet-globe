@@ -580,7 +580,7 @@ input[type=range]::-webkit-slider-thumb {
   gap: 2px;
   text-align: left;
   width: 100%;
-  padding: 7px 9px;
+  padding: 6px 9px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
@@ -600,6 +600,7 @@ input[type=range]::-webkit-slider-thumb {
 .terrain-style-choice .tsc-label {
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.25;
 }
 .terrain-style-choice .tsc-blurb {
   font-size: 10px;

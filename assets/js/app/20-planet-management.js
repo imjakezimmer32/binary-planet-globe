@@ -1458,7 +1458,9 @@ function buildTerrainStyleChoices() {
     b.className = 'terrain-style-choice';
     b.dataset.style = opt.id;
     b.setAttribute('role', 'radio');
-    b.innerHTML = `<span class="tsc-label">${opt.label}</span><span class="tsc-blurb">${opt.blurb}</span>`;
+    b.innerHTML = opt.blurb
+      ? `<span class="tsc-label">${opt.label}</span><span class="tsc-blurb">${opt.blurb}</span>`
+      : `<span class="tsc-label">${opt.label}</span>`;
     b.addEventListener('click', e => {
       e.stopPropagation();
       applyTerrainStyleEverywhere(opt.id);
@@ -1478,7 +1480,9 @@ function buildGeographyStyleChoices() {
     b.className = 'terrain-style-choice';
     b.dataset.style = opt.id;
     b.setAttribute('role', 'radio');
-    b.innerHTML = `<span class="tsc-label">${opt.label}</span><span class="tsc-blurb">${opt.blurb}</span>`;
+    b.innerHTML = opt.blurb
+      ? `<span class="tsc-label">${opt.label}</span><span class="tsc-blurb">${opt.blurb}</span>`
+      : `<span class="tsc-label">${opt.label}</span>`;
     b.addEventListener('click', e => {
       e.stopPropagation();
       applyGeographyStyleEverywhere(opt.id);
