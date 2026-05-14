@@ -417,6 +417,38 @@ document.addEventListener('click', e => {
   }
 });
 
+if (typeof window.__UNIVERSE_PENDING_DEST_INDEX__ === 'number') {
+  const di = window.__UNIVERSE_PENDING_DEST_INDEX__;
+  delete window.__UNIVERSE_PENDING_DEST_INDEX__;
+  if (Number.isFinite(di) && di >= 0 && di < GALAXY_DESTINATIONS.length) currentDestIndex = di | 0;
+}
+
+if (window.__UNIVERSE_PENDING_CAM__) {
+  const p = window.__UNIVERSE_PENDING_CAM__;
+  delete window.__UNIVERSE_PENDING_CAM__;
+  if (typeof orbitTheta === 'number' && Number.isFinite(p.orbitTheta)) orbitTheta = p.orbitTheta;
+  if (typeof orbitPhi === 'number' && Number.isFinite(p.orbitPhi)) orbitPhi = p.orbitPhi;
+  if (typeof orbitZoom === 'number' && Number.isFinite(p.orbitZoom)) orbitZoom = p.orbitZoom;
+  if (typeof curScale === 'number' && Number.isFinite(p.curScale)) curScale = p.curScale;
+  if (typeof targetScale === 'number' && Number.isFinite(p.targetScale)) targetScale = p.targetScale;
+  if (typeof timeWarp === 'number' && Number.isFinite(p.timeWarp)) {
+    timeWarp = p.timeWarp;
+    if (typeof dialWarp !== 'undefined' && dialWarp) dialWarp.value = String(timeWarp);
+    if (typeof lblWarp !== 'undefined' && lblWarp) {
+      lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+    }
+  }
+  if (typeof dialScale !== 'undefined' && dialScale && Number.isFinite(p.targetScale) && typeof scaleWorldToSliderValue === 'function') {
+    dialScale.value = String(scaleWorldToSliderValue(p.targetScale));
+  }
+  if (typeof lblScale !== 'undefined' && lblScale && typeof scaleLabelText === 'function') {
+    lblScale.textContent = scaleLabelText(targetScale);
+  }
+  if (p.cameraMode === 'planet' || p.cameraMode === 'sun') {
+    setCamMode(p.cameraMode);
+  }
+}
+
 rebuildGalaxyMenu();
 
 // Spin orbiting planets at each destination

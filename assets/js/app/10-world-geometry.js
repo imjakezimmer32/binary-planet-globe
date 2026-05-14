@@ -747,11 +747,16 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       size: 1.0,
       terrainStyle: getGlobalTerrainStyle(),
       geographyStyle: getGlobalGeographyStyle(),
+      planetSeed: seed,
+      axisTilt: axisTilt,
     },
     initState || {}
   );
   state.terrainStyle = normalizeTerrainStyle(state.terrainStyle);
   state.geographyStyle = normalizeGeographyStyle(state.geographyStyle);
+  state.planetSeed = Number.isFinite(Number(state.planetSeed)) ? Number(state.planetSeed) : seed;
+  state.axisTilt = Number.isFinite(Number(state.axisTilt)) ? Number(state.axisTilt) : axisTilt;
+  spin.rotation.z = state.axisTilt;
 
   let lastBuiltSz = Math.max(state.size ?? 1, 0.05);
 
@@ -775,9 +780,10 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
     const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
 
-    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl, state.geographyStyle);
+    const psd = state.planetSeed;
+    const idxGeo  = buildGlobe(shellR, buildDetail, psd, ps, wl, state.geographyStyle);
     const flatGeo = idxGeo.toNonIndexed();
-    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, seed, state.terrainStyle);
+    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, psd, state.terrainStyle);
     applySmoothVertexNormalsForNonIndexedTerrain(flatGeo);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
@@ -843,7 +849,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     pickables = [terrain];
     spin.add(...built);
     if (!skipVeg && typeof VEG !== 'undefined') {
-      vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, shellR, state.peakScale, state.waterLevel, seed, 1);
+      vegMeshes = VEG.spawnVegetationOnPlanet(spin, flatGeo, shellR, state.peakScale, state.waterLevel, psd, 1);
     }
   }
 
@@ -891,8 +897,8 @@ const sysGroup = new THREE.Group();
 scene.add(sysGroup);
 
 // Same baseRadius so the starting pair share the same LOD-vs-radius curve.
-const p1 = createPlanet(1.00, 7, 0.00,  0.22);
-const p2 = createPlanet(1.00, 7, 5.37, -0.38);
+var p1 = createPlanet(1.00, 7, 0.00,  0.22);
+var p2 = createPlanet(1.00, 7, 5.37, -0.38);
 sysGroup.add(p1.pivot, p2.pivot);
 
 // ── Orbit trails (in sysGroup local space = binary-relative) ──────
@@ -1124,6 +1130,12 @@ dialWarp.addEventListener('input', () => {
   timeWarp = parseFloat(dialWarp.value);
   lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
   syncSunRadialReadouts();
+});
+if (dialScale) dialScale.addEventListener('change', () => {
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
+});
+if (dialWarp) dialWarp.addEventListener('change', () => {
+  if (typeof requestUniverseSave === 'function') requestUniverseSave();
 });
 
 /** Matches initial HTML dial default (1×). Called when entering walk mode. */

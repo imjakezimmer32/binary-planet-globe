@@ -560,11 +560,10 @@ input[type=range]::-webkit-slider-thumb {
   margin-bottom: 4px;
   color: rgba(255, 255, 255, 0.78);
 }
-.terrain-style-popover-hint {
-  font-size: 10px;
-  line-height: 1.35;
-  color: rgba(255, 255, 255, 0.45);
-  margin: 0 0 8px;
+.terrain-style-popover-hint--muted {
+  margin-bottom: 6px;
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.4);
 }
 .terrain-style-choices {
   display: flex;
