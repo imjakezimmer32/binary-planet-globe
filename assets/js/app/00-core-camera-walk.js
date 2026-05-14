@@ -267,6 +267,12 @@ const WALK_CFG = {
    * immediately and the grounded solver stripped upward velocity (felt like a violent pull to the planet).
    */
   landReGroundMaxUpwardSpeed: 0.035,
+  /**
+   * After air→ground, scale along-normal foot snap for this many seconds (eases from groundSnapLandKStart → 1).
+   */
+  groundSnapLandSettleSec: 0.28,
+  /** First-frame strength of foot snap after landing (fraction of full correction). */
+  groundSnapLandKStart: 0.34,
   groundSnapIdle: 16,
   groundSnapMove: 26,
   groundNormalLerp: 14,
@@ -319,6 +325,8 @@ const walkState = {
   jumpCooldownTimer: 0,
   jumpAirAssistTimer: 0,
   coyoteTimer: 0,
+  /** Counts down after landing; softens along-normal foot snap so touchdown is less abrupt. */
+  landSettleTimer: 0,
   anchorPlanetIdx: null,
   surfaceType: 'land',
   surfaceSlopeDeg: 0,
@@ -1596,6 +1604,7 @@ function stopWalkMode() {
   walkState.jumpCooldownTimer = 0;
   walkState.jumpAirAssistTimer = 0;
   walkState.coyoteTimer = 0;
+  walkState.landSettleTimer = 0;
   walkState.anchorPlanetIdx = null;
   walkState.surfaceType = 'land';
   walkState.surfaceSlopeDeg = 0;
@@ -1682,6 +1691,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkState.jumpCooldownTimer = 0;
   walkState.jumpAirAssistTimer = 0;
   walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
+  walkState.landSettleTimer = 0;
   walkState.anchorPlanetIdx = idx;
   walkState.surfaceType = startSurface ? startSurface.medium : 'land';
   walkState.surfaceSlopeDeg = startSurface ? startSurface.slopeDeg : 0;
@@ -2021,6 +2031,7 @@ function updateWalkMode(dt) {
       walkState.jumpBufferTimer = 0;
       walkState.jumpCooldownTimer = 0;
       walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
+      walkState.landSettleTimer = WALK_CFG.groundSnapLandSettleSec;
       walkState.missedSurfaceFrames = 0;
       walkState.anchorPlanetIdx = anchorIdx;
       getWalkAnchorFrameWorldMatrix(anchorMp, walkState.anchorLastMatrix);
@@ -2051,9 +2062,11 @@ function updateWalkMode(dt) {
   if (walkState.grounded && nearGround) walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
   if (!walkState.grounded && nearGround && outwardSpeed <= landReGroundMaxUp) {
     walkState.grounded = true;
+    walkState.landSettleTimer = WALK_CFG.groundSnapLandSettleSec;
   }
   if (walkState.grounded && !nearGround && walkState.coyoteTimer <= 0) {
     walkState.grounded = false;
+    walkState.landSettleTimer = 0;
   }
 
   /** Ground: mesh tangent plane. Air: planet radial tangent only — no sliding along steep face normals. */
@@ -2130,6 +2143,7 @@ function updateWalkMode(dt) {
     walkState.jumpCooldownTimer = WALK_CFG.jumpCooldownSec;
     walkState.jumpAirAssistTimer = WALK_CFG.jumpAirAssistIgnoreSec;
     walkState.coyoteTimer = 0;
+    walkState.landSettleTimer = 0;
     nextRadialVel = Math.sqrt(
       Math.max(0, 2 * walkG * WALK_CFG.jumpGravityRiseMul * WALK_CFG.jumpApexHeight)
     );
@@ -2189,6 +2203,7 @@ function updateWalkMode(dt) {
       && velAlongUp <= landReGroundMaxUp
       && nextOutwardSpeed <= landReGroundMaxUp) {
       walkState.grounded = true;
+      walkState.landSettleTimer = WALK_CFG.groundSnapLandSettleSec;
     }
     if (walkState.grounded) {
       walkFootOnSurface(nextSurface, _walkGroundTarget);
@@ -2198,7 +2213,14 @@ function updateWalkMode(dt) {
       let k = Math.min(1, dt * (moveLen > WALK_CFG.moveInputDeadzone ? WALK_CFG.groundSnapMove : WALK_CFG.groundSnapIdle));
       if (Math.abs(alongErr) > WALK_CFG.groundProbeDistance * 0.45) k = Math.max(k, 0.72);
       if (Math.abs(alongErr) > WALK_CFG.groundProbeDistance * 2.2) k = Math.max(k, 0.92);
-      walkState.position.addScaledVector(sn, -alongErr * Math.min(1, k));
+      let snapMul = 1;
+      if (walkState.landSettleTimer > 0) {
+        const settle = WALK_CFG.groundSnapLandSettleSec;
+        const u = settle > 1e-6 ? 1 - Math.min(1, walkState.landSettleTimer / settle) : 1;
+        snapMul = THREE.MathUtils.lerp(WALK_CFG.groundSnapLandKStart, 1, u);
+        walkState.landSettleTimer = Math.max(0, walkState.landSettleTimer - dt);
+      }
+      walkState.position.addScaledVector(sn, -alongErr * Math.min(1, k) * snapMul);
       const surfaceRadialVel = walkState.velocity.dot(nextSurface.radialDir);
       if (surfaceRadialVel > 0) walkState.velocity.addScaledVector(nextSurface.radialDir, -surfaceRadialVel);
       const vIn = walkState.velocity.dot(sn);
