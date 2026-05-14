@@ -217,6 +217,13 @@ const WALK_CFG = {
    * (which used to fight enforceCameraOutsidePlanetMeshes and cause shake).
    */
   tpHorizonPullBlendFlatLen: 0.22,
+  /**
+   * `walkState.lookPitch` (rad): only above `tpSkyPullPitchStartRad` do we blend in the sky-pull arm.
+   * At/above `tpSkyPullPitchEndRad` it is full sky-pull; below start, third person uses normal `-viewDir`
+   * so looking down / at the ground tracks the camera with the view.
+   */
+  tpSkyPullPitchStartRad: 0.30,
+  tpSkyPullPitchEndRad: 0.52,
   /** Eye height above walk anchor along planet up (feet/anchor → eyes). */
   fpEyeHeight: 0.0194,
   /** Nudge camera back from eye along viewDir so near-plane does not clip the pill. */
@@ -1817,11 +1824,13 @@ function updateWalkCameraPose(dt) {
 
   const camH = WALK_CFG.cameraHeight * (1 - fpBlend);
 
-  const camBackFlat = _walkTmp.copy(walkState.viewDir).multiplyScalar(-1);
-  camBackFlat.addScaledVector(walkState.up, -camBackFlat.dot(walkState.up));
-  const flatLen = camBackFlat.length();
-  if (flatLen > 1e-6) camBackFlat.multiplyScalar(1 / flatLen);
-  else camBackFlat.copy(walkState.forward).multiplyScalar(-1);
+  const camBackStd = _walkDesired.copy(walkState.viewDir).multiplyScalar(-1).normalize();
+
+  const camBackSky = _walkTmp.copy(walkState.viewDir).multiplyScalar(-1);
+  camBackSky.addScaledVector(walkState.up, -camBackSky.dot(walkState.up));
+  const flatLen = camBackSky.length();
+  if (flatLen > 1e-6) camBackSky.multiplyScalar(1 / flatLen);
+  else camBackSky.copy(walkState.forward).multiplyScalar(-1);
 
   const tpCamFallback = _walkSpawnToCam.copy(walkState.forward).multiplyScalar(-1);
   tpCamFallback.addScaledVector(walkState.up, -tpCamFallback.dot(walkState.up));
@@ -1829,11 +1838,18 @@ function updateWalkCameraPose(dt) {
   else tpCamFallback.copy(_walkRight).multiplyScalar(-1).normalize();
 
   const blendK = THREE.MathUtils.smoothstep(flatLen, 0, WALK_CFG.tpHorizonPullBlendFlatLen);
-  camBackFlat.lerp(tpCamFallback, 1 - blendK).normalize();
+  camBackSky.lerp(tpCamFallback, 1 - blendK).normalize();
+
+  const skyT = THREE.MathUtils.smoothstep(
+    walkState.lookPitch,
+    WALK_CFG.tpSkyPullPitchStartRad,
+    WALK_CFG.tpSkyPullPitchEndRad
+  );
+  _walkDesired.copy(camBackStd).lerp(camBackSky, skyT).normalize();
 
   const tpPos = _walkCamPos
     .copy(chest)
-    .addScaledVector(camBackFlat, dist)
+    .addScaledVector(_walkDesired, dist)
     .addScaledVector(walkState.up, camH);
   const fpPos = _walkSpawnToCam
     .copy(eye)
