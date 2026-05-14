@@ -272,7 +272,7 @@ const WALK_CFG = {
    */
   groundSnapLandSettleSec: 0.28,
   /** First-frame strength of foot snap after landing (fraction of full correction). */
-  groundSnapLandKStart: 0.34,
+  groundSnapLandKStart: 0.25,
   groundSnapIdle: 16,
   groundSnapMove: 26,
   groundNormalLerp: 14,
