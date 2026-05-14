@@ -150,8 +150,8 @@ const _sunEditorCenterWorld = new THREE.Vector3();
 // ── Walk mode (redesigned pill walker) ──────────────────────────────
 /** Capsule height in world units (must match avatar geometry). */
 const WALK_CAPSULE_HEIGHT = 0.013;
-/** Jump apex ≈ this × capsule height (88 → ~1.14 world units; was 44 before this double). */
-const WALK_JUMP_APEX_CAPSULE_MUL = 88;
+/** Jump apex ≈ this × capsule height (44 → ~0.57 world units at default capsule). */
+const WALK_JUMP_APEX_CAPSULE_MUL = 44;
 
 const walkMode = { active: false, spawnPlanetIdx: null };
 const walkInput = { left: false, right: false, fwd: false, back: false, shiftRun: false, runLocked: false };
@@ -238,7 +238,13 @@ const WALK_CFG = {
    */
   jumpApexHeight: WALK_CAPSULE_HEIGHT * WALK_JUMP_APEX_CAPSULE_MUL,
   jumpBufferSec: 0.14,
-  jumpCooldownSec: 0.17,
+  jumpCooldownSec: 0.2,
+  /** After a jump, skip strong air landing “glue” until falling this fast (radial · velocity vs planet outward). */
+  jumpAirAssistIgnoreSec: 0.28,
+  /** Above this outward radial speed, air assist does not pull toward the ground (takeoff / rise). */
+  airAssistClearRiseOutSpeed: 0.028,
+  /** While `jumpAirAssistIgnoreSec` is active, keep assist off until outward speed drops below this (falling). */
+  airAssistJumpFallReleaseSpeed: -0.055,
   coyoteTimeSec: 0.12,
   airControlFactor: 0.44,
   airDrag: 0.92,
@@ -261,6 +267,8 @@ const WALK_CFG = {
   anchorSphereSlackMult: 1.46,
   /** Extra world units beyond nominal×mult for short jumps before the hard cap applies. */
   anchorSphereAbsSlack: 0.96,
+  /** Ensures `maxR` is at least nominal + this multiple of configured jump apex (avoids anchor shell mid-jump). */
+  anchorJumpApexClearanceMul: 1.62,
   anchorSpherePull: 26,
   /** When airborne and next surface sample misses, resample along this radial scale from planet center. */
   airResampleRadiusMult: 1.08,
@@ -302,6 +310,7 @@ const walkState = {
   grounded: false,
   jumpBufferTimer: 0,
   jumpCooldownTimer: 0,
+  jumpAirAssistTimer: 0,
   coyoteTimer: 0,
   anchorPlanetIdx: null,
   surfaceType: 'land',
@@ -1578,6 +1587,7 @@ function stopWalkMode() {
   walkState.grounded = false;
   walkState.jumpBufferTimer = 0;
   walkState.jumpCooldownTimer = 0;
+  walkState.jumpAirAssistTimer = 0;
   walkState.coyoteTimer = 0;
   walkState.anchorPlanetIdx = null;
   walkState.surfaceType = 'land';
@@ -1663,6 +1673,7 @@ function startWalkMode(idx, spawnSurface = null) {
   walkState.grounded = true;
   walkState.jumpBufferTimer = 0;
   walkState.jumpCooldownTimer = 0;
+  walkState.jumpAirAssistTimer = 0;
   walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
   walkState.anchorPlanetIdx = idx;
   walkState.surfaceType = startSurface ? startSurface.medium : 'land';
@@ -1832,7 +1843,12 @@ function clampWalkPositionToAnchor(anchorMp, dt) {
   const nominalR = getPlanetCenterRadius(anchorMp, _walkCenter);
   const foot = WALK_CFG.footOffset;
   const absSlack = WALK_CFG.anchorSphereAbsSlack != null ? WALK_CFG.anchorSphereAbsSlack : 0;
-  const maxR = nominalR * WALK_CFG.anchorSphereSlackMult + foot * 3 + absSlack;
+  const baseCap = nominalR * WALK_CFG.anchorSphereSlackMult + foot * 3 + absSlack;
+  const jumpHeadroom =
+    foot * 2.6
+    + WALK_CFG.jumpApexHeight * WALK_CFG.anchorJumpApexClearanceMul
+    + WALK_CFG.groundProbeDistance * 2.2;
+  const maxR = Math.max(baseCap, nominalR + jumpHeadroom);
   _walkTmp.copy(walkState.position).sub(_walkCenter);
   const d = _walkTmp.length();
   if (d < 1e-10) return;
@@ -1971,6 +1987,7 @@ function updateWalkMode(dt) {
   }
   walkState.jumpBufferTimer = Math.max(0, walkState.jumpBufferTimer - dt);
   walkState.jumpCooldownTimer = Math.max(0, walkState.jumpCooldownTimer - dt);
+  walkState.jumpAirAssistTimer = Math.max(0, walkState.jumpAirAssistTimer - dt);
   walkState.coyoteTimer = Math.max(0, walkState.coyoteTimer - dt);
   applyWalkLook();
   let currentSurface = anchorMp
@@ -2021,7 +2038,7 @@ function updateWalkMode(dt) {
 
   const nearGround = Math.abs(currentSurface.gap) <= WALK_CFG.groundProbeDistance;
   const outwardSpeed = walkState.velocity.dot(walkState.up);
-  if (nearGround) walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
+  if (walkState.grounded && nearGround) walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
   if (!walkState.grounded && nearGround && outwardSpeed <= landOutRad) {
     walkState.grounded = true;
   }
@@ -2101,6 +2118,7 @@ function updateWalkMode(dt) {
     walkState.grounded = false;
     walkState.jumpBufferTimer = 0;
     walkState.jumpCooldownTimer = WALK_CFG.jumpCooldownSec;
+    walkState.jumpAirAssistTimer = WALK_CFG.jumpAirAssistIgnoreSec;
     walkState.coyoteTimer = 0;
     nextRadialVel = Math.sqrt(
       Math.max(0, 2 * walkG * WALK_CFG.jumpGravityRiseMul * WALK_CFG.jumpApexHeight)
@@ -2182,7 +2200,13 @@ function updateWalkMode(dt) {
       } else {
         const probe = WALK_CFG.groundProbeDistance;
         const assistEnd = WALK_CFG.airLandingAssistEndGap;
-        if (nextGapSigned >= assistEnd) {
+        const riseClear = nextOutwardSpeed > WALK_CFG.airAssistClearRiseOutSpeed;
+        const jumpAssistHold =
+          walkState.jumpAirAssistTimer > 0
+          && nextOutwardSpeed > WALK_CFG.airAssistJumpFallReleaseSpeed;
+        if (riseClear || jumpAssistHold) {
+          pull = 0;
+        } else if (nextGapSigned >= assistEnd) {
           pull = 0;
         } else if (nextGapAbs <= probe * 1.12) {
           pull = Math.min(1, dt * 26);
