@@ -463,6 +463,7 @@ function createPlanetMoonOrbit(parentIdx) {
     peakScale: parent.obj.state.peakScale,
     waterLevel: parent.obj.state.waterLevel,
     size: Math.max(0.25, parent.obj.state.size * (0.35 + Math.random() * 0.25)),
+    geographyStyle: parent.obj.state.geographyStyle || getGlobalGeographyStyle(),
   });
   scene.add(moon.pivot);
   moon.pivot.visible = planetsRenderable;
@@ -579,6 +580,9 @@ const planetPanelHeader = $('planet-panel-header');
 const planetCountEl = $('planet-count');
 const addPlanetBtn = $('add-planet-btn');
 const addTwinBtn = $('add-twin-btn');
+const planetSettingsBtn = $('planet-settings-btn');
+const planetSettingsPopover = $('planet-settings-popover');
+const geographyStyleChoices = $('geography-style-choices');
 const sunOrbitSlidersEl = $('sun-orbit-sliders');
 const dialSunOrbitREl = $('dial-sun-orbit-r');
 const dialSunOrbitTiltDegEl = $('dial-sun-orbit-tilt-deg');
@@ -1348,6 +1352,8 @@ if (planetPanelHeader) {
     if (!isNarrowPlanetUI()) return;
     if (e.target.closest('#add-planet-btn')) return;
     if (e.target.closest('#add-twin-btn')) return;
+    if (e.target.closest('#planet-settings-btn')) return;
+    if (e.target.closest('#planet-settings-popover')) return;
     if (e.target.closest('#planet-panel-toggle')) return;
     setPlanetPanelOpen(!planetPanel.classList.contains('pp-open'));
   });
@@ -1422,6 +1428,69 @@ addTwinBtn.addEventListener('click', e => {
   e.stopPropagation();
   addMoonFromSelectionUi();
 });
+
+function syncGeographyStyleChoiceMarks() {
+  if (!geographyStyleChoices || typeof getGlobalGeographyStyle !== 'function') return;
+  const cur = getGlobalGeographyStyle();
+  geographyStyleChoices.querySelectorAll('.geography-style-choice').forEach(btn => {
+    const on = btn.dataset.style === cur;
+    btn.classList.toggle('selected', on);
+    btn.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
+function buildGeographyStyleChoices() {
+  if (!geographyStyleChoices || typeof GEOGRAPHY_STYLE_OPTIONS === 'undefined') return;
+  geographyStyleChoices.innerHTML = '';
+  GEOGRAPHY_STYLE_OPTIONS.forEach(opt => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'geography-style-choice';
+    b.dataset.style = opt.id;
+    b.setAttribute('role', 'radio');
+    b.innerHTML = `<span class="gsc-label">${opt.label}</span><span class="gsc-blurb">${opt.blurb}</span>`;
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      applyGeographyStyleEverywhere(opt.id);
+      setPlanetSettingsPopoverOpen(false);
+    });
+    geographyStyleChoices.appendChild(b);
+  });
+  syncGeographyStyleChoiceMarks();
+}
+
+function applyGeographyStyleEverywhere(id) {
+  const norm = typeof setGlobalGeographyStyle === 'function' ? setGlobalGeographyStyle(id) : 'natural';
+  managedPlanets.forEach(mp => {
+    if (mp?.obj?.state) mp.obj.state.geographyStyle = norm;
+    rebuildManagedPlanetTerrain(mp);
+  });
+}
+
+function setPlanetSettingsPopoverOpen(open) {
+  if (!planetSettingsPopover || !planetSettingsBtn) return;
+  if (open) {
+    planetSettingsPopover.removeAttribute('hidden');
+    planetSettingsBtn.setAttribute('aria-expanded', 'true');
+    syncGeographyStyleChoiceMarks();
+  } else {
+    planetSettingsPopover.setAttribute('hidden', 'hidden');
+    planetSettingsBtn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+if (planetSettingsBtn && planetSettingsPopover) {
+  buildGeographyStyleChoices();
+  planetSettingsBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    setPlanetSettingsPopoverOpen(planetSettingsPopover.hasAttribute('hidden'));
+  });
+  document.addEventListener('pointerdown', e => {
+    if (planetSettingsPopover.hasAttribute('hidden')) return;
+    if (e.target.closest && (e.target.closest('#planet-settings-popover') || e.target.closest('#planet-settings-btn'))) return;
+    setPlanetSettingsPopoverOpen(false);
+  });
+}
 
 let lastWalkButtonPressMs = 0;
 async function onWalkButtonPressed(e) {
