@@ -261,7 +261,12 @@ const WALK_CFG = {
   /** Tangential speed below this snaps to zero when idle (world units / frame-scale). */
   idlePlanarSnapSpeed: 0.0032,
   groundProbeDistance: 0.035,
-  landMaxOutwardSpeed: 0.08,
+  /**
+   * Air → ground snap only when body-up and surface-radial outward speeds are both at or below this.
+   * The old 0.08 “outward cap” was larger than weak jump launch speed, so every hop was re-grounded
+   * immediately and the grounded solver stripped upward velocity (felt like a violent pull to the planet).
+   */
+  landReGroundMaxUpwardSpeed: 0.035,
   groundSnapIdle: 16,
   groundSnapMove: 26,
   groundNormalLerp: 14,
@@ -1968,7 +1973,7 @@ function updateWalkMode(dt) {
   const walkG = walkGrav.g;
   const walkMaxFall = walkGrav.maxFall;
   const speedScale = WALK_PLANAR_WORLD_SCALE;
-  const landOutRad = WALK_CFG.landMaxOutwardSpeed * speedScale;
+  const landReGroundMaxUp = WALK_CFG.landReGroundMaxUpwardSpeed * speedScale;
   syncWalkPlayerLightToPlanetScale(anchorMp);
   if (anchorMp?.obj?.pivot) {
     if (!getWalkAnchorFrameWorldMatrix(anchorMp, _walkAnchorCurr)) {
@@ -2044,7 +2049,7 @@ function updateWalkMode(dt) {
   const nearGround = Math.abs(currentSurface.gap) <= WALK_CFG.groundProbeDistance;
   const outwardSpeed = walkState.velocity.dot(walkState.up);
   if (walkState.grounded && nearGround) walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
-  if (!walkState.grounded && nearGround && outwardSpeed <= landOutRad) {
+  if (!walkState.grounded && nearGround && outwardSpeed <= landReGroundMaxUp) {
     walkState.grounded = true;
   }
   if (walkState.grounded && !nearGround && walkState.coyoteTimer <= 0) {
@@ -2179,7 +2184,10 @@ function updateWalkMode(dt) {
     const nextGapSigned = nextSurface.gap;
     const nextGapAbs = Math.abs(nextGapSigned);
     const nextOutwardSpeed = walkState.velocity.dot(nextSurface.radialDir);
-    if (!walkState.grounded && nextGapAbs <= WALK_CFG.groundProbeDistance && nextOutwardSpeed <= landOutRad) {
+    const velAlongUp = walkState.velocity.dot(walkState.up);
+    if (!walkState.grounded && nextGapAbs <= WALK_CFG.groundProbeDistance
+      && velAlongUp <= landReGroundMaxUp
+      && nextOutwardSpeed <= landReGroundMaxUp) {
       walkState.grounded = true;
     }
     if (walkState.grounded) {
