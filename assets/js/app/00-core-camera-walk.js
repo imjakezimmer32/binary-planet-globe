@@ -1960,8 +1960,15 @@ function updateWalkMode(dt) {
       _walkAnchorRot.setFromMatrix4(_walkAnchorDelta);
       walkState.velocity.applyMatrix3(_walkAnchorRot);
       walkState.up.transformDirection(_walkAnchorDelta).normalize();
-      walkState.forward.transformDirection(_walkAnchorDelta).normalize();
-      walkState.viewDir.transformDirection(_walkAnchorDelta).normalize();
+      // Don't rotate viewDir/forward by the anchor spin — at high time warp the planet
+      // spins several degrees per frame and rotating the view with it makes the camera
+      // spin uncontrollably. Position and velocity already track the surface correctly.
+      // Re-project forward to stay tangential to the (possibly rotated) up.
+      const _fwdUpDot = walkState.forward.dot(walkState.up);
+      if (Math.abs(_fwdUpDot) > 1e-3) {
+        walkState.forward.addScaledVector(walkState.up, -_fwdUpDot);
+        if (walkState.forward.lengthSq() > 1e-8) walkState.forward.normalize();
+      }
     }
     walkState.anchorLastMatrix.copy(_walkAnchorCurr);
     walkState.anchorLastMatrixValid = true;
