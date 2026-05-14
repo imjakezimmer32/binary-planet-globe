@@ -268,8 +268,8 @@ const VEG = (() => {
       [0.042, 0.065, 18],   // Palm  — dense shoreline
     ];
 
-    const GRASS_DENSITY       = 300000;
-    const MAX_CLUMPS_PER_FACE = 16;
+    // Grass clumps per square world unit — same Poisson system as trees.
+    const GRASS_DENSITY = 1600;
 
     const posArr     = flatGeo.attributes.position.array;
     const totalFaces = (posArr.length / 9) | 0;
@@ -373,7 +373,8 @@ const VEG = (() => {
       }
 
       if (wantGrass) {
-        const n = Math.min(MAX_CLUMPS_PER_FACE, Math.max(1, Math.round(fnl * 0.5 * sz * sz * GRASS_DENSITY)));
+        const ge = worldFaceArea * GRASS_DENSITY;
+        const n = Math.floor(ge) + (rng() < (ge % 1) ? 1 : 0);
         for (let k = 0; k < n; k++) {
           let u = rng(), v = rng();
           if (u + v > 1) { u = 1 - u; v = 1 - v; }
