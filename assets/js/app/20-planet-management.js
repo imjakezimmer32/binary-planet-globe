@@ -1785,7 +1785,7 @@ window.addEventListener('keydown', e => {
   if (k === 'a' || k === 'arrowleft') walkInput.left = true;
   if (k === 'd' || k === 'arrowright') walkInput.right = true;
   walkInput.shiftRun = e.shiftKey;
-  if (k === ' ') queueWalkJump();
+  if (k === ' ' && !e.repeat) queueWalkJump();
   if (k === 'v' || k === 'c') toggleWalkCameraMode();
   if (k === 'escape') {
     stopWalkMode();
