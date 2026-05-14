@@ -29,7 +29,112 @@ function getLiquidState(wl, baseR) {
   };
 }
 
-function buildGlobe(radius, detail, seed, ps, wl) {
+function fracUnit(x) {
+  return x - Math.floor(x);
+}
+/** Deterministic unit vector from seed (stable across rebuilds). */
+function hashDir3(seed, salt) {
+  const x = fracUnit(Math.sin(seed * 127.1 + salt * 311.7) * 43758.5453);
+  const y = fracUnit(Math.sin(seed * 269.5 + salt * 419.2) * 23421.8761);
+  const z = fracUnit(Math.sin(seed * 419.3 + salt * 913.4) * 91234.1234);
+  const len = Math.hypot(x, y, z) || 1;
+  return [x / len, y / len, z / len];
+}
+
+const GEOGRAPHY_STYLE_OPTIONS = [
+  { id: 'natural', label: 'Natural', blurb: 'Classic noise—mixed continents and oceans.' },
+  { id: 'pangaea', label: 'Pangaea', blurb: 'One dominant super-continent bias, quieter seas.' },
+  { id: 'archipelago', label: 'Archipelago', blurb: 'Many small land fragments and winding channels.' },
+  { id: 'dual', label: 'Dual continents', blurb: 'Two large land masses on opposite sides.' },
+  { id: 'polar', label: 'Polar caps', blurb: 'Highlands near the poles; more ocean mid-latitudes.' },
+  { id: 'rift', label: 'Rift range', blurb: 'A long mountain belt along a great circle.' },
+  { id: 'atolls', label: 'Atoll chains', blurb: 'Tilted ring of islands—lagoon and reef vibes.' },
+];
+const GEOGRAPHY_STYLE_STORAGE_KEY = 'astrabound-planet-geography-style';
+const DEFAULT_GEOGRAPHY_STYLE = 'natural';
+
+function normalizeGeographyStyle(id) {
+  if (!id) return DEFAULT_GEOGRAPHY_STYLE;
+  return GEOGRAPHY_STYLE_OPTIONS.some(o => o.id === id) ? id : DEFAULT_GEOGRAPHY_STYLE;
+}
+
+function getGlobalGeographyStyle() {
+  try {
+    return normalizeGeographyStyle(localStorage.getItem(GEOGRAPHY_STYLE_STORAGE_KEY));
+  } catch (e) {
+    return DEFAULT_GEOGRAPHY_STYLE;
+  }
+}
+
+function setGlobalGeographyStyle(id) {
+  const n = normalizeGeographyStyle(id);
+  try {
+    localStorage.setItem(GEOGRAPHY_STYLE_STORAGE_KEY, n);
+  } catch (e) { /* ignore */ }
+  return n;
+}
+
+function clampGeographyDelta(v) {
+  return Math.max(-0.13, Math.min(0.13, v));
+}
+
+/**
+ * Macro-scale height bias (same units as the base noise sum before × ps).
+ * Combined with fine noise in buildGlobe to sculpt coastlines / continents.
+ */
+function geographyElevationDelta(nx, ny, nz, seed, styleId) {
+  const s = seed;
+  let raw = 0;
+  switch (normalizeGeographyStyle(styleId)) {
+    case 'natural':
+      raw = 0;
+      break;
+    case 'pangaea': {
+      const w = noise3(nx * 0.28 + s * 0.05, ny * 0.28 + s * 0.09, nz * 0.28 + s * 0.12);
+      raw = w > 0 ? 0.12 * w * w + 0.045 * w : 0.032 * w;
+      break;
+    }
+    case 'archipelago': {
+      const macro = noise3(nx * 0.38 + s, ny * 0.38 + s * 0.43, nz * 0.38 + s * 0.21);
+      const islandR = 1 - Math.abs(noise3(nx * 1.82 + s, ny * 1.82 + s * 0.3, nz * 1.82 + s * 0.55));
+      const speck = Math.abs(noise3(nx * 6.3 + s, ny * 6.3 + s * 0.7, nz * 6.3 + s * 0.45));
+      raw = -0.042 * macro + 0.058 * islandR + 0.036 * speck - 0.014;
+      break;
+    }
+    case 'dual': {
+      const [ax, ay, az] = hashDir3(s, 11);
+      const d = nx * ax + ny * ay + nz * az;
+      const b = Math.exp(-2.85 * (1 - d * d));
+      raw = 0.094 * b - 0.036;
+      break;
+    }
+    case 'polar': {
+      const [px, py, pz] = hashDir3(s, 19);
+      const lat = nx * px + ny * py + nz * pz;
+      raw = 0.084 * (lat * lat * 2.05 - 0.39);
+      break;
+    }
+    case 'rift': {
+      const [rx, ry, rz] = hashDir3(s, 29);
+      const u = nx * rx + ny * ry + nz * rz;
+      raw = 0.098 * Math.exp(-23.5 * u * u) - 0.024;
+      break;
+    }
+    case 'atolls': {
+      const [qx, qy, qz] = hashDir3(s, 37);
+      const lat = nx * qx + ny * qy + nz * qz;
+      const belt = Math.exp(-13.5 * Math.pow(Math.abs(lat) - 0.48, 2));
+      const wobble = 0.52 + 0.48 * noise3(nx * 2.45 + s, ny * 2.45 + s * 0.6, nz * 2.45 + s * 0.35);
+      raw = 0.079 * belt * wobble - 0.02;
+      break;
+    }
+    default:
+      raw = 0;
+  }
+  return clampGeographyDelta(raw);
+}
+
+function buildGlobe(radius, detail, seed, ps, wl, geographyStyle) {
   // ps = peakScale, wl = waterLevel (explicit per-planet)
   const geo = new THREE.IcosahedronGeometry(radius, detail);
   const arr = geo.attributes.position.array;
@@ -40,8 +145,10 @@ function buildGlobe(radius, detail, seed, ps, wl) {
     const ox = arr[i*3], oy = arr[i*3+1], oz = arr[i*3+2];
     const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
     const nx = ox/len, ny = oy/len, nz = oz/len;
-    const d = (noise3(nx*1.7+seed, ny*1.7+seed, nz*1.7+seed) * 0.14
-             + noise3(nx*4.0+seed, ny*4.0+seed, nz*4.0+seed) * 0.04) * ps;
+    const nLo = noise3(nx * 1.7 + seed, ny * 1.7 + seed, nz * 1.7 + seed) * 0.14
+      + noise3(nx * 4.0 + seed, ny * 4.0 + seed, nz * 4.0 + seed) * 0.04;
+    const geoDelta = geographyElevationDelta(nx, ny, nz, seed, geographyStyle);
+    const d = (nLo + geoDelta) * ps;
     // Clamp low terrain only when a liquid exists so 0 stays dry.
     const rawR = radius * (1 + d);
     const r = hasLiquid ? Math.max(rawR, liquidR) : rawR;
@@ -92,20 +199,250 @@ function elevColor(ne, pal) {
   }
   return pal[pal.length-1][1];
 }
-function blendPalette(wet) {
-  // wet: 0=fully dry, 1=fully wet. Returns blended terrain palette.
-  if (wet >= 1) return PALETTE_WET;
-  if (wet <= 0) return PALETTE_DRY;
-  return PALETTE_WET.map((e, i) => [
+function blendPaletteNamed(wetAmt, dryPal, wetPal) {
+  if (wetAmt >= 1) return wetPal;
+  if (wetAmt <= 0) return dryPal;
+  return wetPal.map((e, i) => [
     e[0],
-    e[1].map((c, j) => c * wet + PALETTE_DRY[i][1][j] * (1 - wet))
+    e[1].map((c, j) => c * wetAmt + dryPal[i][1][j] * (1 - wetAmt))
   ]);
 }
+function blendPalette(wet) {
+  return blendPaletteNamed(wet, PALETTE_DRY, PALETTE_WET);
+}
 
-function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
+// Extra terrain palettes (same elevation knots as PALETTE_WET / PALETTE_DRY).
+const PALETTE_FROST_WET = [
+  [-0.200, [0.045, 0.055, 0.075]],
+  [-0.180, [0.060, 0.075, 0.095]],
+  [-0.130, [0.085, 0.105, 0.125]],
+  [-0.100, [0.120, 0.145, 0.165]],
+  [-0.030, [0.160, 0.195, 0.215]],
+  [ 0.000, [0.150, 0.210, 0.235]],
+  [ 0.040, [0.055, 0.260, 0.300]],
+  [ 0.140, [0.040, 0.360, 0.400]],
+  [ 0.165, [0.200, 0.240, 0.255]],
+  [ 0.182, [0.420, 0.445, 0.465]],
+  [ 0.200, [0.920, 0.955, 0.980]],
+];
+const PALETTE_FROST_DRY = [
+  [-0.200, [0.070, 0.075, 0.085]],
+  [-0.180, [0.095, 0.100, 0.110]],
+  [-0.130, [0.130, 0.135, 0.145]],
+  [-0.100, [0.165, 0.175, 0.185]],
+  [-0.030, [0.210, 0.220, 0.230]],
+  [ 0.000, [0.220, 0.225, 0.235]],
+  [ 0.040, [0.240, 0.255, 0.270]],
+  [ 0.140, [0.280, 0.295, 0.310]],
+  [ 0.165, [0.300, 0.310, 0.325]],
+  [ 0.182, [0.380, 0.395, 0.410]],
+  [ 0.200, [0.900, 0.930, 0.950]],
+];
+const PALETTE_DESERT_WET = [
+  [-0.200, [0.080, 0.055, 0.045]],
+  [-0.180, [0.110, 0.075, 0.055]],
+  [-0.130, [0.150, 0.105, 0.075]],
+  [-0.100, [0.200, 0.140, 0.095]],
+  [-0.030, [0.280, 0.195, 0.110]],
+  [ 0.000, [0.300, 0.210, 0.120]],
+  [ 0.040, [0.180, 0.260, 0.100]],
+  [ 0.140, [0.140, 0.220, 0.080]],
+  [ 0.165, [0.260, 0.180, 0.090]],
+  [ 0.182, [0.400, 0.360, 0.300]],
+  [ 0.200, [0.960, 0.930, 0.880]],
+];
+const PALETTE_DESERT_DRY = [
+  [-0.200, [0.100, 0.070, 0.050]],
+  [-0.180, [0.130, 0.090, 0.065]],
+  [-0.130, [0.175, 0.120, 0.085]],
+  [-0.100, [0.220, 0.155, 0.105]],
+  [-0.030, [0.300, 0.200, 0.120]],
+  [ 0.000, [0.310, 0.205, 0.125]],
+  [ 0.040, [0.420, 0.300, 0.155]],
+  [ 0.140, [0.380, 0.260, 0.130]],
+  [ 0.165, [0.320, 0.200, 0.105]],
+  [ 0.182, [0.400, 0.370, 0.330]],
+  [ 0.200, [0.950, 0.910, 0.820]],
+];
+const PALETTE_ALIEN_WET = [
+  [-0.200, [0.060, 0.040, 0.090]],
+  [-0.180, [0.090, 0.050, 0.120]],
+  [-0.130, [0.120, 0.060, 0.150]],
+  [-0.100, [0.160, 0.080, 0.190]],
+  [-0.030, [0.220, 0.100, 0.240]],
+  [ 0.000, [0.200, 0.120, 0.260]],
+  [ 0.040, [0.050, 0.280, 0.220]],
+  [ 0.140, [0.040, 0.420, 0.320]],
+  [ 0.165, [0.280, 0.200, 0.120]],
+  [ 0.182, [0.400, 0.350, 0.420]],
+  [ 0.200, [0.880, 0.720, 0.980]],
+];
+const PALETTE_ALIEN_DRY = [
+  [-0.200, [0.090, 0.050, 0.100]],
+  [-0.180, [0.120, 0.065, 0.130]],
+  [-0.130, [0.160, 0.080, 0.165]],
+  [-0.100, [0.200, 0.100, 0.200]],
+  [-0.030, [0.260, 0.130, 0.220]],
+  [ 0.000, [0.270, 0.135, 0.225]],
+  [ 0.040, [0.320, 0.180, 0.260]],
+  [ 0.140, [0.280, 0.150, 0.240]],
+  [ 0.165, [0.240, 0.120, 0.200]],
+  [ 0.182, [0.380, 0.340, 0.400]],
+  [ 0.200, [0.820, 0.760, 0.900]],
+];
+const PALETTE_VOLCANIC_WET = [
+  [-0.200, [0.030, 0.028, 0.030]],
+  [-0.180, [0.050, 0.035, 0.032]],
+  [-0.130, [0.080, 0.050, 0.040]],
+  [-0.100, [0.120, 0.065, 0.045]],
+  [-0.030, [0.180, 0.090, 0.050]],
+  [ 0.000, [0.200, 0.100, 0.055]],
+  [ 0.040, [0.080, 0.140, 0.055]],
+  [ 0.140, [0.060, 0.110, 0.045]],
+  [ 0.165, [0.220, 0.090, 0.040]],
+  [ 0.182, [0.320, 0.280, 0.260]],
+  [ 0.200, [0.950, 0.880, 0.820]],
+];
+const PALETTE_VOLCANIC_DRY = [
+  [-0.200, [0.050, 0.035, 0.030]],
+  [-0.180, [0.080, 0.050, 0.038]],
+  [-0.130, [0.120, 0.070, 0.048]],
+  [-0.100, [0.160, 0.090, 0.055]],
+  [-0.030, [0.220, 0.120, 0.070]],
+  [ 0.000, [0.230, 0.125, 0.072]],
+  [ 0.040, [0.380, 0.200, 0.090]],
+  [ 0.140, [0.340, 0.160, 0.080]],
+  [ 0.165, [0.280, 0.120, 0.065]],
+  [ 0.182, [0.350, 0.320, 0.300]],
+  [ 0.200, [0.920, 0.860, 0.780]],
+];
+const PALETTE_TWILIGHT_WET = [
+  [-0.200, [0.055, 0.045, 0.070]],
+  [-0.180, [0.075, 0.055, 0.090]],
+  [-0.130, [0.100, 0.070, 0.115]],
+  [-0.100, [0.130, 0.090, 0.145]],
+  [-0.030, [0.180, 0.120, 0.175]],
+  [ 0.000, [0.200, 0.130, 0.190]],
+  [ 0.040, [0.090, 0.200, 0.150]],
+  [ 0.140, [0.060, 0.160, 0.120]],
+  [ 0.165, [0.220, 0.150, 0.140]],
+  [ 0.182, [0.380, 0.340, 0.360]],
+  [ 0.200, [0.920, 0.880, 0.900]],
+];
+const PALETTE_TWILIGHT_DRY = [
+  [-0.200, [0.080, 0.055, 0.090]],
+  [-0.180, [0.110, 0.075, 0.115]],
+  [-0.130, [0.145, 0.100, 0.145]],
+  [-0.100, [0.180, 0.125, 0.175]],
+  [-0.030, [0.240, 0.165, 0.210]],
+  [ 0.000, [0.250, 0.170, 0.215]],
+  [ 0.040, [0.300, 0.200, 0.240]],
+  [ 0.140, [0.260, 0.175, 0.210]],
+  [ 0.165, [0.220, 0.150, 0.185]],
+  [ 0.182, [0.360, 0.320, 0.350]],
+  [ 0.200, [0.880, 0.820, 0.860]],
+];
+
+const TERRAIN_PAINTS = {
+  earth: {
+    wet: PALETTE_WET,
+    dry: PALETTE_DRY,
+    waterDeep: [0.06, 0.46, 0.56],
+    waterAqua: [0.20, 0.78, 0.76],
+    waterSand: [0.84, 0.75, 0.50],
+    landSand: [0.87, 0.78, 0.55],
+    atmoWater: 0x44aaff,
+    atmoLava: 0xff3c1a,
+  },
+  frost: {
+    wet: PALETTE_FROST_WET,
+    dry: PALETTE_FROST_DRY,
+    waterDeep: [0.02, 0.12, 0.28],
+    waterAqua: [0.15, 0.55, 0.72],
+    waterSand: [0.70, 0.82, 0.88],
+    landSand: [0.78, 0.88, 0.92],
+    atmoWater: 0x66c8ff,
+    atmoLava: 0xff5522,
+  },
+  desert: {
+    wet: PALETTE_DESERT_WET,
+    dry: PALETTE_DESERT_DRY,
+    waterDeep: [0.08, 0.22, 0.20],
+    waterAqua: [0.22, 0.48, 0.42],
+    waterSand: [0.72, 0.62, 0.38],
+    landSand: [0.82, 0.70, 0.42],
+    atmoWater: 0x88c4aa,
+    atmoLava: 0xff4400,
+  },
+  alien: {
+    wet: PALETTE_ALIEN_WET,
+    dry: PALETTE_ALIEN_DRY,
+    waterDeep: [0.05, 0.15, 0.35],
+    waterAqua: [0.25, 0.85, 0.75],
+    waterSand: [0.55, 0.35, 0.85],
+    landSand: [0.65, 0.45, 0.90],
+    atmoWater: 0x9933ff,
+    atmoLava: 0xff00aa,
+  },
+  volcanic: {
+    wet: PALETTE_VOLCANIC_WET,
+    dry: PALETTE_VOLCANIC_DRY,
+    waterDeep: [0.12, 0.04, 0.03],
+    waterAqua: [0.45, 0.12, 0.06],
+    waterSand: [0.35, 0.22, 0.12],
+    landSand: [0.42, 0.28, 0.14],
+    atmoWater: 0x4488aa,
+    atmoLava: 0xff2200,
+  },
+  twilight: {
+    wet: PALETTE_TWILIGHT_WET,
+    dry: PALETTE_TWILIGHT_DRY,
+    waterDeep: [0.08, 0.05, 0.22],
+    waterAqua: [0.28, 0.18, 0.55],
+    waterSand: [0.55, 0.38, 0.62],
+    landSand: [0.62, 0.48, 0.68],
+    atmoWater: 0xc94dff,
+    atmoLava: 0xff3366,
+  },
+};
+
+const TERRAIN_STYLE_STORAGE_KEY = 'astrabound-planet-terrain-style';
+const DEFAULT_TERRAIN_STYLE = 'earth';
+const TERRAIN_STYLE_OPTIONS = [
+  { id: 'earth', label: 'Earth-like', blurb: 'Classic greens, blue water, white peaks.' },
+  { id: 'frost', label: 'Ice moon', blurb: 'Frozen seas, teal shallows, pale peaks.' },
+  { id: 'desert', label: 'Desert', blurb: 'Warm sands, rusty canyons, oasis greens when wet.' },
+  { id: 'alien', label: 'Alien', blurb: 'Purple rock, neon shallows, odd shore colors.' },
+  { id: 'volcanic', label: 'Volcanic', blurb: 'Dark basalt, ember ridges, heavy red seas.' },
+  { id: 'twilight', label: 'Twilight', blurb: 'Dusk purples and rose-lit highlands.' },
+];
+
+function normalizeTerrainStyle(id) {
+  if (!id || !TERRAIN_PAINTS[id]) return DEFAULT_TERRAIN_STYLE;
+  return id;
+}
+
+function getGlobalTerrainStyle() {
+  try {
+    return normalizeTerrainStyle(localStorage.getItem(TERRAIN_STYLE_STORAGE_KEY));
+  } catch (e) {
+    return DEFAULT_TERRAIN_STYLE;
+  }
+}
+
+function setGlobalTerrainStyle(id) {
+  const n = normalizeTerrainStyle(id);
+  try {
+    localStorage.setItem(TERRAIN_STYLE_STORAGE_KEY, n);
+  } catch (e) { /* ignore quota / private mode */ }
+  return n;
+}
+
+function colorizeGlobe(geo, baseR, ps, wl, planetSeed, terrainStyle) {
   // ps = peakScale, wl = waterLevel — explicit per-planet, not global
   planetSeed = planetSeed == null ? 0 : planetSeed;
   ps = Math.max(ps, 0.001);
+  const paint = TERRAIN_PAINTS[normalizeTerrainStyle(terrainStyle)];
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const faceCount = pos.count / 3;
@@ -120,10 +457,10 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
   const lavaGlowInnerCol = [];
   const lavaGlowOuterPos = [];
   const lavaGlowOuterCol = [];
-  const WATER_DEEP = [0.06, 0.46, 0.56];
-  const WATER_AQUA = [0.20, 0.78, 0.76];
-  const WATER_SAND = [0.84, 0.75, 0.50];
-  const LAND_SAND = [0.87, 0.78, 0.55];
+  const WATER_DEEP = paint.waterDeep;
+  const WATER_AQUA = paint.waterAqua;
+  const WATER_SAND = paint.waterSand;
+  const LAND_SAND = paint.landSand;
   const LAVA_BLACK = [0.08, 0.08, 0.09];
   const LAVA_RED_HOT = [0.96, 0.14, 0.05];
   const LAVA_RED_MID = [0.78, 0.09, 0.04];
@@ -149,7 +486,7 @@ function colorizeGlobe(geo, baseR, ps, wl, planetSeed) {
 
   // Blend palette: green fades in as water amount rises on the + side.
   const wet = hasWater ? Math.min(Math.max(liquidStrength / 0.20, 0), 1) : 0;
-  const pal = blendPalette(wet);
+  const pal = blendPaletteNamed(wet, paint.dry, paint.wet);
 
   // Pass 1: find terrain (non-liquid) elevation range for palette stretching
   let minNe = Infinity, maxNe = -Infinity;
@@ -391,7 +728,18 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
   let built = [], pickables = [], vegMeshes = [];
 
   // Per-planet state — independent of any global
-  const state = Object.assign({ peakScale: 1.0, waterLevel: 0.48, size: 1.0 }, initState);
+  const state = Object.assign(
+    {
+      peakScale: 1.0,
+      waterLevel: 0.48,
+      size: 1.0,
+      terrainStyle: getGlobalTerrainStyle(),
+      geographyStyle: getGlobalGeographyStyle(),
+    },
+    initState || {}
+  );
+  state.terrainStyle = normalizeTerrainStyle(state.terrainStyle);
+  state.geographyStyle = normalizeGeographyStyle(state.geographyStyle);
 
   let lastBuiltSz = Math.max(state.size ?? 1, 0.05);
 
@@ -415,9 +763,9 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     // Keep lava readable at long camera ranges by not dropping to ultra-low geometry detail.
     const buildDetail = liquidState.hasLava ? Math.max(4, d) : d;
 
-    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl);
+    const idxGeo  = buildGlobe(shellR, buildDetail, seed, ps, wl, state.geographyStyle);
     const flatGeo = idxGeo.toNonIndexed();
-    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, seed);
+    const colorMeta = colorizeGlobe(flatGeo, shellR, ps, wl, seed, state.terrainStyle);
     applySmoothVertexNormalsForNonIndexedTerrain(flatGeo);
 
     // Depth pre-pass: back-faces seal silhouette and stabilize rendering.
@@ -465,31 +813,7 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
       });
     })();
 
-    // Wire uses a fixed low-detail icosphere (detail 3 = 1,920 edges) regardless of terrain
-    // detail. Full-res edges at detail 7+ = 491k–7.8M line segments — a GPU killer every frame.
-    const wireIco = new THREE.IcosahedronGeometry(shellR * 1.001, 3);
-    const wire = new THREE.LineSegments(
-      new THREE.EdgesGeometry(wireIco),
-      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
-    );
-    wireIco.dispose();
-    wire.scale.setScalar(1.0015);
-    wire.renderOrder = 2;
-
-    const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(shellR * 1.10, 24, 24),
-      new THREE.MeshBasicMaterial({
-        color: liquidState.hasLava ? 0xff3c1a : 0x44aaff,
-        transparent: true,
-        opacity: liquidState.hasLava ? (0.05 + liquidState.strength * 0.09) : 0.06,
-        side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
-      })
-    );
-    atmo.renderOrder = 3;
-
-    built = [depthBack, terrain];
-    if (lavaGlowMeshes) lavaGlowMeshes.forEach(m => built.push(m));
-    built.push(wire, atmo);
+    built.push(atmo);
     pickables = [terrain];
     spin.add(...built);
     if (!skipVeg && typeof VEG !== 'undefined') {
@@ -503,17 +827,6 @@ function createPlanet(baseR, detailInit, seed, axisTilt, initState) {
     baseRadius: baseR,
     rebuild:  build,
     setWater: () => {},
-    setGrid:  v  => { built.forEach(c => { if (c.isLineSegments) c.visible = v; }); },
-    syncGrid: ()  => {
-      const g = typeof gridOn !== 'undefined' ? gridOn : true;
-      built.forEach(c => { if (c.isLineSegments) c.visible = g; });
-    },
-    setWireOpacity: (v) => {
-      const a = Math.max(0, Math.min(1, v));
-      built.forEach(c => {
-        if (c.isLineSegments && c.material) c.material.opacity = a;
-      });
-    },
     getTerrainMesh: () => pickables[0] || null,
     getPickables: () => pickables,
     setVegVisible: v => { vegMeshes.forEach(m => { m.visible = v; }); },
@@ -737,7 +1050,6 @@ function rebuildManagedPlanetTerrain(mp, maxDetail, skipVeg) {
   if (maxDetail !== undefined) d = Math.min(d, maxDetail);
   if (d > 0) {
     mp.obj.rebuild(d, (maxDetail !== undefined || skipVeg) ? { skipVeg: true } : undefined);
-    mp.obj.syncGrid();
   }
 }
 

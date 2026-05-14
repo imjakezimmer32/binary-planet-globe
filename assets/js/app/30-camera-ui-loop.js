@@ -23,19 +23,9 @@ function setCamMode(mode) {
   }
   skipNextOrbitSyncForSetCamMode = false;
 }
-const btnGrid = document.getElementById('btn-grid');
-let gridOn = true;
-if (btnGrid) {
-  btnGrid.addEventListener('click', () => {
-    gridOn = !gridOn;
-    btnGrid.classList.toggle('active', gridOn);
-    managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
-  });
-}
 
 // Binary + registered planets: first terrain LOD/snap pass (see rebuildManagedPlanetTerrain in
-// 10-world-geometry.js). Must run after `gridOn` is initialized — planet wire syncGrid() reads it.
-// Runs even if #btn-grid is missing so Sol bodies are not stuck on createPlanet() placeholder meshes.
+// 10-world-geometry.js). Runs after globals exist so Sol bodies are not stuck on placeholder meshes.
 if (typeof rebuildAllManagedPlanetTerrainMeshes === 'function') rebuildAllManagedPlanetTerrainMeshes();
 
 // ── Camera settings panel ─────────────────────────────────────────
@@ -48,37 +38,17 @@ if (btnCamSettings && camSettingsEl) {
   });
 }
 
-/** While walking: hide grid + cam settings, turn grid off; restore when leaving walk. */
-let _gridStateBeforeWalk = null;
+/** While walking: hide cam settings panel trigger. */
 function syncWalkModeChrome(walkActive) {
-  if (!btnGrid || !btnCamSettings) return;
+  if (!btnCamSettings) return;
   if (walkActive) {
-    btnGrid.style.display = 'none';
     btnCamSettings.style.display = 'none';
     if (camSettingsEl && camSettingsEl.classList.contains('open')) {
       camSettingsEl.classList.remove('open');
       btnCamSettings.classList.remove('active');
     }
-    if (_gridStateBeforeWalk === null) {
-      _gridStateBeforeWalk = gridOn;
-    }
-    if (gridOn) {
-      gridOn = false;
-      btnGrid.classList.remove('active');
-      managedPlanets.forEach(mp => mp.obj.setGrid(false));
-    }
   } else {
-    btnGrid.style.display = '';
     btnCamSettings.style.display = '';
-    if (_gridStateBeforeWalk !== null) {
-      const restore = _gridStateBeforeWalk;
-      _gridStateBeforeWalk = null;
-      if (gridOn !== restore) {
-        gridOn = restore;
-        btnGrid.classList.toggle('active', gridOn);
-        managedPlanets.forEach(mp => mp.obj.setGrid(gridOn));
-      }
-    }
   }
 }
 
@@ -140,7 +110,6 @@ function getSimulationWarp(uiWarp) {
   return Math.max(0, uiWarp) * TIME_WARP_BASE_SCALE;
 }
 
-let _prevWireOpacity = -1;
 let _vegWalkWasActive = false;
 
 function animate() {
@@ -177,15 +146,6 @@ function animate() {
   // Smooth scale lerp (camera/universe view only; objects keep real size)
   curScale += (targetScale - curScale) * 0.08;
   setPlanetsRenderable(true);
-
-  // Fade dense wire edges at long zoom-out ranges to prevent distance shimmer.
-  const curScaleUi = scaleWorldToUi(curScale);
-  const wireFade = cameraMode === 'planet' ? 1 : Math.max(0, 1 - (curScaleUi - 8) / 44);
-  const wireOpacity = 0.25 * wireFade;
-  if (wireOpacity !== _prevWireOpacity) {
-    managedPlanets.forEach(mp => mp.obj.setWireOpacity?.(wireOpacity));
-    _prevWireOpacity = wireOpacity;
-  }
 
   // Planet radius is baked into the mesh; pivot uniform scale would stretch facets.
   if (typeof managedPlanets !== 'undefined') {
