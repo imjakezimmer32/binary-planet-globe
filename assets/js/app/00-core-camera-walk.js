@@ -211,6 +211,12 @@ const WALK_CFG = {
   tpFpsBlendStart: 0.095,
   /** At or below this distance, first-person blend is full (eye + slight pullback from head). */
   tpFpsBlendEnd: 0.056,
+  /**
+   * Third-person arm uses horizontal pullback: length of (-viewDir) projected onto tangent plane.
+   * Below this, blend toward -forward so looking at the zenith does not drive the lens through the ground
+   * (which used to fight enforceCameraOutsidePlanetMeshes and cause shake).
+   */
+  tpHorizonPullBlendFlatLen: 0.22,
   /** Eye height above walk anchor along planet up (feet/anchor → eyes). */
   fpEyeHeight: 0.0194,
   /** Nudge camera back from eye along viewDir so near-plane does not clip the pill. */
@@ -1810,9 +1816,24 @@ function updateWalkCameraPose(dt) {
   fpBlend = fpBlend * fpBlend * (3 - 2 * fpBlend);
 
   const camH = WALK_CFG.cameraHeight * (1 - fpBlend);
+
+  const camBackFlat = _walkTmp.copy(walkState.viewDir).multiplyScalar(-1);
+  camBackFlat.addScaledVector(walkState.up, -camBackFlat.dot(walkState.up));
+  const flatLen = camBackFlat.length();
+  if (flatLen > 1e-6) camBackFlat.multiplyScalar(1 / flatLen);
+  else camBackFlat.copy(walkState.forward).multiplyScalar(-1);
+
+  const tpCamFallback = _walkSpawnToCam.copy(walkState.forward).multiplyScalar(-1);
+  tpCamFallback.addScaledVector(walkState.up, -tpCamFallback.dot(walkState.up));
+  if (tpCamFallback.lengthSq() > 1e-8) tpCamFallback.normalize();
+  else tpCamFallback.copy(_walkRight).multiplyScalar(-1).normalize();
+
+  const blendK = THREE.MathUtils.smoothstep(flatLen, 0, WALK_CFG.tpHorizonPullBlendFlatLen);
+  camBackFlat.lerp(tpCamFallback, 1 - blendK).normalize();
+
   const tpPos = _walkCamPos
     .copy(chest)
-    .addScaledVector(walkState.viewDir, -dist)
+    .addScaledVector(camBackFlat, dist)
     .addScaledVector(walkState.up, camH);
   const fpPos = _walkSpawnToCam
     .copy(eye)
