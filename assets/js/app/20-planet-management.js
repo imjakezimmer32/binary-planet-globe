@@ -557,7 +557,26 @@ const planetRadialState = {
   /** Frozen HTML ring diameter (px) while editing this selection so size edits do not resize the UI */
   ringSizePxLock: null,
   ringLockSelectionIdx: null,
+  /** Planet list index this radial gesture belongs to (survives selection changes mid-drag). */
+  editingPlanetIdx: null,
 };
+/** While HTML range dials are gripped/focused, edits stay on that planet even if the list selection changes. */
+let _planetDialLockIdx = null;
+function lockPlanetEditDialTarget() {
+  if (selectedPlanetIdx !== null && managedPlanets[selectedPlanetIdx]) {
+    _planetDialLockIdx = selectedPlanetIdx;
+  }
+}
+function clearPlanetEditDialTarget() {
+  _planetDialLockIdx = null;
+}
+function resolvePlanetEditIndex() {
+  if (planetRadialState.dragPointerId !== null && planetRadialState.editingPlanetIdx !== null) {
+    return planetRadialState.editingPlanetIdx;
+  }
+  if (_planetDialLockIdx !== null && managedPlanets[_planetDialLockIdx]) return _planetDialLockIdx;
+  return selectedPlanetIdx;
+}
 const sunRadialEditorEl = $('sun-radial-editor');
 const sunRadialRingEl = $('sun-radial-ring');
 const sunRadialGuideEl = $('sun-radial-guide');
@@ -826,10 +845,10 @@ function applySunOrbitFromSliders() {
   if (typeof requestUniverseSave === 'function') requestUniverseSave();
 }
 
-function finalizePlanetSizeAfterRadialDrag() {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  if (!mp) return;
+function finalizePlanetSizeAfterRadialDrag(lockedPlanetIdx) {
+  const idx = lockedPlanetIdx !== undefined && lockedPlanetIdx !== null ? lockedPlanetIdx : resolvePlanetEditIndex();
+  if (idx === null || idx === undefined || !managedPlanets[idx]) return;
+  const mp = managedPlanets[idx];
   mp.obj.state.size = quantizePlanetEditValue(
     'size',
     clampPlanetEditValue('size', mp.obj.state.size)
@@ -849,9 +868,9 @@ function finalizePlanetSizeAfterRadialDrag() {
 }
 
 function applyPlanetEditSetting(setting, rawValue, skipVeg) {
-  if (selectedPlanetIdx === null) return;
-  const mp = managedPlanets[selectedPlanetIdx];
-  if (!mp) return;
+  const idx = resolvePlanetEditIndex();
+  if (idx === null || idx === undefined || !managedPlanets[idx]) return;
+  const mp = managedPlanets[idx];
   const inRadialSizeDrag = setting === 'size' && planetRadialState.dragSetting === 'size';
   const rawClamped = clampPlanetEditValue(setting, rawValue);
   let nextValue;
@@ -893,6 +912,7 @@ function applyPlanetEditSetting(setting, rawValue, skipVeg) {
 
 function hidePlanetRadialEditor() {
   const wasSizeRadialDrag = planetRadialState.dragSetting === 'size';
+  const radialLockIdx = planetRadialState.editingPlanetIdx;
   _prevPlanetEdCx = _prevPlanetEdCy = _prevPlanetEdRing = null;
   if (planetRadialEditorEl) planetRadialEditorEl.style.display = 'none';
   planetRadialState.visible = false;
@@ -906,7 +926,8 @@ function hidePlanetRadialEditor() {
   planetRadialState.ringLockSelectionIdx = null;
   document.body.classList.remove('radial-edit-active');
   updatePlanetRadialFocusVisuals();
-  if (wasSizeRadialDrag) finalizePlanetSizeAfterRadialDrag();
+  if (wasSizeRadialDrag) finalizePlanetSizeAfterRadialDrag(radialLockIdx);
+  planetRadialState.editingPlanetIdx = null;
 }
 
 function updatePlanetRadialKnobPositions(mp) {
@@ -1401,6 +1422,13 @@ function selectPlanet(idx) {
   }
 }
 
+// Keep slider edits on the planet that started the drag — changing the list mid-drag must not retarget.
+[dialSizeE, dialPeakE, dialWaterE].forEach(el => {
+  if (!el) return;
+  el.addEventListener('pointerdown', lockPlanetEditDialTarget, true);
+  el.addEventListener('focus', lockPlanetEditDialTarget);
+});
+
 // Size: scale-preview is free, run immediately on every event.
 dialSizeE.addEventListener('input',  () => applyPlanetEditSetting('size',  parseFloat(dialSizeE.value),  true));
 // Peak/water: rebuild even at low detail takes ~10 ms; coalesce to at most one rebuild per frame.
@@ -1414,8 +1442,12 @@ dialPeakE.addEventListener('input',  () => { _pendingDialPeak  = parseFloat(dial
 dialWaterE.addEventListener('input', () => { _pendingDialWater = parseFloat(dialWaterE.value); if (!_dialDragRafId) _dialDragRafId = requestAnimationFrame(_flushDialDrag); });
 // On release: reset scale preview (size dial), then full rebuild restores correct geometry + veg.
 const _restoreVegOnDialRelease = () => {
-  const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-  if (!mp) return;
+  const idx = resolvePlanetEditIndex();
+  if (idx === null || idx === undefined || !managedPlanets[idx]) {
+    clearPlanetEditDialTarget();
+    return;
+  }
+  const mp = managedPlanets[idx];
   if (mp.obj.clearScalePreview) mp.obj.clearScalePreview();
   // Recalculate binary mass/orbit now that size is finalised.
   if (mp.isBinary) {
@@ -1426,6 +1458,7 @@ const _restoreVegOnDialRelease = () => {
   }
   rebuildManagedPlanetTerrain(mp);
   if (typeof requestUniverseSave === 'function') requestUniverseSave();
+  clearPlanetEditDialTarget();
 };
 if (dialSizeE) {
   dialSizeE.addEventListener('change', () => {
@@ -1693,6 +1726,7 @@ if (planetRadialEditorEl) {
     if (selectedPlanetIdx === null || !planetRadialState.visible) return;
     e.preventDefault();
     e.stopPropagation();
+    planetRadialState.editingPlanetIdx = selectedPlanetIdx;
     planetRadialState.dragSetting = setting;
     planetRadialState.dragPointerId = e.pointerId;
     const mp = managedPlanets[selectedPlanetIdx];
@@ -1725,6 +1759,7 @@ if (planetRadialEditorEl) {
     if (planetRadialState.dragPointerId !== e.pointerId) return;
     e.preventDefault();
     const endedSetting = planetRadialState.dragSetting;
+    const radialLockIdx = planetRadialState.editingPlanetIdx;
     planetRadialState.dragSetting = null;
     planetRadialState.dragPointerId = null;
     planetRadialState.dragPointerStartDeg = null;
@@ -1736,12 +1771,12 @@ if (planetRadialEditorEl) {
     });
     updatePlanetRadialFocusVisuals();
     if (endedSetting === 'size') {
-      finalizePlanetSizeAfterRadialDrag();
-    } else if (endedSetting) {
-      // peak / water were rebuilt at preview detail during drag — snap to full quality now.
-      const mp = selectedPlanetIdx !== null ? managedPlanets[selectedPlanetIdx] : null;
-      if (mp) rebuildManagedPlanetTerrain(mp);
+      finalizePlanetSizeAfterRadialDrag(radialLockIdx);
+    } else if (endedSetting && radialLockIdx !== null && radialLockIdx !== undefined) {
+      const mpEnd = managedPlanets[radialLockIdx];
+      if (mpEnd) rebuildManagedPlanetTerrain(mpEnd);
     }
+    planetRadialState.editingPlanetIdx = null;
   };
   Object.entries(planetRadialKnobEls).forEach(([setting, knob]) => {
     if (!knob) return;
