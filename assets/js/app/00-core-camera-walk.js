@@ -240,14 +240,13 @@ const WALK_CFG = {
   jumpApexHeight: WALK_CAPSULE_HEIGHT * WALK_JUMP_APEX_CAPSULE_MUL,
   jumpBufferSec: 0.14,
   jumpCooldownSec: 0.2,
-  /** After a jump, skip strong air landing “glue” until falling this fast (radial · velocity vs planet outward). */
+  /** After a jump, used only for optional tuning hooks (timer decays each frame). */
   jumpAirAssistIgnoreSec: 0.28,
-  /** Above this outward radial speed, air assist does not pull toward the ground (takeoff / rise).
-   * Keep small: with low gravity and tiny jumps, peak outward speed can stay well under 0.02; if this is
-   * too high, landing-assist “glue” fights the hop and feels like an invisible barrier. */
-  airAssistClearRiseOutSpeed: 0.0015,
-  /** While `jumpAirAssistIgnoreSec` is active, keep assist off until outward speed drops below this (falling). */
-  airAssistJumpFallReleaseSpeed: -0.055,
+  /**
+   * Landing-assist position lerp only runs when body-up radial speed is below this (falling toward the planet).
+   * Keeps glue off during rise, apex, and slow hops so you are not snapped back down instantly.
+   */
+  airAssistPullOnlyBelowUpVel: -0.012,
   coyoteTimeSec: 0.12,
   airControlFactor: 0.44,
   airDrag: 0.92,
@@ -1928,6 +1927,9 @@ function applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt) {
   const vN = walkState.velocity.dot(n);
 
   if (err < -0.008) {
+    if (!walkState.grounded && walkState.velocity.dot(walkState.up) > 1e-4) {
+      return;
+    }
     walkState.position.copy(_walkGroundTarget);
     if (vN < 0) walkState.velocity.addScaledVector(n, -vN);
     return;
@@ -2201,29 +2203,27 @@ function updateWalkMode(dt) {
       if (nextGapSigned < -0.006) {
         pull = Math.max(pull, 0.72);
       } else {
-        const probe = WALK_CFG.groundProbeDistance;
-        const assistEnd = WALK_CFG.airLandingAssistEndGap;
-        const riseClear =
-          nextOutwardSpeed > WALK_CFG.airAssistClearRiseOutSpeed
-          || (nextOutwardSpeed > 0 && walkState.velocity.dot(walkState.up) > 1e-5);
-        const jumpAssistHold =
-          walkState.jumpAirAssistTimer > 0
-          && nextOutwardSpeed > WALK_CFG.airAssistJumpFallReleaseSpeed;
-        if (riseClear || jumpAssistHold) {
+        const vUp = walkState.velocity.dot(walkState.up);
+        const allowLandingAssist = vUp < WALK_CFG.airAssistPullOnlyBelowUpVel;
+        if (!allowLandingAssist) {
           pull = 0;
-        } else if (nextGapSigned >= assistEnd) {
-          pull = 0;
-        } else if (nextGapAbs <= probe * 1.12) {
-          pull = Math.min(1, dt * 26);
-          if (nextGapAbs > probe * 0.72) pull = Math.max(pull, Math.min(1, dt * 18));
-          if (nextOutwardSpeed < -0.016 && nextGapAbs > probe * 0.55) {
-            pull = Math.max(pull, Math.min(1, dt * 20));
-          }
         } else {
-          const w = 1 - THREE.MathUtils.smoothstep(nextGapSigned, probe * 1.12, assistEnd);
-          if (nextOutwardSpeed <= 0.014) {
-            const fall = Math.max(0, Math.min(1, -nextOutwardSpeed / (walkMaxFall * 0.52 + 1e-6)));
-            pull = Math.min(1, dt * 15) * w * (0.22 + 0.78 * fall);
+          const probe = WALK_CFG.groundProbeDistance;
+          const assistEnd = WALK_CFG.airLandingAssistEndGap;
+          if (nextGapSigned >= assistEnd) {
+            pull = 0;
+          } else if (nextGapAbs <= probe * 1.12) {
+            pull = Math.min(1, dt * 14);
+            if (nextGapAbs > probe * 0.72) pull = Math.max(pull, Math.min(1, dt * 11));
+            if (nextOutwardSpeed < -0.016 && nextGapAbs > probe * 0.55) {
+              pull = Math.max(pull, Math.min(1, dt * 16));
+            }
+          } else {
+            const w = 1 - THREE.MathUtils.smoothstep(nextGapSigned, probe * 1.12, assistEnd);
+            if (nextOutwardSpeed <= 0.014) {
+              const fall = Math.max(0, Math.min(1, -nextOutwardSpeed / (walkMaxFall * 0.52 + 1e-6)));
+              pull = Math.min(1, dt * 12) * w * (0.22 + 0.78 * fall);
+            }
           }
         }
       }
