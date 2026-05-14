@@ -1112,6 +1112,17 @@ dialWarp.addEventListener('input', () => {
   syncSunRadialReadouts();
 });
 
+/** Matches initial HTML dial default (1×). Called when entering walk mode. */
+function resetTimeWarpToDefaultForWalk() {
+  timeWarp = 1;
+  if (dialWarp) dialWarp.value = '1';
+  if (lblWarp) {
+    lblWarp.textContent = timeWarp === 0 ? 'TIME WARP  PAUSED' : `TIME WARP  ${timeWarp.toFixed(2)}×`;
+  }
+  if (typeof syncSunRadialReadouts === 'function') syncSunRadialReadouts();
+  if (typeof updateSunRadialKnobPositions === 'function') updateSunRadialKnobPositions();
+}
+
 let sunRadialDismissed = true;
 let solGalaxyMenuRevealed = false;
 function scaleWorldToSliderValue(worldScale) {
