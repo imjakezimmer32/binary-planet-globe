@@ -1603,6 +1603,7 @@ function startWalkMode(idx, spawnSurface = null) {
   if (idx === null || idx === undefined) return;
   const mp = managedPlanets[idx];
   if (!mp) return;
+  if (typeof resetTimeWarpToDefaultForWalk === 'function') resetTimeWarpToDefaultForWalk();
   walkTransition.active = false;
   walkTransition.startedAt = 0;
   walkMode.active = true;
