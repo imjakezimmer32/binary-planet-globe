@@ -171,9 +171,13 @@ const WALK_CFG = {
   slipExitDeg: 39,
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
-  /** When swimming, pull the pill downward along planet up (× character height) until it is below the surface. */
+  /**
+   * When on water or lava, pull the pill downward along planet up (× character height)
+   * until it is below the liquid surface (same idea as swimming).
+   */
   waterAvatarSinkHeightMul: 1.22,
-  lavaSpeedFactor: 0.2,
+  /** Lava: 75% slower than land = 25% of land planar speed. */
+  lavaSpeedFactor: 0.25,
   /** Walk bob frequency (rad/s); run is faster — decoupled from low moveSpeed so hops stay lively. */
   bounceFreqWalk: 12.6,
   bounceFreqRun: 17.2,
@@ -352,8 +356,8 @@ const walkState = {
   anchorLastMatrix: new THREE.Matrix4(),
   anchorLastMatrixValid: false,
   prevFov: null,
-  /** Smoothed 0→1 while grounded on water; drives avatar sink under the surface. */
-  waterSinkSmoothed: 0,
+  /** Smoothed 0→1 while grounded on water or lava; drives avatar sink under the liquid surface. */
+  liquidSinkSmoothed: 0,
 };
 const _walkCenter = new THREE.Vector3();
 const _walkCamPos = new THREE.Vector3();
@@ -1631,7 +1635,7 @@ function stopWalkMode() {
   walkState.missedSurfaceFrames = 0;
   walkState.lookPitch = 0;
   walkState.anchorLastMatrixValid = false;
-  walkState.waterSinkSmoothed = 0;
+  walkState.liquidSinkSmoothed = 0;
   clearWalkTouchLookState();
   walkJoystickTouchIds.clear();
   setWalkJoystickCapturingPointer(null);
@@ -1900,16 +1904,19 @@ function updateWalkAvatarOrientation(dt) {
 }
 
 /**
- * Feet stay on the sampled surface (physics). On water, the visible capsule is shifted
- * downward so it disappears under the surface while movement keeps waterSpeedFactor.
+ * Feet stay on the sampled surface (physics). On water or lava, the visible capsule is shifted
+ * downward under the liquid surface; planar speed still uses waterSpeedFactor / lavaSpeedFactor.
  */
 function applyWalkAvatarWorldPose(surfaceMedium, grounded, bounce, dt) {
-  const inWater = grounded && surfaceMedium === 'water';
-  const target = inWater ? 1 : 0;
-  if (dt <= 0) walkState.waterSinkSmoothed = target;
-  else walkState.waterSinkSmoothed += (target - walkState.waterSinkSmoothed) * Math.min(1, dt * 9);
-  const bob = grounded && surfaceMedium !== 'water' ? bounce * WALK_CFG.bobAvatarUpFactor : 0;
-  const sink = walkState.waterSinkSmoothed * WALK_CFG.waterAvatarSinkHeightMul * WALK_CFG.characterHeight;
+  const sinkUnderLiquid = grounded && (surfaceMedium === 'water' || surfaceMedium === 'lava');
+  const target = sinkUnderLiquid ? 1 : 0;
+  if (dt <= 0) walkState.liquidSinkSmoothed = target;
+  else walkState.liquidSinkSmoothed += (target - walkState.liquidSinkSmoothed) * Math.min(1, dt * 9);
+  const bob =
+    grounded && surfaceMedium !== 'water' && surfaceMedium !== 'lava'
+      ? bounce * WALK_CFG.bobAvatarUpFactor
+      : 0;
+  const sink = walkState.liquidSinkSmoothed * WALK_CFG.waterAvatarSinkHeightMul * WALK_CFG.characterHeight;
   walkAvatar.position.copy(walkState.position).addScaledVector(walkState.up, bob - sink);
   walkAvatar.visible = true;
 }
@@ -2339,7 +2346,7 @@ function updateWalkMode(dt) {
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
   if (moveLen < WALK_CFG.moveInputDeadzone || !walkState.grounded) bounceTarget = 0;
-  if (nextSurface.medium === 'water') bounceTarget = 0;
+  if (nextSurface.medium === 'water' || nextSurface.medium === 'lava') bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
   const bounceFreq = (sprinting ? WALK_CFG.bounceFreqRun : WALK_CFG.bounceFreqWalk)
     + planarSpeed * WALK_CFG.bounceFreqFromSpeed;
