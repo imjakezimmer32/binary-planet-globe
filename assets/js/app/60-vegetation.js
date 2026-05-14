@@ -308,6 +308,15 @@ const VEG = (() => {
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
       const v1x = posArr[base+3], v1y = posArr[base+4], v1z = posArr[base+5];
       const v2x = posArr[base+6], v2y = posArr[base+7], v2z = posArr[base+8];
+      // Match colorizeGlobe: any vertex inside the liquid shell ⇒ liquid (water) polygon — no land foliage.
+      let liquidVerts = 0;
+      for (let v = 0; v < 3; v++) {
+        const o = base + v * 3;
+        const rr = Math.sqrt(posArr[o] * posArr[o] + posArr[o + 1] * posArr[o + 1] + posArr[o + 2] * posArr[o + 2]);
+        if (rr <= liquidR + liquidEps) liquidVerts++;
+      }
+      if (liquidVerts > 0) continue;
+
       const cx = (v0x + v1x + v2x) / 3;
       const cy = (v0y + v1y + v2y) / 3;
       const cz = (v0z + v1z + v2z) / 3;
