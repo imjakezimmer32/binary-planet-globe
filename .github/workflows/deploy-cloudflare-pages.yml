@@ -1,6 +1,20 @@
 # Deploys static files to Cloudflare Pages project "astrabound" (production branch: main).
 # Live site: https://astrabound-4ov.pages.dev/
 # If deploys ever go to the wrong place, check Workers & Pages → project name must be "astrabound".
+#
+# When this runs
+# ---------------
+# GitHub runs this workflow on every **push** to `main`. Merging a pull request into `main`
+# (merge commit, squash merge, or rebase merge) creates that push — so production deploy
+# happens automatically after each merge.
+#
+# Setup (one time)
+# ----------------
+# Repository → Settings → Secrets and variables → Actions → New repository secret:
+#   CLOUDFLARE_API_TOKEN — API token with Cloudflare Pages (and Workers) edit permission
+#   for the account that owns the `astrabound` Pages project.
+#
+# Manual run: Actions tab → "Deploy to Cloudflare Pages" → Run workflow.
 name: Deploy to Cloudflare Pages
 
 on:
@@ -8,6 +22,10 @@ on:
     branches:
       - main
   workflow_dispatch:
+
+concurrency:
+  group: cloudflare-pages-astrabound-main
+  cancel-in-progress: true
 
 jobs:
   deploy:
