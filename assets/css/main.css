@@ -83,7 +83,7 @@ body.scene-visible canvas:not(#start-starfield) { opacity: 1; }
   color: rgba(190, 236, 255, 0.72);
 }
 
-/* Pre-splash start gate (Astra + tap / key to continue) */
+/* Pre-splash start gate (astra + tap / key to continue) */
 #start-screen {
   position: fixed; inset: 0; z-index: 1000;
   /* Black comes from the starfield canvas so stars are never painted under this layer */

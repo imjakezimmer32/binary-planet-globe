@@ -50,7 +50,7 @@ const GEOGRAPHY_STYLE_OPTIONS = [
   { id: 'rift', label: 'Rift' },
   { id: 'atolls', label: 'Atolls' },
 ];
-const GEOGRAPHY_STYLE_STORAGE_KEY = 'astrabound-planet-geography-style';
+const GEOGRAPHY_STYLE_STORAGE_KEY = 'astra-planet-geography-style';
 const DEFAULT_GEOGRAPHY_STYLE = 'natural';
 
 function normalizeGeographyStyle(id) {
@@ -418,7 +418,7 @@ const TERRAIN_PAINTS = {
   },
 };
 
-const TERRAIN_STYLE_STORAGE_KEY = 'astrabound-planet-terrain-style';
+const TERRAIN_STYLE_STORAGE_KEY = 'astra-planet-terrain-style';
 const DEFAULT_TERRAIN_STYLE = 'earth';
 const TERRAIN_STYLE_OPTIONS = [
   { id: 'earth', label: 'Earth' },

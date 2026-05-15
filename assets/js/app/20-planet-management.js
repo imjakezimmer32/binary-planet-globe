@@ -1892,7 +1892,7 @@ window.addEventListener('blur', () => {
 });
 
 // ── Universe persistence (localStorage): per-planet styles, added worlds, orbits ──
-const UNIVERSE_STORAGE_KEY = 'astrabound-universe-v2';
+const UNIVERSE_STORAGE_KEY = 'astra-universe-v2';
 let _universeSaveTimer = null;
 
 function disposePlanetObjectGraphics(obj) {

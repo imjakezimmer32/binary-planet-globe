@@ -1,6 +1,6 @@
-# AstraBound
+# astra
 
-Single-page Three.js scene: AstraBound polygon planets, galaxy jumps, Cloudflare Pages.
+Single-page Three.js scene: astra polygon planets, galaxy jumps, Cloudflare Pages.
 
 - **Local preview:** `npm install` then `npm run dev`
 - **Deploy from your computer:** `npm run deploy` (uses Wrangler; needs `wrangler login` or `CLOUDFLARE_API_TOKEN`)
@@ -13,14 +13,14 @@ You only need **one** of these. If you turn on both, Cloudflare may run **two** 
 
 1. In GitHub: **Settings → Secrets and variables → Actions**
 2. Add secret **`CLOUDFLARE_API_TOKEN`** (Cloudflare API token with permission to edit Pages).
-3. Push to **`main`**. The workflow in `.github/workflows/deploy-cloudflare-pages.yml` runs `wrangler pages deploy --project-name astrabound --branch main` (static files from the repo root).
+3. Push to **`main`**. The workflow in `.github/workflows/deploy-cloudflare-pages.yml` runs `wrangler pages deploy --project-name astra --branch main` (static files from the repo root).
 
-Production URL: **https://astrabound-4ov.pages.dev/** — this is the `*.pages.dev` host for the Cloudflare Pages project named **`astrabound`**. Keep that project name in Wrangler and CI so deploys always hit this URL.
+Production URL: **https://astra.pages.dev/** — this is the usual `*.pages.dev` host for a Cloudflare Pages project named **`astra`**. Keep that project name in Wrangler and CI so deploys hit the right project. If Cloudflare assigns a different subdomain (for example `astra-xyz.pages.dev`), use the URL shown in **Workers & Pages** for that project.
 
 ### Option B — Cloudflare “connect Git” (builds on Cloudflare)
 
 1. In [Cloudflare dashboard](https://dash.cloudflare.com/): **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
-2. Choose this GitHub repo, production branch **`main`**, project name **`astrabound`** (or match your existing project).
+2. Choose this GitHub repo, production branch **`main`**, project name **`astra`** (or match your existing project).
 3. **Build settings** (static site, no real build step):
    - **Build command:** leave empty, or use `exit 0` if the UI requires something.
    - **Build output directory:** `.` (the folder that already contains `index.html` — the repo root).

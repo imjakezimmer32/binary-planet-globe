@@ -1,6 +1,6 @@
-# Deploys static files to Cloudflare Pages project "astrabound" (production branch: main).
-# Live site: https://astrabound-4ov.pages.dev/
-# If deploys ever go to the wrong place, check Workers & Pages → project name must be "astrabound".
+# Deploys static files to Cloudflare Pages project "astra" (production branch: main).
+# Live site: https://astra.pages.dev/
+# If deploys ever go to the wrong place, check Workers & Pages → project name must be "astra".
 #
 # When this runs
 # ---------------
@@ -12,7 +12,7 @@
 # ----------------
 # Repository → Settings → Secrets and variables → Actions → New repository secret:
 #   CLOUDFLARE_API_TOKEN — API token with Cloudflare Pages (and Workers) edit permission
-#   for the account that owns the `astrabound` Pages project.
+#   for the account that owns the `astra` Pages project.
 #
 # Manual run: Actions tab → "Deploy to Cloudflare Pages" → Run workflow.
 name: Deploy to Cloudflare Pages
@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: cloudflare-pages-astrabound-main
+  group: cloudflare-pages-astra-main
   cancel-in-progress: true
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
     permissions:
       contents: read
     env:
-      ASTRABOUND_PRODUCTION_URL: https://astrabound-4ov.pages.dev/
+      ASTRA_PRODUCTION_URL: https://astra.pages.dev/
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -47,14 +47,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Ensure AstraBound Pages project exists
+      - name: Ensure astra Pages project exists
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
-        run: npx wrangler pages project create astrabound --production-branch main || true
+        run: npx wrangler pages project create astra --production-branch main || true
 
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
         run: |
-          npx wrangler pages deploy --project-name astrabound --branch main
-          echo "Production URL (pages.dev): ${ASTRABOUND_PRODUCTION_URL}"
+          npx wrangler pages deploy --project-name astra --branch main
+          echo "Production URL (pages.dev): ${ASTRA_PRODUCTION_URL}"
