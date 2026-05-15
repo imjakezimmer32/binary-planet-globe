@@ -5,7 +5,7 @@
   "description": "astra — polygon space and planet simulation (Cloudflare Pages)",
   "scripts": {
     "dev": "npx serve -l 5500 .",
-    "deploy": "npx wrangler pages deploy --project-name astra --branch main && echo \"Live: https://astra.pages.dev/\""
+    "deploy": "npx wrangler pages deploy --project-name astrabound --branch main && echo \"Live: https://astrabound-4ov.pages.dev/\""
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
