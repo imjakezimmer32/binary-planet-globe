@@ -167,8 +167,8 @@ const WALK_CFG = {
   acceleration: 5.2,
   drag: 9.2,
   slideAccel: 2.6,
-  slipEnterDeg: 40,
-  slipExitDeg: 39,
+  slipEnterDeg: 45,
+  slipExitDeg: 44,
   landPriorityGapAllowance: 0.12,
   waterSpeedFactor: 0.5,
   /**
