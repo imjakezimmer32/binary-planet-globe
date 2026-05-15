@@ -19,7 +19,7 @@ In `index.html`, each entry in `GALAXY_DESTINATIONS` can include:
 
 Volume is controlled with the **Web Audio API** (`GainNode`), not `HTMLAudioElement.volume`, so **5s fade in/out work on iOS Safari** (which ignores element volume).
 
-## Start screen (“Astra” gate before splash)
+## Start screen (“astra” gate before splash)
 
 - **`outertaming.mp3`** — loops on the **tap / key to continue** screen only.
 - Stops as soon as the user continues into the **splash** sequence (same `AudioContext` as solar music).

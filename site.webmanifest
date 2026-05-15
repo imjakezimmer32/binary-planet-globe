@@ -1,11 +1,11 @@
 {
-  "name": "AstraBound",
-  "short_name": "AstraBound",
+  "name": "astra",
+  "short_name": "astra",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
-  "description": "AstraBound — polygon space and planet simulation.",
+  "description": "astra — polygon space and planet simulation.",
   "icons": [
     {
       "src": "/app-icon-192.png",
