@@ -1648,6 +1648,7 @@ btnWalk.addEventListener('keydown', e => {
 });
 
 function setWalkInputFlag(key, down) {
+  if (typeof isWalkMovementBlocked === 'function' && isWalkMovementBlocked()) return;
   if (key === 'left') walkInput.left = down;
   if (key === 'right') walkInput.right = down;
   if (key === 'forward') walkInput.fwd = down;
@@ -1671,6 +1672,7 @@ if (walkControlsEl) {
   if (runLockBtn) {
     const toggleRunLock = e => {
       if (!walkMode.active) return;
+      if (typeof isWalkMovementBlocked === 'function' && isWalkMovementBlocked()) return;
       e.preventDefault();
       e.stopPropagation();
       walkInput.runLocked = !walkInput.runLocked;
@@ -1686,6 +1688,7 @@ if (walkControlsEl) {
 if (walkJoystickEl) {
   const onJoyDown = e => {
     if (!walkMode.active) return;
+    if (typeof isWalkMovementBlocked === 'function' && isWalkMovementBlocked()) return;
     e.preventDefault();
     e.stopPropagation();
     walkJoystickState.pointerId = e.pointerId;
@@ -1695,6 +1698,7 @@ if (walkJoystickEl) {
   };
   const onJoyMove = e => {
     if (!walkMode.active) return;
+    if (typeof isWalkMovementBlocked === 'function' && isWalkMovementBlocked()) return;
     if (walkJoystickState.pointerId !== e.pointerId) return;
     e.preventDefault();
     sampleWalkJoystickPointer(e.clientX, e.clientY);
@@ -1863,6 +1867,9 @@ updateWalkJoystickThumb();
 window.addEventListener('keydown', e => {
   if (!walkMode.active) return;
   const k = e.key.toLowerCase();
+  if (typeof isWalkMovementBlocked === 'function' && isWalkMovementBlocked()) {
+    if (k !== 'escape') return;
+  }
   if (k === 'w' || k === 'arrowup') walkInput.fwd = true;
   if (k === 's' || k === 'arrowdown') walkInput.back = true;
   if (k === 'a' || k === 'arrowleft') walkInput.left = true;
