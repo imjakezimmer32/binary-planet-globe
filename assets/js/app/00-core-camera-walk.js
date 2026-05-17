@@ -178,6 +178,10 @@ const WALK_CFG = {
   waterAvatarSinkHeightMul: 1.22,
   /** Lava: 75% slower than land = 25% of land planar speed. */
   lavaSpeedFactor: 0.25,
+  /** Grounded in lava: seconds until death (then nearest safe land respawn). */
+  liquidDeathLavaSec: 3,
+  /** Grounded in water: seconds until death. */
+  liquidDeathWaterSec: 30,
   /** Walk bob frequency (rad/s); run is faster — decoupled from low moveSpeed so hops stay lively. */
   bounceFreqWalk: 12.6,
   bounceFreqRun: 17.2,
@@ -359,6 +363,13 @@ const walkState = {
   /** Smoothed 0→1 while grounded on water or lava; drives avatar sink under the liquid surface. */
   liquidSinkSmoothed: 0,
 };
+/** While true, walk physics and input are frozen; respawn overlay is shown. */
+let walkAwaitingRespawn = false;
+/** Seconds spent grounded in the current liquid hazard (`walkLiquidHazardKind`). */
+let walkLiquidHazardTimer = 0;
+/** `'water'` | `'lava'` | null — resets timer when the liquid type changes. */
+let walkLiquidHazardKind = null;
+const walkDeathWorldPos = new THREE.Vector3();
 const _walkCenter = new THREE.Vector3();
 const _walkCamPos = new THREE.Vector3();
 const _walkCamTarget = new THREE.Vector3();
@@ -804,7 +815,7 @@ function isTouchPointer(e) {
 }
 
 function queueWalkLook(rawDX, rawDY, isMobile = false) {
-  if (!walkMode.active) return;
+  if (!walkMode.active || walkAwaitingRespawn) return;
   const sens = isMobile ? WALK_CFG.mobileLookSensitivity : WALK_CFG.lookSensitivity;
   walkLookInput.x += rawDX * sens;
   walkLookInput.y += rawDY * sens;
@@ -905,7 +916,7 @@ function clearWalkTouchLookState() {
 function isWalkLookBlockedTarget(target) {
   if (!target || typeof target.closest !== 'function') return false;
   return !!target.closest(
-    '#walk-controls, #walk-joystick, #walk-joystick-thumb, #ui, #planet-selection-editor, #planet-panel, #galaxy-menu, #cam-buttons, #cam-settings, #tap-primer-screen, #splash'
+    '#walk-controls, #walk-joystick, #walk-joystick-thumb, #ui, #planet-selection-editor, #planet-panel, #galaxy-menu, #cam-buttons, #cam-settings, #tap-primer-screen, #splash, #walk-respawn-overlay'
   );
 }
 
@@ -1226,7 +1237,7 @@ _canvas.addEventListener('wheel', e => {
 
 /** Wheel over the page (not only the canvas) adjusts walk pull-back; capture beats range sliders on #ui. */
 function handleWalkModeWheelZoomCapture(e) {
-  if (!walkMode.active || walkCameraMode !== 'tp') return;
+  if (!walkMode.active || walkAwaitingRespawn || walkCameraMode !== 'tp') return;
   if (e.ctrlKey || e.metaKey) return;
   if (Math.abs(e.deltaY) < 1e-6 && Math.abs(e.deltaX) < 1e-6) return;
   e.preventDefault();
@@ -1326,6 +1337,76 @@ function getWalkLandSpawnOnPlanet(idx) {
       medium: 'land',
       slopeDeg,
     };
+  }
+  return best;
+}
+
+/**
+ * Nearest walkable land triangle to `fromWorldPos` (same filters as {@link getWalkLandSpawnOnPlanet}).
+ * Used after liquid death to respawn on dry ground close to where you fell in.
+ */
+function getNearestWalkLandSpawnNearWorld(idx, fromWorldPos) {
+  const mp = managedPlanets[idx];
+  if (!mp?.obj?.pivot) return null;
+  const mesh = getWalkTerrainMesh(mp);
+  const posAttr = mesh?.geometry?.attributes?.position;
+  if (!posAttr || posAttr.count < 3) return null;
+
+  mesh.updateMatrixWorld(true);
+  mp.obj.pivot.getWorldPosition(_walkSpawnCenter);
+
+  const liquid = getLiquidState(mp.obj.state.waterLevel, mp.obj.baseRadius || 0.8);
+  const scaledLiquidR = liquid.liquidR * Math.max(mp.obj.state.size, 0.05);
+  const liquidEps = Math.max(0.003, scaledLiquidR * 0.012);
+
+  let bestDistSq = Infinity;
+  let bestSlope = Infinity;
+  let best = null;
+  const triCount = posAttr.count - (posAttr.count % 3);
+  for (let i = 0; i < triCount; i += 3) {
+    _walkSpawnV1.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
+    _walkSpawnV2.fromBufferAttribute(posAttr, i + 1).applyMatrix4(mesh.matrixWorld);
+    _walkSpawnV3.fromBufferAttribute(posAttr, i + 2).applyMatrix4(mesh.matrixWorld);
+
+    const avgR = (
+      _walkSpawnV1.distanceTo(_walkSpawnCenter) +
+      _walkSpawnV2.distanceTo(_walkSpawnCenter) +
+      _walkSpawnV3.distanceTo(_walkSpawnCenter)
+    ) / 3;
+    if (liquid.hasLiquid && avgR <= scaledLiquidR + liquidEps) continue;
+
+    _walkTmp.copy(_walkSpawnV1).add(_walkSpawnV2).add(_walkSpawnV3).multiplyScalar(1 / 3);
+    _walkSpawnRadial.copy(_walkTmp).sub(_walkSpawnCenter);
+    const radialLen = _walkSpawnRadial.length();
+    if (radialLen < 1e-7) continue;
+    _walkSpawnRadial.multiplyScalar(1 / radialLen);
+
+    _walkSpawnNormal
+      .subVectors(_walkSpawnV2, _walkSpawnV1)
+      .cross(_walkTmp2.subVectors(_walkSpawnV3, _walkSpawnV1));
+    if (_walkSpawnNormal.lengthSq() < 1e-9) continue;
+    _walkSpawnNormal.normalize();
+    if (_walkSpawnNormal.dot(_walkSpawnRadial) < 0) _walkSpawnNormal.multiplyScalar(-1);
+
+    const slopeDot = Math.max(-1, Math.min(1, _walkSpawnNormal.dot(_walkSpawnRadial)));
+    const slopeDeg = Math.acos(slopeDot) * THREE.MathUtils.RAD2DEG;
+    if (slopeDeg > 56) continue;
+
+    const distSq = _walkTmp.distanceToSquared(fromWorldPos);
+    const slopeTie = slopeDeg <= WALK_CFG.slipExitDeg ? slopeDeg : slopeDeg + 400;
+    if (distSq < bestDistSq - 1e-16 || (Math.abs(distSq - bestDistSq) < 1e-16 && slopeTie < bestSlope)) {
+      bestDistSq = distSq;
+      bestSlope = slopeTie;
+      best = {
+        idx,
+        center: _walkSpawnCenter.clone(),
+        point: _walkTmp.clone(),
+        normal: _walkSpawnNormal.clone(),
+        radialDir: _walkSpawnRadial.clone(),
+        medium: 'land',
+        slopeDeg,
+      };
+    }
   }
   return best;
 }
@@ -1567,7 +1648,7 @@ function setWalkTpDistanceTarget(nextValue) {
 }
 
 function queueWalkJump() {
-  if (!walkMode.active) return;
+  if (!walkMode.active || walkAwaitingRespawn) return;
   walkState.jumpBufferTimer = WALK_CFG.jumpBufferSec;
 }
 
@@ -1594,7 +1675,7 @@ function refreshWalkUi() {
   }
   document.body.classList.toggle('walk-touch-look-active', walkMode.active);
   if (controls) {
-    controls.style.display = walkMode.active ? 'flex' : 'none';
+    controls.style.display = walkMode.active && !walkAwaitingRespawn ? 'flex' : 'none';
   }
   if (runLockBtn) {
     runLockBtn.classList.toggle('active', !!walkInput.runLocked);
@@ -1607,6 +1688,10 @@ function stopWalkMode() {
   if (!walkMode.active) return;
   walkTransition.active = false;
   walkTransition.startedAt = 0;
+  walkAwaitingRespawn = false;
+  walkLiquidHazardTimer = 0;
+  walkLiquidHazardKind = null;
+  hideWalkRespawnUi();
   walkMode.active = false;
   walkMode.spawnPlanetIdx = null;
   zoomTarget = null;
@@ -1656,6 +1741,10 @@ function startWalkMode(idx, spawnSurface = null) {
   walkTransition.startedAt = 0;
   walkMode.active = true;
   walkMode.spawnPlanetIdx = idx;
+  walkAwaitingRespawn = false;
+  walkLiquidHazardTimer = 0;
+  walkLiquidHazardKind = null;
+  hideWalkRespawnUi();
   resetWalkDustPool();
   walkCameraMode = 'tp';
   if (walkState.prevFov === null) walkState.prevFov = camera.fov;
@@ -1784,8 +1873,121 @@ function transitionCameraToWalkSpawn(spawn, durationMs = 680) {
   });
 }
 
+/** Instant camera snap to third-person behind the walker at `spawn` (same rig as walk transition end). */
+function snapWalkCameraToSpawn(spawn) {
+  _walkTmp.copy(camera.position).sub(spawn.point).projectOnPlane(spawn.radialDir);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.crossVectors(_walkY, spawn.radialDir);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.crossVectors(spawn.normal, spawn.radialDir);
+  if (_walkTmp.lengthSq() < 1e-8) _walkTmp.set(1, 0, 0);
+  _walkTmp.normalize();
+  _walkTmp2.copy(spawn.point).addScaledVector(spawn.radialDir, WALK_CFG.cameraTargetLift);
+  _walkTmp3.copy(_walkTmp2).addScaledVector(_walkTmp, -walkTpDistanceTarget).addScaledVector(spawn.radialDir, WALK_CFG.cameraHeight);
+  resolveWalkCameraOcclusion(_walkTmp2, _walkTmp3, _walkTmp3);
+  _walkSpawnRadial.copy(_walkTmp3).sub(_walkTmp2);
+  _walkTmp3.addScaledVector(spawn.radialDir, WALK_CFG.cameraHeight - _walkSpawnRadial.dot(spawn.radialDir));
+  camera.position.copy(_walkTmp3);
+  camera.up.copy(spawn.radialDir).normalize();
+  camera.lookAt(_walkTmp2);
+  enforceCameraOutsidePlanetMeshes();
+}
+
+function showWalkRespawnUi(medium) {
+  const overlay = document.getElementById('walk-respawn-overlay');
+  const msg = document.getElementById('walk-respawn-msg');
+  if (msg) {
+    msg.textContent = medium === 'lava'
+      ? 'You stayed in lava too long.'
+      : 'You stayed in the water too long.';
+  }
+  if (overlay) {
+    overlay.removeAttribute('hidden');
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+}
+
+function hideWalkRespawnUi() {
+  const overlay = document.getElementById('walk-respawn-overlay');
+  if (overlay) {
+    overlay.setAttribute('hidden', 'hidden');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function triggerWalkLiquidDeath(medium) {
+  if (walkAwaitingRespawn || !walkMode.active) return;
+  walkDeathWorldPos.copy(walkState.position);
+  walkAwaitingRespawn = true;
+  walkLiquidHazardTimer = 0;
+  walkLiquidHazardKind = null;
+  walkState.velocity.set(0, 0, 0);
+  clearWalkInputState();
+  walkLookInput.x = 0;
+  walkLookInput.y = 0;
+  walkAnalog.x = 0;
+  walkAnalog.y = 0;
+  if (typeof resetWalkJoystick === 'function') resetWalkJoystick();
+  showWalkRespawnUi(medium);
+  refreshWalkUi();
+}
+
+function performWalkRespawnAtNearestSafe() {
+  if (!walkAwaitingRespawn || !walkMode.active) return;
+  const idx = walkState.anchorPlanetIdx !== null ? walkState.anchorPlanetIdx : walkMode.spawnPlanetIdx;
+  const mp = managedPlanets[idx];
+  if (!mp?.obj?.pivot) {
+    hideWalkRespawnUi();
+    walkAwaitingRespawn = false;
+    return;
+  }
+  let spawn = getNearestWalkLandSpawnNearWorld(idx, walkDeathWorldPos);
+  if (!spawn) spawn = getWalkLandSpawnOnPlanet(idx);
+  if (!spawn) {
+    hideWalkRespawnUi();
+    walkAwaitingRespawn = false;
+    return;
+  }
+
+  walkAwaitingRespawn = false;
+  hideWalkRespawnUi();
+  walkLiquidHazardTimer = 0;
+  walkLiquidHazardKind = null;
+  clearWalkInputState();
+  if (typeof resetWalkJoystick === 'function') resetWalkJoystick();
+  walkFootOnSurface(spawn, walkState.position);
+  walkState.up.copy(spawn.radialDir).normalize();
+  walkState.velocity.set(0, 0, 0);
+  walkState.grounded = true;
+  walkState.surfaceType = spawn.medium;
+  walkState.surfaceSlopeDeg = spawn.slopeDeg;
+  walkState.sliding = false;
+  walkState.jumpBufferTimer = 0;
+  walkState.jumpCooldownTimer = 0;
+  walkState.jumpAirAssistTimer = 0;
+  walkState.coyoteTimer = WALK_CFG.coyoteTimeSec;
+  walkState.landSettleTimer = 0;
+  walkState.anchorPlanetIdx = idx;
+  walkState.missedSurfaceFrames = 0;
+  getWalkAnchorFrameWorldMatrix(mp, walkState.anchorLastMatrix);
+  walkState.anchorLastMatrixValid = true;
+  syncWalkPitchFromView();
+  snapWalkCameraToSpawn(spawn);
+  applyWalkAvatarWorldPose(spawn.medium, true, 0, 0);
+  updateWalkAvatarOrientation(1e6);
+  refreshWalkUi();
+}
+
+/** True while the respawn dialog is up (movement / look / jump should be ignored). */
+function isWalkMovementBlocked() {
+  return !!walkAwaitingRespawn;
+}
+
+(function initWalkRespawnUi() {
+  const btn = document.getElementById('walk-respawn-btn');
+  if (btn) btn.addEventListener('click', () => performWalkRespawnAtNearestSafe());
+})();
+
 function applyWalkLook() {
-  if (!walkMode.active) return;
+  if (!walkMode.active || walkAwaitingRespawn) return;
   const yaw = -walkLookInput.x;
   const pitchDelta = -walkLookInput.y;
   walkLookInput.x = 0;
@@ -2083,6 +2285,17 @@ function updateWalkMode(dt) {
   walkState.jumpCooldownTimer = Math.max(0, walkState.jumpCooldownTimer - dt);
   walkState.jumpAirAssistTimer = Math.max(0, walkState.jumpAirAssistTimer - dt);
   walkState.coyoteTimer = Math.max(0, walkState.coyoteTimer - dt);
+  if (walkAwaitingRespawn) {
+    walkState.velocity.set(0, 0, 0);
+    applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
+    clampWalkPositionToAnchor(anchorMp, dt);
+    const stick = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
+    const medFx = stick ? stick.medium : walkState.surfaceType;
+    applyWalkAvatarWorldPose(medFx, walkState.grounded, 0, dt);
+    updateWalkAvatarOrientation(dt);
+    updateWalkCameraPose(dt);
+    return;
+  }
   applyWalkLook();
   let currentSurface = anchorMp
     ? sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position)
@@ -2343,10 +2556,41 @@ function updateWalkMode(dt) {
   applyWalkSurfacePostCorrection(anchorMp, anchorIdx, dt);
   clampWalkPositionToAnchor(anchorMp, dt);
 
+  const surfaceForFx = nextSurface
+    || (anchorMp ? sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position) : null)
+    || currentSurface;
+
+  if (anchorMp && !walkAwaitingRespawn) {
+    const hz = sampleWalkSurfaceForPlanetRobust(anchorMp, anchorIdx, walkState.position);
+    const med = walkState.grounded && hz ? hz.medium : null;
+    if (med !== 'water' && med !== 'lava') {
+      walkLiquidHazardTimer = 0;
+      walkLiquidHazardKind = null;
+    } else {
+      const kind = med;
+      if (walkLiquidHazardKind !== kind) {
+        walkLiquidHazardTimer = 0;
+        walkLiquidHazardKind = kind;
+      }
+      walkLiquidHazardTimer += dt;
+      const cap = kind === 'lava' ? WALK_CFG.liquidDeathLavaSec : WALK_CFG.liquidDeathWaterSec;
+      if (walkLiquidHazardTimer >= cap) triggerWalkLiquidDeath(kind);
+    }
+  }
+
+  if (walkAwaitingRespawn) {
+    walkState.velocity.set(0, 0, 0);
+    const medFx = surfaceForFx ? surfaceForFx.medium : walkState.surfaceType;
+    applyWalkAvatarWorldPose(medFx, walkState.grounded, 0, dt);
+    updateWalkAvatarOrientation(dt);
+    updateWalkCameraPose(dt);
+    return;
+  }
+
   const planarSpeed = _walkTmp.copy(walkState.velocity).projectOnPlane(walkState.up).length();
   let bounceTarget = Math.min(1, planarSpeed / Math.max(0.001, desiredSpeed));
   if (moveLen < WALK_CFG.moveInputDeadzone || !walkState.grounded) bounceTarget = 0;
-  if (nextSurface.medium === 'water' || nextSurface.medium === 'lava') bounceTarget = 0;
+  if (surfaceForFx.medium === 'water' || surfaceForFx.medium === 'lava') bounceTarget = 0;
   walkState.bounceBlend += (bounceTarget - walkState.bounceBlend) * Math.min(1, dt * WALK_CFG.bounceResponse);
   const bounceFreq = (sprinting ? WALK_CFG.bounceFreqRun : WALK_CFG.bounceFreqWalk)
     + planarSpeed * WALK_CFG.bounceFreqFromSpeed;
@@ -2358,7 +2602,7 @@ function updateWalkMode(dt) {
 
   updateWalkDustParticles(
     dt,
-    nextSurface,
+    surfaceForFx,
     walkState.grounded,
     planarSpeed,
     sprinting,
@@ -2367,7 +2611,7 @@ function updateWalkMode(dt) {
     desiredSpeed
   );
 
-  applyWalkAvatarWorldPose(nextSurface.medium, walkState.grounded, bounce, dt);
+  applyWalkAvatarWorldPose(surfaceForFx.medium, walkState.grounded, bounce, dt);
   updateWalkAvatarOrientation(dt);
 
   updateWalkCameraPose(dt);
