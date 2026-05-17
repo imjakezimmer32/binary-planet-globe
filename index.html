@@ -185,10 +185,14 @@
   </div>
 </div>
 
-<div id="walk-respawn-overlay" class="walk-respawn-overlay" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="walk-respawn-title">
+<div id="walk-respawn-overlay" class="walk-respawn-overlay" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="walk-respawn-title" aria-describedby="walk-respawn-copy">
   <div class="walk-respawn-panel">
     <h2 id="walk-respawn-title" class="walk-respawn-title">You are gone</h2>
-    <p id="walk-respawn-msg" class="walk-respawn-msg"></p>
+    <div id="walk-respawn-copy" class="walk-respawn-copy">
+      <p id="walk-respawn-lead" class="walk-respawn-lead"></p>
+      <p id="walk-respawn-detail" class="walk-respawn-detail"></p>
+      <p id="walk-respawn-aftermath" class="walk-respawn-aftermath"></p>
+    </div>
     <button type="button" id="walk-respawn-btn" class="walk-respawn-btn">Respawn on land</button>
   </div>
 </div>
