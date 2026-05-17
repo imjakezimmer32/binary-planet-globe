@@ -4,5 +4,8 @@
   // Production site: https://astrabound-4ov.pages.dev/
   "name": "astrabound",
   "compatibility_date": "2026-05-01",
-  "pages_build_output_dir": "."
+  "pages_build_output_dir": ".",
+  "ai": {
+    "binding": "AI"
+  }
 }

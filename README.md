@@ -30,4 +30,11 @@ If you use Option B, **disable or delete** the GitHub Action deploy (or turn off
 
 ## Repo config for Wrangler
 
-`wrangler.jsonc` sets the Pages project name, `pages_build_output_dir` (`.` = site files at repo root), and `compatibility_date` for the Workers/Pages toolchain.
+`wrangler.jsonc` sets the Pages project name, `pages_build_output_dir` (`.` = site files at repo root), `compatibility_date` for the Workers/Pages toolchain, and an optional **`ai` binding** used by the Pages Function at `POST /api/death-saying` (Workers AI) to generate unique respawn flavor text when you die in lava or water.
+
+### Workers AI (respawn lines)
+
+1. In Cloudflare: **Workers & Pages** → your **astrabound** project → **Settings** → **Functions** → **Bindings** → add **Workers AI** with variable name **`AI`** (must match `wrangler.jsonc`).
+2. Redeploy the site. If the binding is missing, the game still works: the client falls back to the bundled static death-screen prose.
+
+Local `npm run dev` (static `serve`) does **not** run Pages Functions, so `/api/death-saying` will fail and the client will use the same fallback until you preview with `npx wrangler pages dev .` or deploy to Pages.
