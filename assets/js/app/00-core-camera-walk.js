@@ -370,6 +370,12 @@ let walkLiquidHazardTimer = 0;
 /** `'water'` | `'lava'` | null — resets timer when the liquid type changes. */
 let walkLiquidHazardKind = null;
 const walkDeathWorldPos = new THREE.Vector3();
+/** Bumps when a new death panel opens or walk ends; stale AI responses are ignored. */
+let walkRespawnGenId = 0;
+/** In-flight `/api/death-saying` fetch, aborted on new death or exit walk. */
+let walkRespawnAbortController = null;
+/** Hard cap for AI round-trip (then static fallback). */
+let walkRespawnFetchTimerId = 0;
 const _walkCenter = new THREE.Vector3();
 const _walkCamPos = new THREE.Vector3();
 const _walkCamTarget = new THREE.Vector3();
@@ -1688,6 +1694,7 @@ function stopWalkMode() {
   if (!walkMode.active) return;
   walkTransition.active = false;
   walkTransition.startedAt = 0;
+  teardownWalkRespawnAiRequest();
   walkAwaitingRespawn = false;
   walkLiquidHazardTimer = 0;
   walkLiquidHazardKind = null;
@@ -1891,7 +1898,21 @@ function snapWalkCameraToSpawn(spawn) {
   enforceCameraOutsidePlanetMeshes();
 }
 
-/** Circumstantial, somatic copy for the liquid-death respawn panel (lava vs water). */
+function teardownWalkRespawnAiRequest() {
+  walkRespawnGenId += 1;
+  if (walkRespawnFetchTimerId) {
+    clearTimeout(walkRespawnFetchTimerId);
+    walkRespawnFetchTimerId = 0;
+  }
+  if (walkRespawnAbortController) {
+    try {
+      walkRespawnAbortController.abort();
+    } catch (_) {}
+    walkRespawnAbortController = null;
+  }
+}
+
+/** Circumstantial, somatic copy when Workers AI is unavailable or the request fails. */
 const WALK_RESPAWN_COPY = {
   lava: {
     title: 'Heat writes through you',
@@ -1915,27 +1936,119 @@ const WALK_RESPAWN_COPY = {
   },
 };
 
-function showWalkRespawnUi(medium) {
+function walkRespawnFallbackCopy(medium) {
+  return medium === 'lava' ? WALK_RESPAWN_COPY.lava : WALK_RESPAWN_COPY.water;
+}
+
+/**
+ * @param {unknown} data
+ * @param {'lava'|'water'} medium
+ */
+function mergeFetchedRespawnCopy(data, medium) {
+  const fb = walkRespawnFallbackCopy(medium);
+  if (!data || typeof data !== 'object') return fb;
+  const o = /** @type {Record<string, unknown>} */ (data);
+  const pick = (k) => (typeof o[k] === 'string' && o[k].trim() ? o[k].trim() : null);
+  return {
+    title: pick('title') || fb.title,
+    lead: pick('lead') || fb.lead,
+    detail: pick('detail') || fb.detail,
+    aftermath: pick('aftermath') || fb.aftermath,
+    cta: pick('cta') || fb.cta,
+  };
+}
+
+function applyWalkRespawnCopyToDom(copy, opts) {
+  const enableButton = !opts || opts.enableButton !== false;
   const overlay = document.getElementById('walk-respawn-overlay');
   const titleEl = document.getElementById('walk-respawn-title');
   const leadEl = document.getElementById('walk-respawn-lead');
   const detailEl = document.getElementById('walk-respawn-detail');
   const aftermathEl = document.getElementById('walk-respawn-aftermath');
   const btn = document.getElementById('walk-respawn-btn');
-  const copy = medium === 'lava' ? WALK_RESPAWN_COPY.lava : WALK_RESPAWN_COPY.water;
+  const wrap = document.getElementById('walk-respawn-copy');
   if (titleEl) titleEl.textContent = copy.title;
   if (leadEl) leadEl.textContent = copy.lead;
   if (detailEl) detailEl.textContent = copy.detail;
-  if (aftermathEl) aftermathEl.textContent = copy.aftermath;
-  if (btn) btn.textContent = copy.cta;
+  if (aftermathEl) aftermathEl.textContent = copy.aftermath || '';
+  if (btn) {
+    btn.textContent = copy.cta;
+    btn.disabled = !enableButton;
+  }
+  if (wrap) wrap.setAttribute('aria-busy', enableButton ? 'false' : 'true');
   if (overlay) {
     overlay.removeAttribute('hidden');
     overlay.setAttribute('aria-hidden', 'false');
   }
 }
 
+function applyWalkRespawnLoadingPlaceholders() {
+  applyWalkRespawnCopyToDom(
+    {
+      title: 'One moment',
+      lead: 'The world is finding words for what your skin just learned.',
+      detail: '…',
+      aftermath: '',
+      cta: 'Please wait…',
+    },
+    { enableButton: false }
+  );
+}
+
+/**
+ * @param {'lava'|'water'} medium
+ * @param {AbortSignal} signal
+ */
+async function fetchGeneratedWalkRespawnCopy(medium, signal) {
+  const res = await fetch('/api/death-saying', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ medium }),
+    signal,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`death_saying_http_${res.status}`);
+  if (data && data.ok === false) throw new Error(String(data.error || 'death_saying_failed'));
+  return mergeFetchedRespawnCopy(data, medium);
+}
+
+function showWalkRespawnUi(medium) {
+  teardownWalkRespawnAiRequest();
+  walkRespawnAbortController = new AbortController();
+  const myGen = walkRespawnGenId;
+  const signal = walkRespawnAbortController.signal;
+
+  applyWalkRespawnLoadingPlaceholders();
+
+  const AI_WAIT_MS = 14000;
+  walkRespawnFetchTimerId = setTimeout(() => {
+    try {
+      walkRespawnAbortController?.abort();
+    } catch (_) {}
+  }, AI_WAIT_MS);
+
+  fetchGeneratedWalkRespawnCopy(medium, signal)
+    .then((copy) => {
+      if (!walkAwaitingRespawn || walkRespawnGenId !== myGen) return;
+      applyWalkRespawnCopyToDom(copy);
+    })
+    .catch(() => {
+      if (!walkAwaitingRespawn || walkRespawnGenId !== myGen) return;
+      applyWalkRespawnCopyToDom(walkRespawnFallbackCopy(medium));
+    })
+    .finally(() => {
+      if (walkRespawnGenId === myGen && walkRespawnFetchTimerId) {
+        clearTimeout(walkRespawnFetchTimerId);
+        walkRespawnFetchTimerId = 0;
+      }
+      if (walkRespawnGenId === myGen) walkRespawnAbortController = null;
+    });
+}
+
 function hideWalkRespawnUi() {
   const overlay = document.getElementById('walk-respawn-overlay');
+  const wrap = document.getElementById('walk-respawn-copy');
+  if (wrap) wrap.setAttribute('aria-busy', 'false');
   if (overlay) {
     overlay.setAttribute('hidden', 'hidden');
     overlay.setAttribute('aria-hidden', 'true');
@@ -1961,6 +2074,7 @@ function triggerWalkLiquidDeath(medium) {
 
 function performWalkRespawnAtNearestSafe() {
   if (!walkAwaitingRespawn || !walkMode.active) return;
+  teardownWalkRespawnAiRequest();
   const idx = walkState.anchorPlanetIdx !== null ? walkState.anchorPlanetIdx : walkMode.spawnPlanetIdx;
   const mp = managedPlanets[idx];
   if (!mp?.obj?.pivot) {
