@@ -1891,14 +1891,43 @@ function snapWalkCameraToSpawn(spawn) {
   enforceCameraOutsidePlanetMeshes();
 }
 
+/** Circumstantial, somatic copy for the liquid-death respawn panel (lava vs water). */
+const WALK_RESPAWN_COPY = {
+  lava: {
+    title: 'Heat writes through you',
+    lead:
+      'Three seconds is nothing on a clock—on molten ground it is long enough for your soles to go slick with panic, then numb, as if the crust is teaching your nerves a new alphabet one letter at a time.',
+    detail:
+      'Air arrives shredded; your throat sticks and will not swallow. Your ribs feel belted by something heavier than gravity. The horizon smears into ember-breath; sound thins to a high ring behind your teeth. Your pulse keeps counting, stubborn, while your calves forget they ever belonged to you.',
+    aftermath:
+      'When you return, the world will set your feet on the nearest cold stone and pretend your skin does not still remember the glow.',
+    cta: 'Stand again on cool stone',
+  },
+  water: {
+    title: 'The sea takes its toll in quiet',
+    lead:
+      'Thirty seconds is a polite number on paper; in the water it is long enough for your shoulders to learn the patient weight of the deep, your jaw to ache with held breath, your knees to feel borrowed from someone else\'s body.',
+    detail:
+      'Pressure gathers along your ribs and the hinge of your neck—impersonal, thorough. Sound muffles to a distant hum. Your chest strains upward for air that stays a hand\'s-width too high; the surface glints like a coin you cannot quite close your fingers around. Salt or chill threads behind your eyes.',
+    aftermath:
+      'Rescue is not mercy; it is geometry. Dry land will find you close to where you sank, and the tide will shrug as if you were never its problem.',
+    cta: 'Wash ashore — breathe',
+  },
+};
+
 function showWalkRespawnUi(medium) {
   const overlay = document.getElementById('walk-respawn-overlay');
-  const msg = document.getElementById('walk-respawn-msg');
-  if (msg) {
-    msg.textContent = medium === 'lava'
-      ? 'You stayed in lava too long.'
-      : 'You stayed in the water too long.';
-  }
+  const titleEl = document.getElementById('walk-respawn-title');
+  const leadEl = document.getElementById('walk-respawn-lead');
+  const detailEl = document.getElementById('walk-respawn-detail');
+  const aftermathEl = document.getElementById('walk-respawn-aftermath');
+  const btn = document.getElementById('walk-respawn-btn');
+  const copy = medium === 'lava' ? WALK_RESPAWN_COPY.lava : WALK_RESPAWN_COPY.water;
+  if (titleEl) titleEl.textContent = copy.title;
+  if (leadEl) leadEl.textContent = copy.lead;
+  if (detailEl) detailEl.textContent = copy.detail;
+  if (aftermathEl) aftermathEl.textContent = copy.aftermath;
+  if (btn) btn.textContent = copy.cta;
   if (overlay) {
     overlay.removeAttribute('hidden');
     overlay.setAttribute('aria-hidden', 'false');

@@ -1461,31 +1461,57 @@ input[type=range]::-moz-range-thumb {
   display: none !important;
 }
 .walk-respawn-panel {
-  max-width: 360px;
+  max-width: min(440px, 92vw);
   width: 100%;
   padding: 22px 24px 20px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: linear-gradient(165deg, rgba(18, 24, 38, 0.96) 0%, rgba(8, 10, 18, 0.94) 100%);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
-  text-align: center;
+  text-align: left;
 }
 .walk-respawn-title {
-  margin: 0 0 10px;
+  margin: 0 0 14px;
   font-family: "Exo 2", system-ui, sans-serif;
   font-size: clamp(20px, 4.5vw, 26px);
   font-weight: 800;
   letter-spacing: 0.04em;
   color: rgba(255, 248, 240, 0.96);
+  text-align: center;
 }
-.walk-respawn-msg {
-  margin: 0 0 18px;
+.walk-respawn-copy {
+  margin: 0 0 20px;
   font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(218, 224, 236, 0.88);
+}
+.walk-respawn-copy p {
+  margin: 0 0 12px;
+}
+.walk-respawn-copy p:last-child {
+  margin-bottom: 0;
+}
+.walk-respawn-lead {
   font-size: 15px;
-  line-height: 1.45;
-  color: rgba(220, 228, 240, 0.82);
+  font-weight: 600;
+  line-height: 1.5;
+  color: rgba(236, 242, 252, 0.94);
+}
+.walk-respawn-detail {
+  font-weight: 400;
+  color: rgba(205, 214, 228, 0.86);
+}
+.walk-respawn-aftermath {
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.52;
+  color: rgba(180, 192, 212, 0.78);
+  padding-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 .walk-respawn-btn {
+  display: block;
   width: 100%;
   min-height: 48px;
   padding: 12px 16px;
@@ -1499,6 +1525,7 @@ input[type=range]::-moz-range-thumb {
   letter-spacing: 0.03em;
   cursor: pointer;
   touch-action: manipulation;
+  text-align: center;
 }
 .walk-respawn-btn:active {
   transform: scale(0.98);
