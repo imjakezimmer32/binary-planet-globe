@@ -30,7 +30,7 @@ If you use Option B, **disable or delete** the GitHub Action deploy (or turn off
 
 ## Repo config for Wrangler
 
-`wrangler.jsonc` sets the Pages project name, `pages_build_output_dir` (`.` = site files at repo root), `compatibility_date` for the Workers/Pages toolchain, and an optional **`ai` binding** used by the Pages Function at `POST /api/death-saying` (Workers AI) to generate unique respawn flavor text when you die in lava or water.
+`wrangler.jsonc` sets the Pages project name, `pages_build_output_dir` (`.` = site files at repo root), `compatibility_date` for the Workers/Pages toolchain, and an optional **`ai` binding** used by the Pages Function at `POST /api/death-saying` (Workers AI) to generate **very short** respawn lines (`kicker`, `quote`, `note`, `cta`) when you die in lava or water.
 
 ### Workers AI (respawn lines)
 

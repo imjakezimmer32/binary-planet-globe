@@ -1461,54 +1461,51 @@ input[type=range]::-moz-range-thumb {
   display: none !important;
 }
 .walk-respawn-panel {
-  max-width: min(440px, 92vw);
+  max-width: min(380px, 92vw);
   width: 100%;
-  padding: 22px 24px 20px;
+  padding: 22px 22px 18px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: linear-gradient(165deg, rgba(18, 24, 38, 0.96) 0%, rgba(8, 10, 18, 0.94) 100%);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
-  text-align: left;
-}
-.walk-respawn-title {
-  margin: 0 0 14px;
-  font-family: "Exo 2", system-ui, sans-serif;
-  font-size: clamp(20px, 4.5vw, 26px);
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: rgba(255, 248, 240, 0.96);
   text-align: center;
 }
+.walk-respawn-kicker {
+  margin: 0 0 10px;
+  font-family: "Exo 2", system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(200, 210, 228, 0.55);
+}
+.walk-respawn-kicker:empty {
+  display: none;
+}
 .walk-respawn-copy {
-  margin: 0 0 20px;
+  margin: 0 0 18px;
   font-family: system-ui, "Segoe UI", sans-serif;
-  font-size: 14px;
-  line-height: 1.55;
-  color: rgba(218, 224, 236, 0.88);
 }
-.walk-respawn-copy p {
+.walk-respawn-quote {
   margin: 0 0 12px;
-}
-.walk-respawn-copy p:last-child {
-  margin-bottom: 0;
-}
-.walk-respawn-lead {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.5;
-  color: rgba(236, 242, 252, 0.94);
-}
-.walk-respawn-detail {
-  font-weight: 400;
-  color: rgba(205, 214, 228, 0.86);
-}
-.walk-respawn-aftermath {
-  font-size: 13px;
+  padding: 0;
+  border: none;
+  font-size: clamp(16px, 3.8vw, 19px);
+  font-weight: 500;
+  line-height: 1.42;
+  letter-spacing: 0.01em;
+  color: rgba(248, 250, 255, 0.94);
   font-style: italic;
-  line-height: 1.52;
-  color: rgba(180, 192, 212, 0.78);
-  padding-top: 2px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.walk-respawn-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 400;
+  color: rgba(188, 198, 218, 0.82);
+}
+.walk-respawn-note:empty {
+  display: none;
 }
 .walk-respawn-btn {
   display: block;
