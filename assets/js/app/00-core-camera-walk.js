@@ -1912,27 +1912,19 @@ function teardownWalkRespawnAiRequest() {
   }
 }
 
-/** Circumstantial, somatic copy when Workers AI is unavailable or the request fails. */
+/** Short lines when Workers AI is unavailable or the request fails. */
 const WALK_RESPAWN_COPY = {
   lava: {
-    title: 'Heat writes through you',
-    lead:
-      'Three seconds is nothing on a clock—on molten ground it is long enough for your soles to go slick with panic, then numb, as if the crust is teaching your nerves a new alphabet one letter at a time.',
-    detail:
-      'Air arrives shredded; your throat sticks and will not swallow. Your ribs feel belted by something heavier than gravity. The horizon smears into ember-breath; sound thins to a high ring behind your teeth. Your pulse keeps counting, stubborn, while your calves forget they ever belonged to you.',
-    aftermath:
-      'When you return, the world will set your feet on the nearest cold stone and pretend your skin does not still remember the glow.',
-    cta: 'Stand again on cool stone',
+    kicker: 'What fire takes, it keeps.',
+    quote: 'You had three seconds to disagree with the planet; the planet did not need them.',
+    note: 'The body always believes the heat before the mind finishes its argument.',
+    cta: 'Cool stone again',
   },
   water: {
-    title: 'The sea takes its toll in quiet',
-    lead:
-      'Thirty seconds is a polite number on paper; in the water it is long enough for your shoulders to learn the patient weight of the deep, your jaw to ache with held breath, your knees to feel borrowed from someone else\'s body.',
-    detail:
-      'Pressure gathers along your ribs and the hinge of your neck—impersonal, thorough. Sound muffles to a distant hum. Your chest strains upward for air that stays a hand\'s-width too high; the surface glints like a coin you cannot quite close your fingers around. Salt or chill threads behind your eyes.',
-    aftermath:
-      'Rescue is not mercy; it is geometry. Dry land will find you close to where you sank, and the tide will shrug as if you were never its problem.',
-    cta: 'Wash ashore — breathe',
+    kicker: 'The quiet always wins.',
+    quote: 'The water taught your ribs a new name and would not say it back aloud.',
+    note: 'Air was never owed—only borrowed at the surface you could not quite hold.',
+    cta: 'Find the shore',
   },
 };
 
@@ -1949,11 +1941,24 @@ function mergeFetchedRespawnCopy(data, medium) {
   if (!data || typeof data !== 'object') return fb;
   const o = /** @type {Record<string, unknown>} */ (data);
   const pick = (k) => (typeof o[k] === 'string' && o[k].trim() ? o[k].trim() : null);
+  let quote = pick('quote');
+  if (!quote) {
+    const lead = pick('lead');
+    if (lead) {
+      const chunk = lead.split(/(?<=[.!?])\s+/)[0] || lead;
+      quote = chunk.trim().slice(0, 200);
+    }
+  }
+  if (!quote) quote = fb.quote;
+  const titleAsKicker = pick('title');
+  const legacyNote = pick('aftermath') || pick('detail');
+  const noteFromLegacy = legacyNote
+    ? (legacyNote.split(/(?<=[.!?])\s+/)[0] || legacyNote).trim().slice(0, 120)
+    : '';
   return {
-    title: pick('title') || fb.title,
-    lead: pick('lead') || fb.lead,
-    detail: pick('detail') || fb.detail,
-    aftermath: pick('aftermath') || fb.aftermath,
+    kicker: pick('kicker') || (titleAsKicker ? titleAsKicker.slice(0, 44) : '') || fb.kicker,
+    quote,
+    note: pick('note') || noteFromLegacy || fb.note,
     cta: pick('cta') || fb.cta,
   };
 }
@@ -1961,16 +1966,14 @@ function mergeFetchedRespawnCopy(data, medium) {
 function applyWalkRespawnCopyToDom(copy, opts) {
   const enableButton = !opts || opts.enableButton !== false;
   const overlay = document.getElementById('walk-respawn-overlay');
-  const titleEl = document.getElementById('walk-respawn-title');
-  const leadEl = document.getElementById('walk-respawn-lead');
-  const detailEl = document.getElementById('walk-respawn-detail');
-  const aftermathEl = document.getElementById('walk-respawn-aftermath');
+  const kickerEl = document.getElementById('walk-respawn-kicker');
+  const quoteEl = document.getElementById('walk-respawn-quote');
+  const noteEl = document.getElementById('walk-respawn-note');
   const btn = document.getElementById('walk-respawn-btn');
   const wrap = document.getElementById('walk-respawn-copy');
-  if (titleEl) titleEl.textContent = copy.title;
-  if (leadEl) leadEl.textContent = copy.lead;
-  if (detailEl) detailEl.textContent = copy.detail;
-  if (aftermathEl) aftermathEl.textContent = copy.aftermath || '';
+  if (kickerEl) kickerEl.textContent = copy.kicker || '';
+  if (quoteEl) quoteEl.textContent = copy.quote || '';
+  if (noteEl) noteEl.textContent = copy.note || '';
   if (btn) {
     btn.textContent = copy.cta;
     btn.disabled = !enableButton;
@@ -1985,10 +1988,9 @@ function applyWalkRespawnCopyToDom(copy, opts) {
 function applyWalkRespawnLoadingPlaceholders() {
   applyWalkRespawnCopyToDom(
     {
-      title: 'One moment',
-      lead: 'The world is finding words for what your skin just learned.',
-      detail: '…',
-      aftermath: '',
+      kicker: '',
+      quote: 'Finding one true sentence for what you felt…',
+      note: '',
       cta: 'Please wait…',
     },
     { enableButton: false }

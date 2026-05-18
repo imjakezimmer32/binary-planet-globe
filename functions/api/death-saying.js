@@ -1,7 +1,7 @@
 /**
  * POST /api/death-saying
  * Body: { "medium": "lava" | "water" }
- * Returns JSON { title, lead, detail, aftermath, cta } for the walk respawn UI.
+ * Returns JSON { kicker, quote, note, cta } — short lines only (no paragraphs).
  *
  * Requires Workers AI binding `AI` on the Pages project (Cloudflare dashboard:
  * Workers & Pages → astrabound → Settings → Functions → Workers AI, binding name AI).
@@ -31,14 +31,34 @@ function parseJsonFromModel(text) {
   }
 }
 
+/** Map older API shape (title/lead/detail/aftermath) into short fields when needed. */
+function coerceLegacyShape(o) {
+  const out = { ...o };
+  if (typeof out.quote !== 'string' || !out.quote.trim()) {
+    const lead = typeof out.lead === 'string' ? out.lead.trim() : '';
+    if (lead) {
+      const one = lead.split(/(?<=[.!?])\s+/)[0] || lead;
+      out.quote = one.slice(0, 200);
+    }
+  }
+  if ((!out.kicker || !String(out.kicker).trim()) && typeof out.title === 'string' && out.title.trim()) {
+    out.kicker = out.title.trim().slice(0, 44);
+  }
+  if ((!out.note || !String(out.note).trim()) && typeof out.aftermath === 'string' && out.aftermath.trim()) {
+    const a = out.aftermath.trim();
+    out.note = (a.split(/(?<=[.!?])\s+/)[0] || a).slice(0, 120);
+  }
+  return out;
+}
+
 /** @param {Record<string, unknown>} o */
 function normalizePayload(o) {
+  const c = coerceLegacyShape(o);
   return {
-    title: clampStr(o.title, 90),
-    lead: clampStr(o.lead, 420),
-    detail: clampStr(o.detail, 480),
-    aftermath: clampStr(o.aftermath, 260),
-    cta: clampStr(o.cta, 44),
+    kicker: clampStr(c.kicker, 44),
+    quote: clampStr(c.quote, 165),
+    note: clampStr(c.note, 105),
+    cta: clampStr(c.cta, 28),
   };
 }
 
@@ -75,18 +95,23 @@ export async function onRequestPost(context) {
 
   const circumstance =
     medium === 'lava'
-      ? 'The player died from deadly contact with molten lava / volcanic heat (a very short lethal window in-game). Emphasize heat, breath, skin, weight, light, sound—never instructional or jokey.'
-      : 'The player died from staying submerged in deep water until breath failed (a longer lethal window in-game). Emphasize pressure, cold, muffled sound, lungs, limbs heavy, the surface just out of reach—never instructional or jokey.';
+      ? 'Death was from molten lava / volcanic heat (a very short lethal window). Feel: heat, breath, skin, light—never instructional or jokey.'
+      : 'Death was from staying in deep water until breath failed (a longer lethal window). Feel: pressure, cold, air hunger, the surface just out of reach—never instructional or jokey.';
 
-  const system = `You write short visceral second-person prose for a science-fantasy videogame "you died" screen.
-Output ONLY one JSON object. No markdown. No code fences. No keys other than these five.
-Schema: {"title": string, "lead": string, "detail": string, "aftermath": string, "cta": string}
-Lengths: title <= 72 chars; lead 160–340 chars; detail 160–400 chars; aftermath 90–220 chars; cta <= 36 chars (short button label).
-Tone: somatic, embodied, poetic but readable; second person "you"; vary metaphor, rhythm, and imagery every time—never reuse the same opening clause as a prior reply.
-Avoid: gore for its own sake, slurs, sexual content, real-world tragedy, moralizing, game UI jargon ("respawn", "HP").
+  const system = `You write tiny, devastating death meditations for a science-fantasy game.
+Output ONLY one JSON object. No markdown. No code fences. Keys EXACTLY: kicker, quote, note, cta — no other keys.
+
+STRICT BREVITY (this matters):
+- kicker: 2–7 words, MAX 40 characters. A spare fragment or label—not a sentence, not a paragraph.
+- quote: EXACTLY ONE sentence only (one period max). MAX 140 characters. Must read like a heart-breaking, wise line someone would remember—intimate, somatic, second person when it fits. NOT a story. NOT two sentences.
+- note: EXACTLY ONE short sentence, MAX 96 characters. A different thought from quote: the quiet "why" that lands after—wise, gentle, crushing. NOT a paragraph.
+- cta: 2–5 words, MAX 24 characters. Soft action (e.g. "Step onto shore"). Never say "respawn", "HP", "click".
+
+Never use line breaks inside strings. Never pad with filler. Vary wording every reply.
+Avoid: gore for spectacle, slurs, sexual content, real-world tragedy, moralizing.
 ${circumstance}`;
 
-  const user = `Medium is "${medium}". Write one fresh death screen now. Make it feel unique and circumstantial.`;
+  const user = `Medium is "${medium}". Write one fresh set of lines now—short enough to fit on a small phone screen.`;
 
   let rawText = '';
   try {
@@ -95,7 +120,7 @@ ${circumstance}`;
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
-      max_tokens: 720,
+      max_tokens: 220,
     });
     rawText = extractModelText(result);
   } catch (err) {
@@ -111,7 +136,7 @@ ${circumstance}`;
   }
 
   const out = normalizePayload(/** @type {Record<string, unknown>} */ (parsed));
-  if (!out.title || !out.lead) {
+  if (!out.quote || out.quote.length < 10) {
     return Response.json({ ok: false, error: 'incomplete', partial: out }, { status: 502 });
   }
 
