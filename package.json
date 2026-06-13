@@ -5,7 +5,9 @@
   "description": "astra — polygon space and planet simulation (Cloudflare Pages)",
   "scripts": {
     "dev": "npx serve -l 5500 .",
-    "deploy": "npx wrangler pages deploy --project-name astrabound --branch main && echo \"Live: https://astrabound-4ov.pages.dev/\""
+    "deploy": "bash scripts/cloudflare-deploy.sh",
+    "deploy:pages-only": "CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:?} npx wrangler pages deploy . --project-name astrabound --branch main",
+    "domain:setup": "bash scripts/cloudflare-pages-domain.sh"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

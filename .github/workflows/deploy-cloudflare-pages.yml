@@ -33,7 +33,7 @@ jobs:
     permissions:
       contents: read
     env:
-      ASTRABOUND_PRODUCTION_URL: https://astrabound-4ov.pages.dev/
+      ASTRABOUND_PRODUCTION_URL: https://astra.jakesarcade.app/
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,4 +57,5 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
         run: |
           npx wrangler pages deploy --project-name astrabound --branch main
-          echo "Production URL (pages.dev): ${ASTRABOUND_PRODUCTION_URL}"
+          bash scripts/cloudflare-pages-domain.sh || echo "Custom domain step skipped or already configured."
+          echo "Production URL (custom): ${ASTRABOUND_PRODUCTION_URL}"
