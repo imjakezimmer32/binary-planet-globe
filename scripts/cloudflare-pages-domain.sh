@@ -6,7 +6,7 @@
 # (that URL is a different, older Pages project).
 set -euo pipefail
 
-PROJECT_NAME="${PAGES_PROJECT_NAME:-astrabound-4ov}"
+PROJECT_NAME="${PAGES_PROJECT_NAME:-astrabound}"
 CUSTOM_DOMAIN="${PAGES_CUSTOM_DOMAIN:-astra.jakesarcade.app}"
 PAGES_CNAME_TARGET="${PAGES_CNAME_TARGET:-astrabound-4ov.pages.dev}"
 TOKEN="${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN}"
@@ -99,7 +99,7 @@ let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{
   fi
 fi
 
-echo "Adding Pages custom domain ${CUSTOM_DOMAIN} to project ${PROJECT_NAME}…"
+echo "Adding Pages custom domain ${CUSTOM_DOMAIN} to project ${PROJECT_NAME} (live at ${PAGES_CNAME_TARGET})…"
 RESP="$(curl -sS -X POST \
   "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT_NAME}/domains" \
   -H "Authorization: Bearer ${TOKEN}" \

@@ -66,12 +66,12 @@ You only need **one** of these. If you turn on both, Cloudflare may run **two** 
 1. Add secret **`CLOUDFLARE_API_TOKEN`** (see above).
 2. Push to **`main`**. The workflow deploys and runs `scripts/cloudflare-pages-domain.sh` for **astra.jakesarcade.app**.
 
-Production URL: **https://astra.jakesarcade.app/** (Pages project **`astrabound`**; `jakesarcade.app` is already on Cloudflare nameservers).
+Production URL: **https://astra.jakesarcade.app/** (CNAME → **`astrabound-4ov.pages.dev`**; Pages project **`astrabound-4ov`**).
 
 ### Option B — Cloudflare “connect Git” (builds on Cloudflare)
 
 1. In [Cloudflare dashboard](https://dash.cloudflare.com/): **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
-2. Choose this GitHub repo, production branch **`main`**, project name **`astrabound`** (or match your existing project).
+2. Choose this GitHub repo, production branch **`main`**, project name **`astrabound-4ov`**.
 3. **Build settings** (static site, no real build step):
    - **Build command:** leave empty, or use `exit 0` if the UI requires something.
    - **Build output directory:** `.` (the folder that already contains `index.html` — the repo root).
