@@ -33,11 +33,13 @@ export CLOUDFLARE_API_TOKEN="paste-token-here"
 npm run deploy
 ```
 
-That runs `scripts/cloudflare-deploy.sh`: uploads the site to Pages project **`astrabound`** and attaches **`astra.jakesarcade.app`**.
+That runs `scripts/cloudflare-deploy.sh`: uploads the site to Pages project **`astrabound-4ov`** and tries to attach **`astra.jakesarcade.app`**.
+
+**If DNS is not created automatically:** the GitHub token must see zone **`jakesarcade.app`** (same Cloudflare login as the domain). Deploy logs that say “Could not find zone” mean the token is Pages-only. Fix: recreate the token with **Zone → DNS → Edit** on `jakesarcade.app`, or add GitHub secret **`CLOUDFLARE_ZONE_ID`** (Cloudflare → jakesarcade.app → Overview → Zone ID on the right).
 
 ### Step 3 — Workers AI (optional, for dynamic death quotes)
 
-1. Cloudflare → **Workers & Pages** → **astrabound** → **Settings** → **Functions** → **Bindings**
+1. Cloudflare → **Workers & Pages** → **astrabound-4ov** → **Settings** → **Functions** → **Bindings**
 2. Add **Workers AI**, variable name **`AI`**
 3. Redeploy once
 
@@ -45,10 +47,12 @@ Without this, death-screen text uses the built-in fallback lines (game still wor
 
 ### Custom domain not opening? (DNS)
 
-If **https://astra.jakesarcade.app/** does not load but **https://astrabound.pages.dev/** works, the subdomain DNS record is missing. Fix:
+If **https://astra.jakesarcade.app/** does not load but **https://astrabound-4ov.pages.dev/** works, the subdomain DNS record is missing or wrong. Fix:
 
 1. Cloudflare → **Websites** → **jakesarcade.app** → **DNS** → **Add record**
-2. **Type:** CNAME · **Name:** `astra` · **Target:** `astrabound.pages.dev` · **Proxy:** ON (orange cloud)
+2. **Type:** CNAME · **Name:** `astra` · **Target:** `astrabound-4ov.pages.dev` · **Proxy:** ON
+
+Do **not** point at `astrabound.pages.dev` — that URL is a different project (not astra).
 3. Wait 2–10 minutes, then reload.
 
 The deploy script `scripts/cloudflare-pages-domain.sh` creates this record automatically when your API token can edit that zone.

@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
-PROJECT_NAME="${PAGES_PROJECT_NAME:-astrabound}"
+PROJECT_NAME="${PAGES_PROJECT_NAME:-astrabound-4ov}"
 BRANCH="${PAGES_DEPLOY_BRANCH:-main}"
 CUSTOM_DOMAIN="${PAGES_CUSTOM_DOMAIN:-astra.jakesarcade.app}"
 PRODUCTION_URL="https://${CUSTOM_DOMAIN}/"

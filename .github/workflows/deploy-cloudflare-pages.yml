@@ -1,6 +1,6 @@
-# Deploys static files to Cloudflare Pages project "astrabound" (production branch: main).
-# Live site: https://astrabound-4ov.pages.dev/
-# If deploys ever go to the wrong place, check Workers & Pages → project name must be "astrabound".
+# Deploys static files to Cloudflare Pages project "astrabound-4ov" (production branch: main).
+# Live astra game: https://astrabound-4ov.pages.dev/
+# Do NOT point DNS at astrabound.pages.dev — that is a different, older project.
 #
 # When this runs
 # ---------------
@@ -47,15 +47,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Ensure astrabound Pages project exists
+      - name: Ensure Pages project exists
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
-        run: npx wrangler pages project create astrabound --production-branch main || true
+        run: npx wrangler pages project create astrabound-4ov --production-branch main || true
 
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID || vars.CLOUDFLARE_ZONE_ID }}
         run: |
-          npx wrangler pages deploy --project-name astrabound --branch main
-          bash scripts/cloudflare-pages-domain.sh || echo "Custom domain step skipped or already configured."
-          echo "Production URL (custom): ${ASTRABOUND_PRODUCTION_URL}"
+          npx wrangler pages deploy --project-name astrabound-4ov --branch main
+          bash scripts/cloudflare-pages-domain.sh || echo "Custom domain / DNS step failed — see log above."
+          echo "Live game: https://astrabound-4ov.pages.dev/"
+          echo "Custom URL: ${ASTRABOUND_PRODUCTION_URL}"

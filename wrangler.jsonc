@@ -1,8 +1,8 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  // Workers config name; Pages deploy uses --project-name astrabound (must match Dashboard).
-  // Production site: https://astra.jakesarcade.app/ (Pages project: astrabound)
-  "name": "astrabound",
+  // Pages project slug (astra game): astrabound-4ov — NOT astrabound.pages.dev (different site).
+  // Production: https://astra.jakesarcade.app/ → CNAME to astrabound-4ov.pages.dev
+  "name": "astrabound-4ov",
   "compatibility_date": "2026-05-01",
   "pages_build_output_dir": ".",
   "ai": {
