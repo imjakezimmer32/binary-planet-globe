@@ -15,7 +15,7 @@ This repo deploys with **Wrangler** to your Cloudflare account. The cloud agent 
 1. Open [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens).
 2. **Create Token** → use template **Edit Cloudflare Workers** or build a custom token with:
    - **Account** → **Cloudflare Pages** → **Edit**
-   - **Zone** → **DNS** → **Edit** (for `jakesarcade.app`, so the subdomain can point at Pages)
+   - **Zone** → **DNS** → **Edit** (for zone **`jakesarcade.app`** — creates the `astra` CNAME)
 3. Copy the token (shown once).
 
 ### Step 2 — Add it where deploys run
@@ -42,6 +42,16 @@ That runs `scripts/cloudflare-deploy.sh`: uploads the site to Pages project **`a
 3. Redeploy once
 
 Without this, death-screen text uses the built-in fallback lines (game still works).
+
+### Custom domain not opening? (DNS)
+
+If **https://astra.jakesarcade.app/** does not load but **https://astrabound.pages.dev/** works, the subdomain DNS record is missing. Fix:
+
+1. Cloudflare → **Websites** → **jakesarcade.app** → **DNS** → **Add record**
+2. **Type:** CNAME · **Name:** `astra` · **Target:** `astrabound.pages.dev` · **Proxy:** ON (orange cloud)
+3. Wait 2–10 minutes, then reload.
+
+The deploy script `scripts/cloudflare-pages-domain.sh` creates this record automatically when your API token can edit that zone.
 
 ## Deploy from Git (automatic)
 
