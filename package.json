@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "npx serve -l 5500 .",
     "deploy": "bash scripts/cloudflare-deploy.sh",
-    "deploy:pages-only": "CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:?} npx wrangler pages deploy . --project-name astrabound-4ov --branch main",
+    "deploy:pages-only": "CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:?} npx wrangler pages deploy . --project-name astrabound --branch main",
     "domain:setup": "bash scripts/cloudflare-pages-domain.sh"
   },
   "devDependencies": {
