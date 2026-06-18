@@ -308,15 +308,6 @@ const VEG = (() => {
       const v0x = posArr[base],   v0y = posArr[base+1], v0z = posArr[base+2];
       const v1x = posArr[base+3], v1y = posArr[base+4], v1z = posArr[base+5];
       const v2x = posArr[base+6], v2y = posArr[base+7], v2z = posArr[base+8];
-      // Match colorizeGlobe: any vertex inside the liquid shell ⇒ liquid (water) polygon — no land foliage.
-      let liquidVerts = 0;
-      for (let v = 0; v < 3; v++) {
-        const o = base + v * 3;
-        const rr = Math.sqrt(posArr[o] * posArr[o] + posArr[o + 1] * posArr[o + 1] + posArr[o + 2] * posArr[o + 2]);
-        if (rr <= liquidR + liquidEps) liquidVerts++;
-      }
-      if (liquidVerts > 0) continue;
-
       const cx = (v0x + v1x + v2x) / 3;
       const cy = (v0y + v1y + v2y) / 3;
       const cz = (v0z + v1z + v2z) / 3;
@@ -360,17 +351,20 @@ const VEG = (() => {
           if (mapped < neMin || mapped > neMax) continue;
           const expected = worldFaceArea * density;
           const n = Math.floor(expected) + (rng() < (expected % 1) ? 1 : 0);
-          // Pine (0) and palm (4) clump: 45% chance each placement spawns 3 tight satellites
+          // Pine (0) and palm (4) clump: 45% chance each placement spawns 6 satellites.
+          // Polar scatter (random angle + radius) prevents straight-line artefacts.
           const doClump = vi === 0 || vi === 4;
           for (let k = 0; k < n; k++) {
             let bu = rng(), bv = rng();
             if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
-            const clusterSize = (doClump && rng() < 0.45) ? 4 : 1;
+            const clusterSize = (doClump && rng() < 0.45) ? 7 : 1;
             for (let ci = 0; ci < clusterSize; ci++) {
               let cbu = bu, cbv = bv;
               if (ci > 0) {
-                cbu = bu + (rng() - 0.5) * 0.18;
-                cbv = bv + (rng() - 0.5) * 0.18;
+                const angle = rng() * Math.PI * 2;
+                const rad   = 0.10 + rng() * 0.32; // 0.10–0.42 from cluster centre
+                cbu = bu + Math.cos(angle) * rad;
+                cbv = bv + Math.sin(angle) * rad;
                 if (cbu < 0) cbu = 0;
                 if (cbv < 0) cbv = 0;
                 if (cbu + cbv > 1) { const s = 1 / (cbu + cbv); cbu *= s; cbv *= s; }
