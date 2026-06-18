@@ -351,17 +351,20 @@ const VEG = (() => {
           if (mapped < neMin || mapped > neMax) continue;
           const expected = worldFaceArea * density;
           const n = Math.floor(expected) + (rng() < (expected % 1) ? 1 : 0);
-          // Pine (0) and palm (4) clump: 45% chance each placement spawns 3 tight satellites
+          // Pine (0) and palm (4) clump: 45% chance each placement spawns 6 satellites.
+          // Polar scatter (random angle + radius) prevents straight-line artefacts.
           const doClump = vi === 0 || vi === 4;
           for (let k = 0; k < n; k++) {
             let bu = rng(), bv = rng();
             if (bu + bv > 1) { bu = 1 - bu; bv = 1 - bv; }
-            const clusterSize = (doClump && rng() < 0.45) ? 4 : 1;
+            const clusterSize = (doClump && rng() < 0.45) ? 7 : 1;
             for (let ci = 0; ci < clusterSize; ci++) {
               let cbu = bu, cbv = bv;
               if (ci > 0) {
-                cbu = bu + (rng() - 0.5) * 0.18;
-                cbv = bv + (rng() - 0.5) * 0.18;
+                const angle = rng() * Math.PI * 2;
+                const rad   = 0.10 + rng() * 0.32; // 0.10–0.42 from cluster centre
+                cbu = bu + Math.cos(angle) * rad;
+                cbv = bv + Math.sin(angle) * rad;
                 if (cbu < 0) cbu = 0;
                 if (cbv < 0) cbv = 0;
                 if (cbu + cbv > 1) { const s = 1 / (cbu + cbv); cbu *= s; cbv *= s; }
